@@ -10,6 +10,8 @@
 
 **当前版本 v1.6.5**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
 
+镜像仓库：[GitHub](https://github.com/stuate-jz/LyricDesk)　·　发布页：[stuate-jz.github.io/LyricDesk](https://stuate-jz.github.io/LyricDesk/)
+
 </div>
 
 ---

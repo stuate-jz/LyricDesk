@@ -49,6 +49,8 @@ def build_readme(repo: str, info: dict, asset: str, installer: str) -> str:
         "",
         f"**当前版本 v{version}**　·　[⬇ 下载最新版]({releases})　·　[全部版本]({releases})",
         "",
+        "镜像仓库：[GitHub](https://github.com/stuate-jz/LyricDesk)　·　发布页：[stuate-jz.github.io/LyricDesk](https://stuate-jz.github.io/LyricDesk/)",
+        "",
         "</div>",
         "",
         "---",

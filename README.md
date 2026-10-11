@@ -1,5 +1,7 @@
 # 桌面歌词 (LyricDesk)
 
+> GitHub 仓库（镜像）：<https://github.com/stuate-jz/LyricDesk>　·　发布页：<https://stuate-jz.github.io/LyricDesk/>
+
 把正在播放的歌词实时显示在桌面上的悬浮组件，带逐字卡拉OK 动画，
 同时显示专辑封面、歌名、歌手、播放进度与播放控制。
 

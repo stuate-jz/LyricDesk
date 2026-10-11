@@ -1,0 +1,15 @@
+{
+  "version": "1.6.5",
+  "date": "2026-10-11",
+  "notes": "· 新增：设置界面「更新与关于」里加入发布页网址，点开即可看更新动态\n· 新增：每个主题都有专属的设置界面配色（极光/樱花/落日/青竹/素白 各不相同）\n· 变更：去掉「显示上一首按钮 / 显示下一首按钮」两个开关，统一由「显示播放控制」控制\n· 优化：设置界面主题色标题带与选中态，主题切换一眼可辨",
+  "url": "https://gitee.com/pursue-studies/LyricDesk/releases",
+  "size_mb": 45,
+  "requirements": "Windows 10 1809 或更高（Win11 最佳）",
+  "page_url": "https://gitee.com/pursue-studies/LyricDesk/releases",
+  "source_hint": "gitee:pursue-studies/LyricDesk",
+  "_说明": [
+    "发布页和桌面歌词共用的版本信息，每次发新版只改 version / date / notes / url。",
+    "url 就是程序里「打开下载页」按钮打开的地方；",
+    "想让它一键直接下载，把 url 换成 Release 附件的直链即可。"
+  ]
+}

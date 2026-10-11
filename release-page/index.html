@@ -1,10 +1,17 @@
 <!DOCTYPE html>
+<!-- 注意：本文件与 docs/index.html（GitHub Pages 用）内容应保持一致，改一处记得同步另一处；
+     推荐直接跑 python dev\build_pages.py 由脚本同步，不要手改两份 -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>桌面歌词 LyricDesk · 下载</title>
 <meta name="description" content="悬浮在桌面上的歌词组件：不挑播放器，带歌词跳动动画，不改壁纸。">
+<meta name="theme-color" content="#0b1020">
+<meta property="og:type" content="website">
+<meta property="og:title" content="桌面歌词 LyricDesk · 下载">
+<meta property="og:description" content="悬浮在桌面上的歌词组件：不挑播放器，带歌词跳动动画，不改壁纸。">
+<meta property="og:image" content="https://stuate-jz.github.io/LyricDesk/screenshots/3d.png">
 <style>
   :root{
     --c1:#38bdf8; --c2:#a78bfa; --c3:#f0abfc;
@@ -135,10 +142,14 @@
       <span id="date">2026-10-05</span>
     </div>
     <div class="btns">
-      <a class="btn btn-main" id="download" href="#">&#8681;&nbsp;下载 Windows 版</a>
-      <a class="btn btn-ghost" id="allreleases" href="#" hidden>查看全部版本</a>
+      <a class="btn btn-main" id="download"
+         href="https://gitee.com/pursue-studies/LyricDesk/releases/latest"
+         target="_blank" rel="noopener">&#8681;&nbsp;下载 Windows 版（Gitee）</a>
+      <a class="btn btn-ghost" id="dl-github"
+         href="https://github.com/stuate-jz/LyricDesk/releases/latest"
+         target="_blank" rel="noopener">GitHub 备用下载</a>
     </div>
-    <div class="hint" id="sizehint">约 43 MB · 免安装，解压即用 · Windows 10 / 11</div>
+    <div class="hint" id="sizehint">约 45 MB · 安装包，双击一路下一步 · Windows 10 / 11　｜　国内建议用 Gitee，速度更稳；GitHub 需要能访问外网。</div>
   </div>
 
   <div class="card" style="margin-top:26px">
@@ -211,23 +222,31 @@
 
   <footer>
     <div id="reqline">Windows 10 1809 或更高（Win11 最佳）</div>
+    <div>全部版本：
+      <a href="https://gitee.com/pursue-studies/LyricDesk/releases" target="_blank" rel="noopener">Gitee</a> ·
+      <a href="https://github.com/stuate-jz/LyricDesk/releases" target="_blank" rel="noopener">GitHub</a>
+    </div>
     <div>桌面歌词 LyricDesk · 免费使用</div>
   </footer>
 </div>
 
 <script>
 /* 页面上的东西几乎全部来自 update.json，发新版只要改那一个文件。
-   下面的 FALLBACK 只在直接双击本地打开（file:// 读不到 json）时兜底。 */
+   下面的 FALLBACK 只在直接双击本地打开（file:// 读不到 json）或 fetch 失败时兜底，
+   所以要跟当前版本保持一致：version / date / notes 跟 packaging/update.json 同步。 */
 const FALLBACK = {
-  version: "1.5.2",
-  date: "2026-10-05",
-  notes: "· 新增：检查更新\n· 修复：纯歌词面板打不开",
+  version: "1.6.5",
+  date: "2026-10-11",
+  notes: "· 新增：设置界面「更新与关于」里加入发布页网址，点开即可看更新动态\n· 新增：每个主题都有专属的设置界面配色（极光/樱花/落日/青竹/素白 各不相同）\n· 变更：去掉「显示上一首按钮 / 显示下一首按钮」两个开关，统一由「显示播放控制」控制\n· 优化：设置界面主题色标题带与选中态，主题切换一眼可辨",
   url: "https://gitee.com/pursue-studies/LyricDesk/releases",
   page_url: "https://gitee.com/pursue-studies/LyricDesk/releases",
-  size_mb: 43,
+  size_mb: 45,
   requirements: "Windows 10 1809 或更高（Win11 最佳）",
   source_hint: "gitee:pursue-studies/LyricDesk"
 };
+
+/* 体积行尾巴：两个平台都提示一下，Gitee 优先 */
+const SIZE_TAIL = "· 安装包，双击一路下一步 · Windows 10 / 11　｜　国内建议用 Gitee，速度更稳；GitHub 需要能访问外网。";
 
 function text(id, value) {
   const el = document.getElementById(id);
@@ -237,18 +256,12 @@ function text(id, value) {
 function render(info) {
   text("ver", "v" + (info.version || "").replace(/^v/i, ""));
   text("date", info.date || "");
-  if (info.size_mb) text("sizehint", `约 ${info.size_mb} MB · 免安装，解压即用 · Windows 10 / 11`);
+  text("sizehint", `约 ${info.size_mb || FALLBACK.size_mb} MB ${SIZE_TAIL}`);
   text("reqline", info.requirements || FALLBACK.requirements);
   text("sourcehint", info.source_hint || FALLBACK.source_hint);
 
-  const dl = document.getElementById("download");
-  if (info.url) {
-    dl.href = info.url;
-    dl.setAttribute("target", "_blank");
-    dl.setAttribute("rel", "noopener");
-  }
-  const all = document.getElementById("allreleases");
-  if (info.page_url) { all.href = info.page_url; all.hidden = false; }
+  /* 两个下载按钮的地址写死在 HTML 里（Gitee / GitHub 各自的 releases 页），
+     不再依赖 update.json —— 这样 json 读不到也点得动。 */
 
   const list = document.getElementById("notes");
   const lines = String(info.notes || "").split("\n").map(s => s.trim()).filter(Boolean);
@@ -263,7 +276,8 @@ function render(info) {
 
 render(FALLBACK);
 
-fetch("update.json", { cache: "no-store" })
+/* 先读同目录的 ./update.json（Pages / Gitee 上都能取到），失败就用上面的 FALLBACK */
+fetch("./update.json", { cache: "no-store" })
   .then(r => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
   .then(info => render(Object.assign({}, FALLBACK, info)))
   .catch(() => { /* 离线打开就用兜底内容，不打扰 */ });

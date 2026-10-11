@@ -31,9 +31,10 @@ from .fonts import proxy_candidates
 # 默认更新源：用户没自己配过时就用它，这样拿到程序就能自动检查更新。
 DEFAULT_SOURCE = "gitee:pursue-studies/LyricDesk"
 
-# 项目自己的发布页 / 仓库主页（更新源认不出来时用它兜底）
+# 项目自己的发布页 / 主页（更新源认不出来时用它兜底）
+# 主页是 GitHub Pages 上的发布页站点；发布页（releases）仍旧在 Gitee，自动更新不受影响。
 DEFAULT_RELEASES_URL = "https://gitee.com/pursue-studies/LyricDesk/releases"
-DEFAULT_HOMEPAGE_URL = "https://gitee.com/pursue-studies/LyricDesk"
+DEFAULT_HOMEPAGE_URL = "https://stuate-jz.github.io/LyricDesk/"
 
 # GitHub 在国内经常连不上，直连失败后依次试这些镜像
 _GITHUB_MIRRORS = (
@@ -140,8 +141,15 @@ def releases_url(source: str = "") -> str:
 
 
 def homepage_url(source: str = "") -> str:
-    """仓库主页（发布页去掉结尾的 /releases）。"""
-    url = releases_url(source)
+    """项目主页：认得出更新源就按平台换算（发布页去掉结尾的 /releases）。
+
+    认不出来（空、本地路径……）或者就是内置的自家源时，给 DEFAULT_HOMEPAGE_URL ——
+    也就是 GitHub Pages 上的发布页站点：它比裸仓库页更像「发布页」，用户点开就能看更新动态。
+    """
+    text = (source or "").strip()
+    if not text or text.lower() == DEFAULT_SOURCE.lower():
+        return DEFAULT_HOMEPAGE_URL
+    url = releases_url(text)
     trimmed = re.sub(r"/releases/?$", "", url)
     return trimmed or DEFAULT_HOMEPAGE_URL
 

@@ -10,6 +10,7 @@ r"""发新版：本地这一整套（改版本号 → 打包 → 生成发布页
     --with-portable  额外产出一个免安装 zip（默认不产，只发安装程序）
 
 跑完会打印「接下来你要做的几件事」，照着点就行。
+最后一步会把 release-page\ 同步到 docs\（GitHub Pages 用的是 docs\ 那一份）。
 """
 
 from __future__ import annotations
@@ -112,25 +113,25 @@ def main() -> int:
     print(f"=== 发布 v{version} → {repo} ===\n")
 
     if notes:
-        print("[1/6] 写入更新说明")
+        print("[1/7] 写入更新说明")
         write_notes(version, notes)
     else:
-        print("[1/6] 没给 --notes，沿用 packaging/update.json 里已有的说明")
+        print("[1/7] 没给 --notes，沿用 packaging/update.json 里已有的说明")
     print()
 
-    print("[2/6] 同步版本号")
+    print("[2/7] 同步版本号")
     run([PYTHON, str(ROOT / "dev" / "bump_version.py"), version])
     print()
 
     if skip_build:
-        print("[3/6] --skip-build：跳过打包\n")
+        print("[3/7] --skip-build：跳过打包\n")
     else:
-        print("[3/6] 打包 exe（PyInstaller，约 1 分钟）")
+        print("[3/7] 打包 exe（PyInstaller，约 1 分钟）")
         if run([PYTHON, "-m", "PyInstaller", "desktop-lyric.spec", "--noconfirm"]) != 0:
             print("打包失败，已中断。")
             return 1
         print()
-        print("[4/6] 生成安装程序（Inno Setup）")
+        print("[4/7] 生成安装程序（Inno Setup）")
         iscc = find_iscc()
         if iscc is None:
             print("  找不到 ISCC.exe（Inno Setup），跳过安装程序；便携版不受影响。")
@@ -139,14 +140,14 @@ def main() -> int:
             return 1
         print()
 
-    print("[5/6] 整理便携版压缩包")
+    print("[5/7] 整理便携版压缩包")
     if with_portable:
         package(version, "桌面歌词")
     else:
         print("  跳过（现在只发安装程序；要便携版就加 --with-portable）")
     print()
 
-    print("[6/6] 生成发布页文件")
+    print("[6/7] 生成发布页文件")
     run([PYTHON, str(ROOT / "dev" / "make_release_files.py"), repo])
     upload = ROOT / "dist" / "上传到Gitee"
     upload.mkdir(parents=True, exist_ok=True)
@@ -162,32 +163,42 @@ def main() -> int:
             shutil.copy2(item, target / item.name)
     print()
 
+    print("[7/7] 同步 GitHub Pages 用的 docs/ 目录")
+    if run([PYTHON, str(ROOT / "dev" / "build_pages.py")]) != 0:
+        print("docs/ 同步没通过（多半是页面里混进了外链资源），已中断。")
+        return 1
+    print()
+
     if do_verify:
         print("[附加] 核对 Gitee 上的状态")
         run([PYTHON, str(ROOT / "dev" / "verify_release.py"), repo])
         print()
 
     base = f"https://gitee.com/{repo}"
+    gh_repo = "stuate-jz/LyricDesk"
+    gh_base = f"https://github.com/{gh_repo}"
     print("=" * 62)
     print("接下来你要做的（照顺序点就行）")
     print("=" * 62)
     print()
-    print("① 发新版本（上传程序包）")
+    print("① Gitee：发新版本，附件传 dist\\桌面歌词-安装程序-v{0}.exe".format(version))
     print(f"   打开  {base}/releases/new")
-    print(f"   标签名称：v{version}")
-    print(f"   标题：桌面歌词 v{version}")
+    print(f"   标签名称：v{version}　标题：桌面歌词 v{version}")
     print("   说明：把 dist\\上传到Gitee\\update.json 里 notes 的内容复制进去")
-    print(f"   附件：上传 dist\\桌面歌词-安装程序-v{version}.exe")
     if with_portable:
         print(f"         （可选）dist\\桌面歌词-v{version}-便携版.zip")
-    print("   点「发布」")
+    print("   点「发布」；顺手把仓库首页 README 换成 dist\\上传到Gitee\\README.md 的内容")
     print()
-    print("② 更新发布页（仓库首页）")
-    print(f"   打开  {base}/blob/master/README.md  → 编辑")
-    print("   全选删掉，粘贴 dist\\上传到Gitee\\README.md 的内容 → 提交")
+    print("② GitHub：发新版本（标签同名），附件传 ASCII 名")
+    print(f"   打开  {gh_base}/releases/new")
+    print(f"   标签名称：v{version}　标题：桌面歌词 v{version}")
+    print(f"   附件：把 dist\\桌面歌词-安装程序-v{version}.exe 另存为")
+    print(f"         dist\\LyricDesk-Setup-v{version}.exe 再传（中文名在 GitHub 上会被吞成 -.-v{version}.exe）")
+    print("   说明：同 ① 的 notes")
     print()
-    print("③（可选，只有用 index.html 做网页版时才需要）")
-    print("   把 dist\\上传到Gitee\\update.json 重新传一份到仓库根目录")
+    print("③ 提交并推送 docs/ 与版本号改动")
+    print("   git add -A && git commit -m \"chore: v{0}\" && git push".format(version))
+    print("   （docs/ 推上去 1~2 分钟后，https://stuate-jz.github.io/LyricDesk/ 才会更新）")
     print()
     print("④ 验证")
     print(f"   程序右键菜单 →「检查更新…」，应提示已是最新 v{version}")

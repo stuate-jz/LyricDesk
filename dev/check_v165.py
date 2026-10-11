@@ -133,13 +133,15 @@ def main() -> int:
         check(f"releases_url({source!r})", got == want, f"{got}")
     check(
         "homepage_url 是发布页去掉 /releases",
-        homepage_url("gitee:pursue-studies/LyricDesk")
-        == "https://gitee.com/pursue-studies/LyricDesk",
-        homepage_url("gitee:pursue-studies/LyricDesk"),
+        homepage_url("gitee:someone/other") == "https://gitee.com/someone/other",
+        homepage_url("gitee:someone/other"),
     )
     check(
-        "认不出来时回退项目主页常量",
-        homepage_url("") == DEFAULT_HOMEPAGE_URL == "https://gitee.com/pursue-studies/LyricDesk",
+        "自家源 / 认不出来时回退内置主页常量（Pages 发布页）",
+        homepage_url("") == DEFAULT_HOMEPAGE_URL
+        and homepage_url("gitee:pursue-studies/LyricDesk") == DEFAULT_HOMEPAGE_URL
+        and DEFAULT_HOMEPAGE_URL == "https://stuate-jz.github.io/LyricDesk/",
+        homepage_url(""),
     )
 
     settings = Settings()
@@ -176,7 +178,7 @@ def main() -> int:
         "关于里也有一行可点的项目主页",
         dialog._homepage_link is not None
         and dialog._homepage_link.openExternalLinks()
-        and "gitee.com/pursue-studies/LyricDesk" in dialog._homepage_link.text(),
+        and "stuate-jz.github.io/LyricDesk" in dialog._homepage_link.text(),
         dialog._homepage_link.text()[:80] if dialog._homepage_link else "无",
     )
     # 英文界面下这两行也要是英文（验收第 4 条）
