@@ -36,11 +36,13 @@ DEFAULT_SOURCE = "gitee:pursue-studies/LyricDesk"
 DEFAULT_RELEASES_URL = "https://gitee.com/pursue-studies/LyricDesk/releases"
 DEFAULT_HOMEPAGE_URL = "https://stuate-jz.github.io/LyricDesk/"
 
-# GitHub 在国内经常连不上，直连失败后依次试这些镜像
-_GITHUB_MIRRORS = (
-    "https://api.kkgithub.com/repos/{repo}/releases/latest",
-    "https://ghproxy.net/https://api.github.com/repos/{repo}/releases/latest",
-)
+# GitHub 在国内经常连不上，直连失败后依次试这些镜像。
+# ⚠️ 镜像会失效：加之前请先实测一次（用任意公开仓库打一下
+#    https://<镜像>/repos/<owner>/<repo>/releases/latest，看能不能拿到 JSON）。
+# 2026-10 实测：api.kkgithub.com 连接直接失败、ghproxy.net 对 API 返回 403，
+# 所以现在列表为空 —— 也就是「只走 GitHub 直连」。
+# 程序默认更新源本来就是 Gitee，这里空着不影响正常使用，也不会报错。
+_GITHUB_MIRRORS: tuple[str, ...] = ()
 
 
 @dataclass
@@ -173,6 +175,7 @@ def _candidate_urls(source: str) -> list[str]:
         return [f"https://gitee.com/api/v5/repos/{repo}/releases/latest"]
     if _looks_like_repo(text):
         repo = text.strip("/")
+        # 直连优先，后面才轮到镜像；_GITHUB_MIRRORS 为空时这里就是「只有直连」，不会出错
         urls = [f"https://api.github.com/repos/{repo}/releases/latest"]
         urls += [mirror.format(repo=repo) for mirror in _GITHUB_MIRRORS]
         return urls

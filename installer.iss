@@ -3,7 +3,7 @@
 ; 编译：  ISCC.exe installer.iss
 ; 注意：  本文件必须保存为「UTF-8 带 BOM」，否则中文会乱码。
 ;
-; 输出：  dist\桌面歌词-安装程序-v1.0.exe
+; 输出：  dist\LyricDesk-Setup-v1.0.exe（纯 ASCII 名，Gitee / GitHub 通用）
 
 #define AppName "桌面歌词"
 #define AppDirName "LyricDesk"
@@ -32,7 +32,7 @@ LicenseFile=packaging\许可协议.txt
 InfoBeforeFile=packaging\更新说明.txt
 
 OutputDir=dist
-OutputBaseFilename=桌面歌词-安装程序-v1.6.5
+OutputBaseFilename=LyricDesk-Setup-v1.6.5
 SetupIconFile=desktop-lyric.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}

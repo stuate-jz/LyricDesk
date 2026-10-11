@@ -57,7 +57,7 @@ def build_readme(repo: str, info: dict, asset: str, installer: str) -> str:
         "",
         "## ⬇ 下载",
         "",
-        f"### ⚙ [**桌面歌词-安装程序-v{version}.exe**]({releases})",
+        f"### ⚙ [**LyricDesk-Setup-v{version}.exe**]({releases})",
         "",
         "双击一路「下一步」装好即可（不需要管理员权限，不需要改任何系统设置）。",
         "",
@@ -154,7 +154,7 @@ def main() -> int:
     info = latest_release_info()
     version = info["version"]
     asset = f"桌面歌词-v{version}-便携版.zip"
-    installer = f"桌面歌词-安装程序-v{version}.exe"
+    installer = f"LyricDesk-Setup-v{version}.exe"
 
     args = sys.argv[2:]
     for index, item in enumerate(args):

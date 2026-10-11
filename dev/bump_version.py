@@ -40,7 +40,7 @@ def main() -> int:
         ],
         "installer.iss": [
             (r'#define AppVersion "[^"]+"', f'#define AppVersion "{new}"'),
-            (r"OutputBaseFilename=.*", f"OutputBaseFilename=桌面歌词-安装程序-v{new}"),
+            (r"OutputBaseFilename=.*", f"OutputBaseFilename=LyricDesk-Setup-v{new}"),
         ],
         "installer/setup_app.py": [
             (r'APP_VERSION = "[^"]+"', f'APP_VERSION = "{new}"')

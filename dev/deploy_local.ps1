@@ -75,7 +75,7 @@ if ($Source) {
 }
 
 if (-not (Test-Path $installDir)) {
-    throw "安装目录不存在：$installDir`n请先跑一次 dist\桌面歌词-安装程序-v1.6.4.exe 装好，之后再用本脚本做增量更新。"
+    throw "安装目录不存在：$installDir`n请先跑一次 dist\LyricDesk-Setup-v*.exe 装好，之后再用本脚本做增量更新。"
 }
 
 # ---------- 1. 打包 ----------

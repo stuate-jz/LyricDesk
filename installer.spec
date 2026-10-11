@@ -91,7 +91,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="桌面歌词-安装程序-v1.0",
+    name="LyricDesk-Setup-v1.0",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -186,9 +186,9 @@
     <section>
       <h2><span class="dot"></span>怎么用</h2>
       <ol class="steps">
-        <li>下载压缩包，解压到任意文件夹（别直接双击运行压缩包里的 exe，先解压）。</li>
-        <li>双击 <code>LyricDesk.exe</code>，程序会缩到右下角托盘，桌面出现歌词。</li>
-        <li>打开任意音乐软件放歌，歌词会自动跟上；左键拖动摆位置，右键是全部设置。</li>
+        <li>下载安装包 <b id="setupname">LyricDesk-Setup.exe</b>，双击一路「下一步」装好（不需要管理员权限）。</li>
+        <li>装完从开始菜单或桌面图标启动，程序会缩到右下角托盘，桌面出现歌词。</li>
+        <li>打开任意音乐软件放歌，歌词会自动跟上；左键拖动摆位置，右键是常用操作菜单（<b>完整设置在「设置…」里</b>）。</li>
       </ol>
       <p style="color:var(--dim);font-size:14.5px;margin-top:14px">
         想要安装包版（带开始菜单、桌面快捷方式、可卸载）就用 <b>安装程序</b>，双击一路下一步即可。
@@ -256,6 +256,8 @@ function text(id, value) {
 function render(info) {
   text("ver", "v" + (info.version || "").replace(/^v/i, ""));
   text("date", info.date || "");
+  /* 安装包名跟版本号一起走，不写死 */
+  text("setupname", `LyricDesk-Setup-v${String(info.version || "").replace(/^v/i, "")}.exe`);
   text("sizehint", `约 ${info.size_mb || FALLBACK.size_mb} MB ${SIZE_TAIL}`);
   text("reqline", info.requirements || FALLBACK.requirements);
   text("sourcehint", info.source_hint || FALLBACK.source_hint);

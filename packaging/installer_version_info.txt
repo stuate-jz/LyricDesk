@@ -22,7 +22,7 @@ VSVersionInfo(
                         StringStruct("FileDescription", "桌面歌词 安装程序"),
                         StringStruct("FileVersion", "1.6.5.0"),
                         StringStruct("InternalName", "LyricDeskSetup"),
-                        StringStruct("OriginalFilename", "桌面歌词-安装程序.exe"),
+                        StringStruct("OriginalFilename", "LyricDesk-Setup.exe"),
                         StringStruct("ProductName", "桌面歌词"),
                         StringStruct("ProductVersion", "1.6.5"),
                     ],

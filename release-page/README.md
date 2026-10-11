@@ -18,7 +18,7 @@
 
 ## ⬇ 下载
 
-### ⚙ [**桌面歌词-安装程序-v1.6.5.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
+### ⚙ [**LyricDesk-Setup-v1.6.5.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 双击一路「下一步」装好即可（不需要管理员权限，不需要改任何系统设置）。
 
