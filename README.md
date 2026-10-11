@@ -20,7 +20,7 @@ Spotify、PotPlayer、foobar2000 等。同时开多个时可以右键指定跟�
 ## 启动
 
 > 发新版 / 做发布页：看 [发布清单.md](发布清单.md)——每次只要一条命令加三步网页操作。
-> 发布页文件在 `release-page/`，托管方案说明在 [release-page/发布步骤.md](release-page/发布步骤.md)。
+> 发布页文件在 `release-page/`（Gitee 用）；GitHub Pages 用的那份在 `docs/`，由 `dev\build_pages.py` 同步。
 
 双击 **`start.vbs`**（无控制台窗口）。
 
@@ -205,8 +205,8 @@ python -m PyInstaller desktop-lyric.spec --noconfirm
 想要启动更快的文件夹版（不用每次解压），先设置环境变量 `LD_ONEFILE=0`
 再执行同一条命令，输出在 `dist\LyricDesk\`。
 
-分发给朋友的成品放在 `dist\桌面歌词 v1.0\`，已附带`使用说明.txt`，
-压缩包为 `dist\桌面歌词-v1.0-便携版.zip`。
+想直接分发给朋友：把 `dist\LyricDesk.exe` 和 `packaging\` 里的三个说明文件一起给出去即可
+（免安装，双击就能跑）。
 
 ## 做成双击安装的安装包（推荐：Inno Setup）
 

@@ -2,7 +2,7 @@ r"""按你的仓库地址，生成「发布页」需要上传的文件。
 
 用法：
     python dev\make_release_files.py 用户名/LyricDesk
-    python dev\make_release_files.py 用户名/LyricDesk --tag v1.6.0 --asset 桌面歌词-v1.6.0-便携版.zip
+    python dev\make_release_files.py 用户名/LyricDesk --installer LyricDesk-Setup-v1.6.0.exe
 
 会写出：
     release-page\README.md      → 贴到仓库首页，就是发布页（Gitee 会自动渲染）
@@ -26,7 +26,7 @@ def latest_release_info() -> dict:
     return {k: v for k, v in data.items() if not k.startswith("_")}
 
 
-def build_readme(repo: str, info: dict, asset: str, installer: str) -> str:
+def build_readme(repo: str, info: dict, installer: str) -> str:
     version = info["version"]
     releases = f"https://gitee.com/{repo}/releases"
     notes = [
@@ -57,7 +57,7 @@ def build_readme(repo: str, info: dict, asset: str, installer: str) -> str:
         "",
         "## ⬇ 下载",
         "",
-        f"### ⚙ [**LyricDesk-Setup-v{version}.exe**]({releases})",
+        f"### ⚙ [**{installer}**]({releases})",
         "",
         "双击一路「下一步」装好即可（不需要管理员权限，不需要改任何系统设置）。",
         "",
@@ -153,13 +153,10 @@ def main() -> int:
 
     info = latest_release_info()
     version = info["version"]
-    asset = f"桌面歌词-v{version}-便携版.zip"
     installer = f"LyricDesk-Setup-v{version}.exe"
 
     args = sys.argv[2:]
     for index, item in enumerate(args):
-        if item == "--asset" and index + 1 < len(args):
-            asset = args[index + 1]
         if item == "--installer" and index + 1 < len(args):
             installer = args[index + 1]
 
@@ -178,7 +175,7 @@ def main() -> int:
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     (PAGE_DIR / "README.md").write_text(
-        build_readme(repo, info, asset, installer), encoding="utf-8"
+        build_readme(repo, info, installer), encoding="utf-8"
     )
 
     print("已生成：")
