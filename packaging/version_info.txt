@@ -1,0 +1,35 @@
+# -*- coding: utf-8 -*-
+# Windows 可执行文件的版本资源（PyInstaller 用 eval 解析，必须是单个表达式，
+# 所以这里只能有注释，不能有 docstring）
+
+VSVersionInfo(
+    ffi=FixedFileInfo(
+        filevers=(1, 6, 5, 0),
+        prodvers=(1, 6, 5, 0),
+        mask=0x3F,
+        flags=0x0,
+        OS=0x40004,
+        fileType=0x1,
+        subtype=0x0,
+        date=(0, 0),
+    ),
+    kids=[
+        StringFileInfo(
+            [
+                StringTable(
+                    "080404B0",
+                    [
+                        StringStruct("CompanyName", "LyricDesk"),
+                        StringStruct("FileDescription", "桌面歌词 - 悬浮歌词组件"),
+                        StringStruct("FileVersion", "1.6.5.0"),
+                        StringStruct("InternalName", "LyricDesk"),
+                        StringStruct("OriginalFilename", "LyricDesk.exe"),
+                        StringStruct("ProductName", "桌面歌词"),
+                        StringStruct("ProductVersion", "1.6.5"),
+                    ],
+                )
+            ]
+        ),
+        VarFileInfo([VarStruct("Translation", [2052, 1200])]),
+    ],
+)

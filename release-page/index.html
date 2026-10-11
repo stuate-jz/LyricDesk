@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>桌面歌词 LyricDesk · 下载</title>
+<meta name="description" content="悬浮在桌面上的歌词组件：不挑播放器，带歌词跳动动画，不改壁纸。">
+<style>
+  :root{
+    --c1:#38bdf8; --c2:#a78bfa; --c3:#f0abfc;
+    --bg:#0b1020; --card:rgba(255,255,255,.06);
+    --line:rgba(255,255,255,.12); --text:#e8ecf6; --dim:#9aa4b8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(900px 600px at 12% -8%, rgba(56,189,248,.20), transparent 60%),
+      radial-gradient(900px 700px at 92% 4%, rgba(167,139,250,.22), transparent 62%),
+      radial-gradient(700px 500px at 60% 100%, rgba(240,171,252,.12), transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font:16px/1.7 "Microsoft YaHei UI","Segoe UI",system-ui,-apple-system,sans-serif;
+    min-height:100vh; padding:48px 20px 64px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:900px;margin:0 auto}
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:20px;
+    backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+  }
+  /* ---------- 顶部 ---------- */
+  .hero{padding:36px 32px 32px;text-align:center;position:relative;overflow:hidden}
+  .logo{
+    width:76px;height:76px;border-radius:22px;margin:0 auto 18px;
+    background:linear-gradient(135deg,var(--c1),var(--c2));
+    display:flex;align-items:center;justify-content:center;
+    font-size:40px;color:#0b1020;box-shadow:0 12px 40px rgba(88,130,255,.35);
+  }
+  h1{margin:0 0 6px;font-size:32px;letter-spacing:.5px}
+  .sub{color:var(--dim);margin:0 0 18px;font-size:15.5px}
+  .pill{
+    display:inline-flex;align-items:center;gap:8px;font-size:13.5px;
+    padding:5px 14px;border-radius:999px;border:1px solid var(--line);
+    background:rgba(255,255,255,.05);color:var(--dim);margin-bottom:22px;
+  }
+  .pill b{color:var(--text);font-weight:600}
+  /* 跳动音柱，呼应程序里的动画 */
+  .eq{display:inline-flex;align-items:flex-end;gap:3px;height:14px}
+  .eq i{width:3px;border-radius:2px;background:linear-gradient(180deg,var(--c1),var(--c2));animation:bounce 1s infinite ease-in-out}
+  .eq i:nth-child(2){animation-delay:.15s}
+  .eq i:nth-child(3){animation-delay:.3s}
+  .eq i:nth-child(4){animation-delay:.45s}
+  @keyframes bounce{0%,100%{height:5px}50%{height:14px}}
+
+  .btns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;justify-content:center;
+    padding:14px 28px;border-radius:14px;font-size:16px;font-weight:600;
+    text-decoration:none;border:1px solid transparent;transition:.18s transform,.18s box-shadow;
+  }
+  .btn:active{transform:translateY(1px)}
+  .btn-main{
+    background:linear-gradient(135deg,var(--c1),var(--c2));color:#0b1020;
+    box-shadow:0 10px 30px rgba(88,130,255,.35);
+  }
+  .btn-main:hover{box-shadow:0 14px 38px rgba(88,130,255,.5)}
+  .btn-ghost{background:rgba(255,255,255,.06);border-color:var(--line);color:var(--text)}
+  .btn-ghost:hover{background:rgba(255,255,255,.11)}
+  .hint{color:var(--dim);font-size:13px;margin-top:14px}
+
+  /* ---------- 区块 ---------- */
+  section{margin-top:26px;padding:26px 28px}
+  h2{margin:0 0 16px;font-size:19px;display:flex;align-items:center;gap:9px}
+  h2 .dot{width:8px;height:8px;border-radius:50%;background:linear-gradient(135deg,var(--c1),var(--c2))}
+  .notes{list-style:none;margin:0;padding:0}
+  .notes li{
+    padding:9px 0 9px 26px;position:relative;color:#cfd6e6;font-size:15px;
+    border-bottom:1px dashed rgba(255,255,255,.07);
+  }
+  .notes li:last-child{border-bottom:none}
+  .notes li::before{
+    content:"";position:absolute;left:6px;top:19px;width:7px;height:7px;
+    border-radius:50%;background:linear-gradient(135deg,var(--c1),var(--c2));
+  }
+  .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+  .feat{padding:18px 18px 16px;border-radius:16px;background:rgba(255,255,255,.04);border:1px solid var(--line)}
+  .feat .ico{font-size:22px}
+  .feat b{display:block;margin:8px 0 4px;font-size:15.5px}
+  .feat span{color:var(--dim);font-size:14px;line-height:1.65}
+  .steps{counter-reset:s;list-style:none;margin:0;padding:0}
+  .steps li{position:relative;padding:10px 0 10px 44px;color:#cfd6e6;font-size:15px}
+  .steps li::before{
+    counter-increment:s;content:counter(s);
+    position:absolute;left:0;top:11px;width:26px;height:26px;border-radius:9px;
+    display:flex;align-items:center;justify-content:center;font-size:13px;
+    background:rgba(88,130,255,.18);border:1px solid rgba(88,130,255,.4);color:#bcd3ff;
+  }
+  details{border-top:1px solid rgba(255,255,255,.08);padding:12px 0}
+  details:first-of-type{border-top:none}
+  summary{cursor:pointer;font-size:15px;color:#dbe3f2}
+  summary::marker{color:var(--c1)}
+  details p{margin:8px 0 2px;color:var(--dim);font-size:14.5px}
+  code{
+    background:rgba(255,255,255,.08);border:1px solid var(--line);border-radius:6px;
+    padding:1px 6px;font-size:13.5px;font-family:Consolas,monospace;
+  }
+  .sourceline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px}
+  .sourceline code{flex:1;min-width:260px;padding:10px 12px;font-size:14px}
+  .copy{
+    padding:10px 18px;border-radius:10px;cursor:pointer;font-size:14px;
+    background:rgba(255,255,255,.08);border:1px solid var(--line);color:var(--text);
+  }
+  .copy:hover{background:rgba(255,255,255,.14)}
+  footer{text-align:center;color:var(--dim);font-size:13px;margin-top:30px;line-height:2}
+  a{color:#9ecbff}
+  @media (max-width:560px){
+    body{padding:26px 14px 40px}
+    .hero{padding:26px 18px}
+    section{padding:20px 18px}
+    h1{font-size:25px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="card hero">
+    <div class="logo">&#9834;</div>
+    <h1>桌面歌词 LyricDesk</h1>
+    <p class="sub">悬浮在桌面上的歌词组件 &mdash; 不挑播放器，带歌词跳动动画，不改你的壁纸</p>
+    <div class="pill">
+      <span class="eq"><i></i><i></i><i></i><i></i></span>
+      最新版本 <b id="ver">v1.5.2</b>
+      <span id="date">2026-10-05</span>
+    </div>
+    <div class="btns">
+      <a class="btn btn-main" id="download" href="#">&#8681;&nbsp;下载 Windows 版</a>
+      <a class="btn btn-ghost" id="allreleases" href="#" hidden>查看全部版本</a>
+    </div>
+    <div class="hint" id="sizehint">约 43 MB · 免安装，解压即用 · Windows 10 / 11</div>
+  </div>
+
+  <div class="card" style="margin-top:26px">
+    <section>
+      <h2><span class="dot"></span>这个版本更新了什么</h2>
+      <ul class="notes" id="notes">
+        <li>加载中…</li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="card" style="margin-top:26px">
+    <section>
+      <h2><span class="dot"></span>功能</h2>
+      <div class="grid">
+        <div class="feat"><div class="ico">&#127925;</div><b>什么播放器都能用</b>
+          <span>读的是 Windows 系统媒体控制，QQ音乐、酷狗、网易云、酷我、Spotify、foobar2000 都可以。</span></div>
+        <div class="feat"><div class="ico">&#128064;</div><b>不改壁纸</b>
+          <span>纯透明悬浮窗，只是浮在桌面上的一层，随时拖动、随时隐藏。</span></div>
+        <div class="feat"><div class="ico">&#127908;</div><b>歌词跟着节奏动</b>
+          <span>当前句渐变高亮、逐字填充，切换时带回弹动画。</span></div>
+        <div class="feat"><div class="ico">&#128251;</div><b>四种界面</b>
+          <span>立体卡片 / 纯歌词面板 / 唱片播放器 / 分离面板，唱片和歌词还能各放各的。</span></div>
+        <div class="feat"><div class="ico">&#127912;</div><b>能调的地方都给你了</b>
+          <span>字号、行数、行间距、封面大小、整体不透明度、五种配色、文字内倾角度。</span></div>
+        <div class="feat"><div class="ico">&#128266;</div><b>字体随便换</b>
+          <span>内置得意黑、霞鹜漫黑，不用另外装；也能用「导入字体文件…」把自己下载的
+          ttf / otf 导进来，导入一次以后一直在。</span></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="card" style="margin-top:26px">
+    <section>
+      <h2><span class="dot"></span>怎么用</h2>
+      <ol class="steps">
+        <li>下载压缩包，解压到任意文件夹（别直接双击运行压缩包里的 exe，先解压）。</li>
+        <li>双击 <code>LyricDesk.exe</code>，程序会缩到右下角托盘，桌面出现歌词。</li>
+        <li>打开任意音乐软件放歌，歌词会自动跟上；左键拖动摆位置，右键是全部设置。</li>
+      </ol>
+      <p style="color:var(--dim);font-size:14.5px;margin-top:14px">
+        想要安装包版（带开始菜单、桌面快捷方式、可卸载）就用 <b>安装程序</b>，双击一路下一步即可。
+      </p>
+    </section>
+  </div>
+
+  <div class="card" style="margin-top:26px">
+    <section>
+      <h2><span class="dot"></span>常见问题</h2>
+      <details open><summary>桌面显示「未检测到正在播放的歌曲」？</summary>
+        <p>不少音乐软件的「系统播放控件 / 媒体控制」默认是关的，关掉之后 Windows 里没有任何播放信息，任何歌词插件都读不到。
+           到音乐软件设置里打开它即可：网易云 → 设置 → 常规 → 系统媒体控制；酷狗、QQ音乐 等也有类似开关。</p></details>
+      <details><summary>怎么关掉 / 怎么退出？</summary>
+        <p>右键桌面上的歌词 → 最小化到托盘，它仍在后台；想彻底退出就右键右下角的音符图标 → 退出。
+           如果托盘图标被收进「^」溢出区，点一下那个小箭头就能看到。</p></details>
+      <details><summary>鼠标穿透之后点不动了？</summary>
+        <p>按 <code>Ctrl + Alt + L</code> 可以随时开关鼠标穿透，也可以右键托盘图标解除。</p></details>
+      <details><summary>为什么杀毒软件会提示？</summary>
+        <p>这是 Python 打包的程序，部分杀软对这类自解压程序会误报。程序不联网上传任何数据，歌词和封面只是从公开曲库读取。</p></details>
+      <details><summary>以后怎么更新？</summary>
+        <p>程序自带检查更新：右键菜单 → 设置更新源…，把下面的地址填进去，之后每次启动会自动检查一次，
+           有新版本会提醒你。</p>
+        <div class="sourceline">
+          <code id="sourcehint">gitee:pursue-studies/LyricDesk</code>
+          <button class="copy" id="copybtn">复制</button>
+        </div>
+      </details>
+    </section>
+  </div>
+
+  <footer>
+    <div id="reqline">Windows 10 1809 或更高（Win11 最佳）</div>
+    <div>桌面歌词 LyricDesk · 免费使用</div>
+  </footer>
+</div>
+
+<script>
+/* 页面上的东西几乎全部来自 update.json，发新版只要改那一个文件。
+   下面的 FALLBACK 只在直接双击本地打开（file:// 读不到 json）时兜底。 */
+const FALLBACK = {
+  version: "1.5.2",
+  date: "2026-10-05",
+  notes: "· 新增：检查更新\n· 修复：纯歌词面板打不开",
+  url: "https://gitee.com/pursue-studies/LyricDesk/releases",
+  page_url: "https://gitee.com/pursue-studies/LyricDesk/releases",
+  size_mb: 43,
+  requirements: "Windows 10 1809 或更高（Win11 最佳）",
+  source_hint: "gitee:pursue-studies/LyricDesk"
+};
+
+function text(id, value) {
+  const el = document.getElementById(id);
+  if (el && value) el.textContent = value;
+}
+
+function render(info) {
+  text("ver", "v" + (info.version || "").replace(/^v/i, ""));
+  text("date", info.date || "");
+  if (info.size_mb) text("sizehint", `约 ${info.size_mb} MB · 免安装，解压即用 · Windows 10 / 11`);
+  text("reqline", info.requirements || FALLBACK.requirements);
+  text("sourcehint", info.source_hint || FALLBACK.source_hint);
+
+  const dl = document.getElementById("download");
+  if (info.url) {
+    dl.href = info.url;
+    dl.setAttribute("target", "_blank");
+    dl.setAttribute("rel", "noopener");
+  }
+  const all = document.getElementById("allreleases");
+  if (info.page_url) { all.href = info.page_url; all.hidden = false; }
+
+  const list = document.getElementById("notes");
+  const lines = String(info.notes || "").split("\n").map(s => s.trim()).filter(Boolean);
+  list.innerHTML = "";
+  if (!lines.length) { list.innerHTML = "<li>这个版本没有写更新说明。</li>"; return; }
+  for (const line of lines) {
+    const li = document.createElement("li");
+    li.textContent = line.replace(/^[·•\-*]\s*/, "");
+    list.appendChild(li);
+  }
+}
+
+render(FALLBACK);
+
+fetch("update.json", { cache: "no-store" })
+  .then(r => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+  .then(info => render(Object.assign({}, FALLBACK, info)))
+  .catch(() => { /* 离线打开就用兜底内容，不打扰 */ });
+
+document.getElementById("copybtn").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const value = document.getElementById("sourcehint").textContent;
+  try {
+    await navigator.clipboard.writeText(value);
+    button.textContent = "已复制";
+  } catch {
+    button.textContent = "请手动复制";
+  }
+  setTimeout(() => { button.textContent = "复制"; }, 1500);
+});
+</script>
+</body>
+</html>
