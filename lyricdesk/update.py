@@ -20,7 +20,9 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -370,41 +372,124 @@ def check(source: str, on_done, timeout: float = 8.0) -> None:
 # ----------------------------------------------------------------------
 
 
-def download(url: str, target: Path, on_done, timeout: float = 20.0) -> None:
+# 自动安装失败时留下的标记（写安装包文件名），下次启动用它提示用户手动装
+FAILED_MARKER = "lyricdesk-update-failed.txt"
+
+
+class _UpdateCancelled(Exception):
+    """用户在进度条上点了「取消」。"""
+
+
+def _check_installer(path: Path, downloaded: int, total: int) -> str:
+    """下完先验一下，返回问题描述（空字符串 = 没问题）。
+
+    网络被代理/杀软插一脚时常见的是：下到一页 HTML、或者半截文件。
+    这种直接交给安装程序只会静默失败，所以这里先挡掉。
+    """
+    if total and downloaded < total:
+        return f"下载不完整：只拿到 {downloaded / 1048576:.1f} / {total / 1048576:.1f} MB"
+    if downloaded < 1_000_000:
+        return f"下载到的文件太小（{downloaded / 1024:.0f} KB），不像安装程序"
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(2)
+    except OSError:
+        return "下载到的文件读不出来"
+    if head != b"MZ":
+        return "下载到的不是安装程序（可能被网络或代理拦截了）"
+    return ""
+
+
+def failed_installer() -> Path | None:
+    """上次自动安装失败时保留下来的安装包；读完就把标记删掉。"""
+    marker = Path(tempfile.gettempdir()) / FAILED_MARKER
+    try:
+        name = marker.read_text(encoding="mbcs", errors="replace").strip()
+    except OSError:
+        return None
+    marker.unlink(missing_ok=True)
+    path = Path(tempfile.gettempdir()) / name if name else None
+    return path if path is not None and path.exists() else None
+
+
+def download(
+    url: str,
+    target: Path,
+    on_done,
+    timeout: float = 20.0,
+    on_progress=None,
+    should_stop=None,
+) -> None:
     """后台下载更新包，完成后回调 on_done(ok: bool, 文本)。
 
+    on_progress(已下载字节, 总字节或 0, 字节/秒) 大约每 0.3 秒调一次，界面拿它画进度条；
+    should_stop() 返回 True 时中止下载（进度条上的「取消」）。
+
     和字体下载共用同一套代理探测（直连 → 系统代理 → 常见本地代理端口）。
+    慢链路断流时，最后会再补一次直连重试。
     """
     target = Path(target)
+    attempts = list(proxy_candidates())
+    if attempts:
+        attempts.append(None)  # 整轮都失败后，直连再试一次
 
     def worker() -> None:
         last_error = ""
-        for proxy in proxy_candidates():
+        for proxy in attempts:
+            if should_stop is not None and should_stop():
+                target.unlink(missing_ok=True)
+                on_done(False, "已取消")
+                return
             try:
                 session = requests.Session()
                 if proxy:
                     session.proxies = {"http": proxy, "https": proxy}
                 session.headers.update({"User-Agent": "LyricDesk-Updater"})
+                # 读超时别给 300 秒：断流时要尽快发现并重试，而不是干等五分钟
                 response = session.get(
-                    url, timeout=(timeout, 300), stream=True, allow_redirects=True
+                    url, timeout=(timeout, timeout * 3), stream=True, allow_redirects=True
                 )
                 response.raise_for_status()
+                total = int(response.headers.get("Content-Length") or 0)
                 downloaded = 0
+                started = time.time()
+                last_report = 0.0
                 with target.open("wb") as handle:
                     for chunk in response.iter_content(chunk_size=262144):
+                        if should_stop is not None and should_stop():
+                            raise _UpdateCancelled
                         if not chunk:
                             continue
                         handle.write(chunk)
                         downloaded += len(chunk)
-                if downloaded < 1_000_000:
+                        now = time.time()
+                        if on_progress is not None and now - last_report >= 0.3:
+                            last_report = now
+                            on_progress(
+                                downloaded, total, downloaded / max(now - started, 0.001)
+                            )
+                elapsed = max(time.time() - started, 0.001)
+                if on_progress is not None:
+                    on_progress(downloaded, total or downloaded, downloaded / elapsed)
+                problem = _check_installer(target, downloaded, total)
+                if problem:
                     target.unlink(missing_ok=True)
-                    on_done(False, "下载到的文件不完整")
+                    on_done(False, problem)
                     return
                 on_done(True, str(target))
                 return
+            except _UpdateCancelled:
+                target.unlink(missing_ok=True)
+                on_done(False, "已取消")
+                return
+            except requests.exceptions.ReadTimeout:
+                last_error = "下载超时（网络太慢或被中断）"
+                continue
             except Exception as exc:  # noqa: BLE001
                 last_error = type(exc).__name__
                 continue
+        # 半截文件没法用（Gitee 的 CDN 又不支持续传），别在 temp 里留垃圾
+        target.unlink(missing_ok=True)
         on_done(False, f"下载失败：{last_error or '连不上'}")
 
     threading.Thread(target=worker, name="update-download", daemon=True).start()

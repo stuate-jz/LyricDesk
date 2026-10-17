@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 
 from PySide6.QtCore import QRectF, Qt, QTimer
@@ -280,6 +281,31 @@ def main() -> int:
 
     rebuild_tray_menu()
     tray.setContextMenu(tray_menu)
+
+    # 上次自动安装没成功（杀软拦截、系统版本不够……）：安装包已经保留下来，
+    # 这里主动告诉用户，别让他以为「更新了但还是旧版本」。
+    def report_failed_update() -> None:
+        from .update import failed_installer
+
+        kept = failed_installer()
+        if kept is None:
+            return
+        from PySide6.QtWidgets import QMessageBox
+
+        windows = active_windows()
+        box = QMessageBox(windows[0] if windows else None)
+        box.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("更新没有装成功")
+        box.setText("上次自动更新没有装成功，程序仍是旧版本。")
+        box.setInformativeText(f"安装包已经保留下来，可以双击手动安装：\n{kept}")
+        open_folder = box.addButton("打开所在文件夹", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("知道了", QMessageBox.ButtonRole.AcceptRole)
+        box.exec()
+        if box.clickedButton() is open_folder:
+            subprocess.Popen(["explorer", "/select,", str(kept)])
+
+    QTimer.singleShot(1200, report_failed_update)
 
     # 首次启动提示托盘图标在哪（Windows 11 会把新图标收进「^」溢出区）
     def first_run_hint() -> None:

@@ -6,6 +6,7 @@ import math
 import os
 import subprocess
 import tempfile
+import threading
 import time
 import weakref
 from pathlib import Path
@@ -57,6 +58,7 @@ from . import APP_TITLE, __version__
 from .smtc import friendly_player_name
 from .update import (
     DEFAULT_SOURCE as UPDATE_DEFAULT_SOURCE,
+    FAILED_MARKER,
     bundled_source,
     check as check_update,
     download as download_update,
@@ -175,6 +177,8 @@ class LyricWindow(QWidget):
     updateChecked = Signal(object)
     # 更新包下载完（或失败）也送回主线程：(成功?, 路径或错误, 版本信息)
     updateDownloaded = Signal(bool, str, object)
+    # 下载进度（已下载字节, 总字节, 字节/秒）——后台线程发、主线程画进度条
+    updateProgress = Signal(int, int, float)
     # 热度查询结果（后台线程查完送回来）：歌曲 key, 热度值（可能为 None）
     heatReady = Signal(str, object)
     settingsChanged = Signal()
@@ -256,6 +260,7 @@ class LyricWindow(QWidget):
         self._cover_loader.ready.connect(self._on_cover)
         self.updateChecked.connect(self._on_update_result)
         self.updateDownloaded.connect(self._on_update_downloaded)
+        self.updateProgress.connect(self._on_update_progress)
         self.heatReady.connect(self._on_heat_ready)
 
         self.setWindowTitle("桌面歌词")
@@ -3236,6 +3241,24 @@ class LyricWindow(QWidget):
             return
 
         self._update_busy = True
+        stop = threading.Event()
+        self._update_cancel = stop
+
+        from PySide6.QtWidgets import QProgressDialog
+
+        box = QProgressDialog(f"正在下载更新 {info.latest}…", "取消", 0, 100, self)
+        box.setWindowTitle(f"更新到 {info.latest}")
+        box.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        box.setWindowModality(Qt.WindowModality.NonModal)
+        box.setMinimumDuration(0)
+        box.setAutoClose(False)
+        box.setAutoReset(False)
+        box.setValue(0)
+        box.canceled.connect(stop.set)
+        box.show()
+        box.raise_()
+        self._update_progress = box
+
         self.requestNotify.emit(
             "正在下载更新",
             f"正在下载 v{info.latest} 的安装程序…\n"
@@ -3246,13 +3269,51 @@ class LyricWindow(QWidget):
         def done(ok: bool, message: str) -> None:
             self.updateDownloaded.emit(ok, message, info)
 
-        download_update(info.installer, target, done)
+        download_update(
+            info.installer,
+            target,
+            done,
+            on_progress=lambda done_bytes, total, speed: self.updateProgress.emit(
+                int(done_bytes), int(total), float(speed)
+            ),
+            should_stop=stop.is_set,
+        )
+
+    def _on_update_progress(self, done: int, total: int, speed: float) -> None:
+        box = getattr(self, "_update_progress", None)
+        if box is None:
+            return
+        mb = 1048576.0
+        if total > 0:
+            box.setMaximum(int(total))
+            box.setValue(min(int(done), int(total)))
+            percent = int(done * 100 / total)
+            text = (
+                f"正在下载更新 {percent}%　{done / mb:.1f} / {total / mb:.1f} MB\n"
+                f"速度 {speed / mb:.2f} MB/s"
+            )
+            if speed > 0 and total > done:
+                text += f"　预计还剩 {int((total - done) / speed)} 秒"
+        else:
+            box.setMaximum(0)  # 服务器没给总大小，用忙碌指示
+            text = f"正在下载更新… 已下载 {done / mb:.1f} MB\n速度 {speed / mb:.2f} MB/s"
+        box.setLabelText(text)
 
     def _on_update_downloaded(self, ok: bool, message: str, info) -> None:
         from PySide6.QtWidgets import QMessageBox
 
         self._update_busy = False
+        progress = getattr(self, "_update_progress", None)
+        self._update_progress = None
+        self._update_cancel = None
+        if progress is not None:
+            progress.close()
+            progress.deleteLater()
+
         if not ok:
+            if message == "已取消":
+                self.requestNotify.emit("已取消更新", "没有安装任何东西，程序保持原样。")
+                return
             box = self._update_box(
                 QMessageBox.Icon.Warning,
                 "立即更新",
@@ -3307,13 +3368,35 @@ class LyricWindow(QWidget):
         QTimer.singleShot(1200, self.requestQuit.emit)
 
     def _write_update_script(self, setup: Path, exe: Path | None) -> Path | None:
-        """写一个脱离本进程运行的 cmd：等一会儿 → 静默装 → 重新打开程序。"""
+        """写一个脱离本进程运行的 cmd：等一会儿 → 静默装 → 重新打开程序。
+
+        装成功才删安装包；装失败（杀软拦截、系统版本不够……）保留安装包，并在
+        temp 里留一个标记 —— 程序重新打开后会提示用户「安装包还在，可以手动装」。
+        """
         relaunch = f'start "" "{exe}"' if exe is not None else ""
+        temp_dir = Path(tempfile.gettempdir())
+        # 脚本里尽量别出现中文路径：cmd 按控制台代码页解析批处理，
+        # 「用户名带中文 + 代码页不是 936」时写死的绝对路径会变乱码。
+        # 用 %TEMP% 让 cmd 自己展开就没这个问题。
+        if setup.parent == temp_dir:
+            setup_arg = f"%TEMP%\\{setup.name}"
+            marker_arg = f"%TEMP%\\{FAILED_MARKER}"
+        else:
+            setup_arg = str(setup)
+            marker_arg = str(temp_dir / FAILED_MARKER)
         lines = [
             "@echo off",
-            "timeout /t 3 /nobreak >nul",
-            f'"{setup}" /SILENT /SUPPRESSMSGBOXES /NORESTART /SP-',
-            f'del /q "{setup}"',
+            # 等程序自己退干净（约 3 秒）。ping 不需要控制台，timeout 在无控制台时会直接报错
+            "ping -n 4 127.0.0.1 >nul",
+            f'"{setup_arg}" /SILENT /SUPPRESSMSGBOXES /NORESTART /SP-',
+            "if errorlevel 1 goto failed",
+            f'del /q "{setup_arg}"',
+            f'del /q "{marker_arg}"',
+            relaunch,
+            'del "%~f0"',
+            "exit /b 0",
+            ":failed",
+            f'>"{marker_arg}" echo {setup.name}',
             relaunch,
             'del "%~f0"',
         ]
