@@ -282,6 +282,15 @@ def main() -> int:
     rebuild_tray_menu()
     tray.setContextMenu(tray_menu)
 
+    # 验收用：LD_OPEN_SETTINGS=1 时启动后自动打开设置窗口（普通用户不会设置这个变量）
+    if os.environ.get("LD_OPEN_SETTINGS") == "1":
+        def _open_settings_for_check() -> None:
+            windows = active_windows()
+            if windows:
+                windows[0].open_settings()
+
+        QTimer.singleShot(1500, _open_settings_for_check)
+
     # 上次自动安装没成功（杀软拦截、系统版本不够……）：安装包已经保留下来，
     # 这里主动告诉用户，别让他以为「更新了但还是旧版本」。
     def report_failed_update() -> None:

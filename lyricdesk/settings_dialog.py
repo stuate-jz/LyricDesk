@@ -20,11 +20,13 @@ import sys
 from PySide6.QtCore import QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -242,16 +244,29 @@ def _render(template: str, context: dict[str, str]) -> str:
 # 两个皮肤模板：所有颜色都是占位符，由主题调色板（+ 深浅）填。
 # 深色是原来那套结构，浅色是同一套结构换底色。
 _DARK_STYLE = """
-QDialog { background: %BG%; }
+/* 无边框 + 透明背景：真正的底色 / 圆角画在 #root 上，QDialog 本身透明 */
+QDialog { background: transparent; }
+QFrame#root {
+    background: %BG%;
+    border: 1px solid %LINE%;
+    border-radius: 12px;
+}
+QWidget#topbar { background: transparent; }
+QPushButton#closebtn {
+    border: none; border-radius: 6px; background: transparent; padding: 0;
+    color: %TEXT_DIM%;
+}
+QPushButton#closebtn:hover { background: #e5484d; color: #ffffff; }
+QPushButton#closebtn:pressed { background: #c93c40; color: #ffffff; }
 QLabel { color: %TEXT%; }
 QLabel#section {
     color: %TEXT_DIM%; font-size: 12px; font-weight: 600;
     padding-top: 8px; padding-bottom: 2px;
 }
 QLabel#brand { color: %TEXT%; font-size: 15px; font-weight: 600; }
-QLabel#brand { color: %TEXT%; font-size: 15px; font-weight: 600; }
 QLabel#hint { color: %TEXT_DIM%; font-size: 12px; }
 QLabel#warn { color: %WARN%; font-size: 12px; font-weight: 600; }
+QLabel#brand { color: %TEXT%; font-size: 15px; font-weight: 600; }
 QLabel#value { color: %TEXT_DIM%; font-size: 12px; }
 QLabel#link { color: %ACCENT%; font-size: 12px; }
 QLabel#hotkey {
@@ -333,7 +348,20 @@ QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 """
 
 _LIGHT_STYLE = """
-QDialog { background: %BG%; }
+/* 无边框 + 透明背景：真正的底色 / 圆角画在 #root 上，QDialog 本身透明 */
+QDialog { background: transparent; }
+QFrame#root {
+    background: %BG%;
+    border: 1px solid %LINE%;
+    border-radius: 12px;
+}
+QWidget#topbar { background: transparent; }
+QPushButton#closebtn {
+    border: none; border-radius: 6px; background: transparent; padding: 0;
+    color: %TEXT_DIM%;
+}
+QPushButton#closebtn:hover { background: #e5484d; color: #ffffff; }
+QPushButton#closebtn:pressed { background: #c93c40; color: #ffffff; }
 QLabel { color: %TEXT%; }
 QLabel#section {
     color: %TEXT_DIM%; font-size: 12px; font-weight: 600;
@@ -709,6 +737,23 @@ class SliderRow(QWidget):
             widget.setEnabled(enabled)
 
 
+class _TitleBar(QWidget):
+    """无边框窗口的拖动区：在空白处按住左键就能移动整个窗口。
+
+    用系统原生的 startSystemMove()，跟手且不抖；不要自己算坐标去 move()。
+    里面的文字 / 图标要设 WA_TransparentForMouseEvents，否则它们会吃掉鼠标事件。
+    """
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            handle = self.window().windowHandle()
+            if handle is not None:
+                handle.startSystemMove()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+
 class SettingsDialog(QDialog):
     """程序设置窗口（非模态，改动即时生效）。"""
 
@@ -747,6 +792,15 @@ class SettingsDialog(QDialog):
         # 语言：设置里存 "" 表示跟随系统
         set_language(getattr(window.settings, "language", ""))
         self.setWindowTitle(tr("app.title", "设置 · 桌面歌词"))
+        # 无边框：Windows 那条系统标题栏不要了，顶栏由我们自己画（见 _build）。
+        # Tool：不在任务栏占位；透明背景：圆角之外透出桌面（背景画在 _root 上）。
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        self.setWindowFlag(Qt.WindowType.Tool, True)
+        # 这几个系统标题栏相关的提示位也不要，免得某些主题下又把标题栏拉回来
+        self.setWindowFlag(Qt.WindowType.WindowSystemMenuHint, False)
+        self.setWindowFlag(Qt.WindowType.WindowTitleHint, False)
+        self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.resize(920, 660)
         self.setMinimumSize(720, 520)
         # 注意：这里**不**给设置窗口套用 settings.ui_opacity，
@@ -761,8 +815,22 @@ class SettingsDialog(QDialog):
     # ==================================================================
 
     def _build(self) -> None:
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(16, 12, 16, 12)
+        # 无边框 + 透明背景：背景和圆角画在这层容器上（QDialog 本体是透明的，
+        # 只负责给阴影留出 12px 边距）。
+        self._root = QFrame()
+        self._root.setObjectName("root")
+        shadow = QGraphicsDropShadowEffect(self._root)
+        shadow.setBlurRadius(28)
+        shadow.setColor(QColor(0, 0, 0, 120))
+        shadow.setOffset(0, 6)
+        self._root.setGraphicsEffect(shadow)
+
+        shell = QVBoxLayout(self)
+        shell.setContentsMargins(12, 12, 12, 12)
+        shell.addWidget(self._root)
+
+        outer = QVBoxLayout(self._root)
+        outer.setContentsMargins(16, 10, 16, 12)
         outer.setSpacing(10)
 
         # 顶部主题色标题带：五个主题的渐变不一样，一眼能看出现在用的是哪个
@@ -771,9 +839,17 @@ class SettingsDialog(QDialog):
         self._titlebar.setFixedHeight(4)
         outer.addWidget(self._titlebar)
 
-        # 顶部：设置窗口自己的置顶开关
-        top = QHBoxLayout()
-        top.setSpacing(10)
+        # 自绘顶栏：只有「置顶显示」+ 关闭。
+        # 标题由左侧品牌区承担（图标 + 设置 + 版本号），这里不再重复。
+        top = _TitleBar()
+        top.setObjectName("topbar")
+        top.setFixedHeight(44)
+        self._topbar = top
+        rows = QHBoxLayout(top)
+        rows.setContentsMargins(0, 0, 4, 0)
+        rows.setSpacing(8)
+        rows.addStretch(1)
+
         self._ontop_box = QCheckBox(self._t("top.always_on_top", "置顶显示"))
         self._ontop_box.setToolTip(
             tr("top.always_on_top.hint", "让设置窗口一直浮在其它程序上面")
@@ -789,9 +865,26 @@ class SettingsDialog(QDialog):
         )
         self._ontop_box.setChecked(self._always_on_top)
         self._ontop_box.toggled.connect(self._set_always_on_top)
-        top.addStretch(1)
-        top.addWidget(self._ontop_box)
-        outer.addLayout(top)
+        rows.addWidget(self._ontop_box)
+
+        # 关闭字形：优先用 Fluent 的 ChromeClose（✕ 在部分字体下会缩得很小）
+        icon_family = getattr(self.window, "_icon_family", "") or ""
+        if icon_family and icon_family != "Segoe UI Symbol":
+            close_glyph, close_size = "\uE8BB", 16
+        else:
+            close_glyph, close_size = "✕", 18
+        self._close_btn = QPushButton(close_glyph)
+        close_font = QFont(icon_family)
+        close_font.setPixelSize(close_size)
+        self._close_btn.setFont(close_font)
+        self._close_btn.setObjectName("closebtn")
+        self._close_btn.setFixedSize(30, 30)
+        self._close_btn.setToolTip(tr("btn.close", "关闭"))
+        self._bind_text(self._close_btn, "btn.close", "关闭", "setToolTip")
+        self._close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._close_btn.clicked.connect(self.close)
+        rows.addWidget(self._close_btn)
+        outer.addWidget(top)
 
         body = QHBoxLayout()
         body.setSpacing(12)
@@ -836,8 +929,9 @@ class SettingsDialog(QDialog):
         self.nav.setCurrentRow(0)
 
     def _brand(self) -> QWidget:
-        """左侧顶部的品牌区：图标 + 「设置」+ 版本号。"""
-        holder = QWidget()
+        """左侧顶部的品牌区：图标 + 「设置」+ 版本号（同时是窗口拖动区）。"""
+        holder = _TitleBar()
+        holder.setObjectName("brandbar")
         row = QHBoxLayout(holder)
         row.setContentsMargins(2, 0, 2, 8)
         row.setSpacing(10)
@@ -845,6 +939,8 @@ class SettingsDialog(QDialog):
         icon = QLabel()
         icon.setFixedSize(44, 44)
         icon.setPixmap(self._brand_pixmap())
+        # 图标 / 文字会吃掉鼠标事件，设成透明才能"按在字上也能拖窗口"
+        icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         row.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
 
         column = QVBoxLayout()
@@ -854,6 +950,8 @@ class SettingsDialog(QDialog):
         self._brand_title.setObjectName("brand")
         self._brand_version = QLabel(f"v{__version__}")
         self._brand_version.setObjectName("value")
+        for label in (self._brand_title, self._brand_version):
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         column.addWidget(self._brand_title)
         column.addWidget(self._brand_version)
         column.addStretch(1)
@@ -1936,9 +2034,80 @@ class SettingsDialog(QDialog):
         self._i18n_dirty = True
         self.retranslate()
 
+    # ------------------------------------------------------------------
+    # 无边框窗口：边缘拖动缩放（系统原生 startSystemResize）
+    # ------------------------------------------------------------------
+
+    EDGE = 8
+
+    def _edge_at(self, pos) -> Qt.Edge:
+        """判断鼠标落在窗口的哪条边 / 哪个角上。"""
+        x, y = pos.x(), pos.y()
+        edges = Qt.Edge(0)
+        if x <= self.EDGE:
+            edges |= Qt.Edge.LeftEdge
+        if x >= self.width() - self.EDGE:
+            edges |= Qt.Edge.RightEdge
+        if y <= self.EDGE:
+            edges |= Qt.Edge.TopEdge
+        if y >= self.height() - self.EDGE:
+            edges |= Qt.Edge.BottomEdge
+        return edges
+
+    @staticmethod
+    def _resize_cursor(edges):
+        left = bool(edges & Qt.Edge.LeftEdge)
+        right = bool(edges & Qt.Edge.RightEdge)
+        top = bool(edges & Qt.Edge.TopEdge)
+        bottom = bool(edges & Qt.Edge.BottomEdge)
+        if (left and top) or (right and bottom):
+            return Qt.CursorShape.SizeFDiagCursor
+        if (right and top) or (left and bottom):
+            return Qt.CursorShape.SizeBDiagCursor
+        if left or right:
+            return Qt.CursorShape.SizeHorCursor
+        if top or bottom:
+            return Qt.CursorShape.SizeVerCursor
+        return None
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            edges = self._edge_at(event.position().toPoint())
+            if edges:
+                handle = self.windowHandle()
+                if handle is not None:
+                    handle.startSystemResize(edges)
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        cursor = self._resize_cursor(self._edge_at(event.position().toPoint()))
+        if cursor is not None:
+            self.setCursor(cursor)
+        else:
+            self.unsetCursor()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self.unsetCursor()
+        super().leaveEvent(event)
+
+    def _keep_on_screen(self) -> None:
+        """别让设置窗口跑到屏幕外（换分辨率 / 多显示器之后尤其需要）。"""
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        x = max(area.x(), min(self.x(), area.x() + area.width() - self.width()))
+        y = max(area.y(), min(self.y(), area.y() + area.height() - self.height()))
+        if (x, y) != (self.x(), self.y()):
+            self.move(x, y)
+
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         self._refresh()
+        self._keep_on_screen()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         # 关之前把还没落地的那次滑动补上（拖着滑块顺手按关闭的边界情况）
