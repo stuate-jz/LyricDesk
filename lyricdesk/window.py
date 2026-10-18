@@ -76,6 +76,7 @@ from .render import (
     make_sprite,
     quad_transform,
 )
+from . import render as render_mod
 
 MARGIN = 24
 PAD = 20
@@ -262,9 +263,9 @@ class LyricWindow(QWidget):
         self._head_gap = 0.0
         self._head_block = 0.0
 
-        # 调宽度时短暂显示的虚线框 + 文字（1.2 秒后淡出）
-        self._guide_until = 0.0
-        self._guide_text = ""
+        # 自动宽度：记录上一次算宽度用的歌词对象 / 缓存
+        self._auto_lyrics_ref = None
+        self._auto_width_cache = None
 
         self._hit_prev = QRectF()
         self._hit_play = QRectF()
@@ -380,6 +381,8 @@ class LyricWindow(QWidget):
         }
 
     def recalculate(self, initial: bool = False) -> None:
+        # 字间距会影响每个字的 advance，必须在算字体 / 自动宽度之前设置
+        render_mod.set_letter_spacing(float(self.settings.letter_spacing))
         self._fonts = self._build_fonts()
         # 保留 QFont 实例本身，避免度量对象引用到已被回收的字体
         self._qt_fonts = {key: _qt_font(*spec) for key, spec in self._fonts.items()}
@@ -390,6 +393,11 @@ class LyricWindow(QWidget):
         settings = self.settings
         fm_lyric = self._metrics["lyric"]
         fm_next = self._metrics["next"]
+
+        # 自动宽度：按当前歌词最长的一行算，写回 settings.width（窗口/锚点/位置用同一口径）
+        auto = self._auto_width()
+        if auto != int(settings.width):
+            settings.width = auto
 
         # 这几个是各模式分支各自算出来的排版尺寸。绘制分支与 settings.mode 可能瞬间不一致
         # （模式刚改、还没重算就来了一次重绘），缺任何一个都会让 paintEvent 抛 AttributeError，
@@ -547,6 +555,55 @@ class LyricWindow(QWidget):
         # 上限只是防止极端组合把窗口撑到几千像素
         return (int(min(560.0, extra_x)), int(min(360.0, extra_y)))
 
+    def _auto_width(self) -> int:
+        """按当前歌词里最长的一行算窗口宽度（歌词可用宽度口径）。
+
+        用整首歌的最长行（而不是当前句），换句时窗口不会一跳一跳。
+        没有歌词 / 唱片模式 → 沿用 settings.width。
+        """
+        mode = self._effective_mode()
+        if mode == "album":
+            return int(self.settings.width)
+        lyrics = getattr(self.engine, "lyrics", None)
+        if lyrics is None or not getattr(lyrics, "lines", None):
+            return int(self.settings.width)
+
+        key = (
+            id(lyrics),
+            round(float(self.settings.letter_spacing), 2),
+            int(self.settings.font_size),
+            self.settings.font_family,
+            mode,
+            int(self.settings.cover_size),
+        )
+        cached = getattr(self, "_auto_width_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+
+        # 当前句用的是 list_cur（最大号），按它量最长行最保险：
+        # 这样任何一行变成"当前句"时都不会被 fit_size 缩小
+        family, size, weight = self._fonts["list_cur"]
+        widest = 0.0
+        for line in lyrics.lines:
+            if line.text:
+                widest = max(widest, render_mod.measure(line.text, family, size, weight))
+        if widest <= 0:
+            return int(self.settings.width)
+
+        extra = 0.0
+        if mode == "depth3d":
+            # 立体卡片左边还有封面块
+            extra = float(self.settings.cover_size) * 1.4143 + TEXT_GAP
+        value = int(widest + extra + 48)
+
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            room = screen.availableGeometry().width() - 2 * (MARGIN + PAD)
+            value = min(value, max(WIDTH_MIN, room))
+        value = max(WIDTH_MIN, min(WIDTH_MAX, value))
+        self._auto_width_cache = (key, value)
+        return value
+
     def _effective_mode(self) -> str:
         """面板角色优先于全局界面模式。"""
         if self.role == "player":
@@ -655,14 +712,18 @@ class LyricWindow(QWidget):
         delta = min(0.25, max(0.0, now - self._last_tick))
         self._last_tick = now
         self._check_hotkey()
+        # 换歌 / 换歌词 → 按"最长一行"重算自动宽度（不是每句都跳）
+        lyrics = self.engine.lyrics
+        if lyrics is not self._auto_lyrics_ref:
+            self._auto_lyrics_ref = lyrics
+            self._apply_new_width(QRect(self.geometry()), self.settings.lyric_align)
         snapshot = self.engine.snapshot()
         playing = bool(snapshot and snapshot.is_playing)
         if playing:
             # 唱片转速：约 26°/秒，看起来像在转但不晕
             self._spin_angle = (self._spin_angle + delta * 26.0) % 360.0
         animating = (time.monotonic() - self._anim_t0) < (ANIM_DURATION + 0.25)
-        guiding = self._guide_until > time.monotonic()
-        interval = 16 if (playing or animating or guiding) else 180
+        interval = 16 if (playing or animating) else 180
         if self._timer.interval() != interval:
             self._timer.setInterval(interval)
         self.update()
@@ -714,38 +775,7 @@ class LyricWindow(QWidget):
             self._paint_player(painter, card, snapshot, lyrics)
         else:
             self._paint_compact(painter, card, snapshot, lyrics)
-        self._paint_width_guide(painter, card)
         painter.end()
-
-    def _paint_width_guide(self, painter, card: QRectF) -> None:
-        """调宽度时短暂画一圈虚线 + 「歌词宽度 900 px」，1.2 秒后淡出。"""
-        remain = self._guide_until - time.monotonic()
-        if remain <= 0 or not self._guide_text:
-            return
-        alpha = int(210 * min(1.0, remain / 0.4))  # 最后 0.4 秒淡出
-        color = QColor(THEMES[self.settings.theme]["c1"])
-        color.setAlpha(alpha)
-        painter.save()
-        pen = QPen(color)
-        pen.setWidthF(1.5)
-        pen.setStyle(Qt.PenStyle.DashLine)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        # 只框内容区（不含四周的透明边距），看起来才像一条"宽度提示线"
-        rect = QRectF(
-            card.left() + PAD,
-            card.top() + PAD,
-            max(20.0, card.width() - PAD * 2),
-            max(20.0, card.height() - PAD * 2),
-        )
-        painter.drawRoundedRect(rect, 8, 8)
-        font = QFont(self._fonts["list"][0])
-        font.setPixelSize(13)
-        font.setBold(True)
-        painter.setFont(font)
-        painter.setPen(color)
-        painter.drawText(QPointF(rect.left() + 12, rect.top() + 26), self._guide_text)
-        painter.restore()
 
     def _background(self) -> QPixmap:
         ratio = self.devicePixelRatioF()
@@ -2127,13 +2157,22 @@ class LyricWindow(QWidget):
         if not text or width <= 4:
             return
         family, size, weight = font_spec
+        font = _qt_font(family, size, weight)
+        # 字间距只作用于歌词行（歌名 / 作者 / 时间不跟着散开）
+        lyric_specs = {
+            self._fonts.get(key) for key in ("list", "list_cur", "prev", "next")
+        }
+        spacing = render_mod.letter_spacing() if font_spec in lyric_specs else 0.0
+        if spacing:
+            font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, spacing)
+            fm = QFontMetricsF(font)
         display = text
         if fm.horizontalAdvance(display) > width:
             display = fm.elidedText(text, Qt.TextElideMode.ElideRight, width)
 
         painter.save()
         painter.setOpacity(max(0.0, min(1.0, opacity)))
-        painter.setFont(_qt_font(family, size, weight))
+        painter.setFont(font)
         if alignment == "center":
             flag = Qt.AlignmentFlag.AlignHCenter
         elif alignment == "right":
@@ -2457,7 +2496,9 @@ class LyricWindow(QWidget):
         # 放在函数里导入：settings_dialog 要用到窗口的方法，模块级互相 import 会成环
         from .settings_dialog import SettingsDialog
 
-        dialog = SettingsDialog(self)
+        # 不挂父窗口：有 owner 的窗口 Windows 不会给任务栏按钮，
+        # 设置窗口需要在任务栏 / Alt+Tab 里出现（逻辑上仍用 self 当宿主）
+        dialog = SettingsDialog(self, None)
         self._settings_dialog = dialog
         dialog.finished.connect(self._on_settings_closed)
         dialog.show()
@@ -2947,22 +2988,22 @@ class LyricWindow(QWidget):
         align = self.settings.lyric_align
         before = QRect(self.geometry())
         self.settings.width = int(value)
-        self._apply_new_width(before, align, f"歌词宽度 {int(self.settings.width)} px")
+        self._apply_new_width(before, align)
 
     def _set_player_width(self, value: int) -> None:
         """唱片/播放器面板宽度；0 = 自动（跟随封面）。"""
         self.settings.player_width = 0 if int(value) <= 0 else int(value)
         before = QRect(self.geometry())
-        text = (
-            "播放器宽度 自动"
-            if self.settings.player_width == 0
-            else f"播放器宽度 {int(self.settings.player_width)} px"
-        )
         # 唱片面板一般靠右上，按"右边缘不动"处理
-        self._apply_new_width(before, "right", text)
+        self._apply_new_width(before, "right")
 
-    def _apply_new_width(self, before: QRect, anchor: str, guide: str) -> None:
-        """按锚点重算窗口，并显示 1.2 秒的宽度提示线。"""
+    def _set_letter_spacing(self, value: float) -> None:
+        """歌词字间距（px）。改完重算：字变宽 → 自动宽度跟着变。"""
+        self.settings.letter_spacing = float(value)
+        self._commit(resize=True)
+
+    def _apply_new_width(self, before: QRect, anchor: str) -> None:
+        """按锚点重算窗口（右对齐钉右边缘 / 居中钉中心 / 左对齐钉左边）。"""
         self.settings.clamp()
         self.settings.save()
         self.recalculate()
@@ -2975,28 +3016,8 @@ class LyricWindow(QWidget):
         self.keep_on_screen()
         self._remember_position()
         self.settings.save()
-        self._guide_text = guide
-        self._guide_until = time.monotonic() + 1.2
         self.update()
-        QTimer.singleShot(1300, self.update)
         self.settingsChanged.emit()
-
-    def _ask_width(self) -> None:
-        """想多宽就多宽（预设档位不够用时用这个）。"""
-        from PySide6.QtWidgets import QInputDialog
-
-        value, ok = QInputDialog.getInt(
-            self,
-            "自定义窗口宽度",
-            f"输入窗口宽度（像素，{WIDTH_MIN} ～ {WIDTH_MAX}）：\n"
-            "宽度决定歌词那一列有多长，改完能立刻看到。",
-            int(self.settings.width),
-            WIDTH_MIN,
-            WIDTH_MAX,
-            20,
-        )
-        if ok:
-            self._set_width(int(value))
 
     def _nudge_width(self, delta: int) -> None:
         self.settings.width += delta

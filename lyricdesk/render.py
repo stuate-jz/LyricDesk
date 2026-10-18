@@ -20,6 +20,23 @@ from PySide6.QtGui import (
 _SPRITE_CACHE: "OrderedDict[tuple, TextSprite]" = OrderedDict()
 _CACHE_LIMIT = 256
 
+# 全局字间距（px）。歌词字体统一套这个值；图标 / 时间这类不走精灵的文字不受影响。
+_LETTER_SPACING = 0.0
+
+
+def set_letter_spacing(px: float) -> None:
+    """设置字间距；变了就清空精灵缓存，否则旧宽度的纹理还会被复用。"""
+    global _LETTER_SPACING
+    value = float(px)
+    if abs(value - _LETTER_SPACING) < 1e-6:
+        return
+    _LETTER_SPACING = value
+    _SPRITE_CACHE.clear()
+
+
+def letter_spacing() -> float:
+    return _LETTER_SPACING
+
 
 class TextSprite:
     """一段文字的矢量轮廓，可缩放绘制而不失真。"""
@@ -47,12 +64,14 @@ def _font(family: str, size: int, weight) -> QFont:
     font = QFont(family)
     font.setPixelSize(max(1, int(size)))
     font.setWeight(weight)
+    font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, _LETTER_SPACING)
     font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
     return font
 
 
 def make_sprite(text: str, family: str, size: int, weight) -> TextSprite:
-    key = (text, family, int(size), int(weight))
+    # 缓存 key 必须带字间距：不然拖滑块时命中旧纹理，看不出变化
+    key = (text, family, int(size), int(weight), round(_LETTER_SPACING, 2))
     cached = _SPRITE_CACHE.get(key)
     if cached is not None:
         _SPRITE_CACHE.move_to_end(key)

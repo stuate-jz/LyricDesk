@@ -44,11 +44,11 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .autostart import is_enabled
 from .config import (
+    LETTER_SPACING_MAX,
+    LETTER_SPACING_MIN,
     PLAYER_WIDTH_MAX,
     THEMES,
     THEME_ORDER,
-    WIDTH_MAX,
-    WIDTH_MIN,
     Settings,
     app_dir,
     cache_dir,
@@ -794,14 +794,15 @@ class SettingsDialog(QDialog):
         set_language(getattr(window.settings, "language", ""))
         self.setWindowTitle(tr("app.title", "设置 · 桌面歌词"))
         # 无边框：Windows 那条系统标题栏不要了，顶栏由我们自己画（见 _build）。
-        # Tool：不在任务栏占位；透明背景：圆角之外透出桌面（背景画在 _root 上）。
+        # 不再用 Tool：设置窗口要出现在任务栏 / Alt+Tab 里（Tool 窗口按设计不进任务栏）。
+        # 透明背景：圆角之外透出桌面（背景画在 _root 上）。
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
-        self.setWindowFlag(Qt.WindowType.Tool, True)
         # 这几个系统标题栏相关的提示位也不要，免得某些主题下又把标题栏拉回来
         self.setWindowFlag(Qt.WindowType.WindowSystemMenuHint, False)
         self.setWindowFlag(Qt.WindowType.WindowTitleHint, False)
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setWindowIcon(QIcon(self._brand_pixmap()))
         self.resize(920, 660)
         self.setMinimumSize(720, 520)
         # 注意：这里**不**给设置窗口套用 settings.ui_opacity，
@@ -1307,22 +1308,6 @@ class SettingsDialog(QDialog):
             minimum=40, maximum=320, step=2, default=self._defaults.cover_size,
             unit="px", coalesce_ms=60,
         )
-        width_row = self._slider(
-            layout,
-            "general.width",
-            "歌词宽度（歌词实际能显示多宽）",
-            getter=lambda: settings.width,
-            apply=lambda v: self.window._set_width(int(round(v))),
-            minimum=WIDTH_MIN, maximum=WIDTH_MAX, step=10, default=self._defaults.width,
-            unit="px", coalesce_ms=60,
-        )
-        # 唱片播放器没有歌词列，这一行在 album 模式下置灰（否则"能拖但没反应"）
-        self._bind_mode(width_row, "lyrics", "depth3d", "split")
-        self._hint(
-            layout,
-            "general.width.hint",
-            "唱片播放器模式没有歌词列；要改播放器宽度请用下面的「播放器宽度」。",
-        )
         player_width_row = self._slider(
             layout,
             "general.player_width",
@@ -1333,7 +1318,7 @@ class SettingsDialog(QDialog):
             default=self._defaults.player_width,
             unit="px", coalesce_ms=60,
             special_min_key="general.player_width.auto",
-            special_min="自动（跟随封面）",
+            special_min="自动",
         )
         self._bind_mode(player_width_row, "album", "split")
         self._slider(
@@ -1344,6 +1329,22 @@ class SettingsDialog(QDialog):
             apply=lambda v: self.window._set_font_size(int(round(v))),
             minimum=12, maximum=200, step=1, default=self._defaults.font_size,
             unit="px", coalesce_ms=60,
+        )
+        letter_row = self._slider(
+            layout,
+            "general.letter_spacing",
+            "歌词字间距",
+            getter=lambda: settings.letter_spacing,
+            apply=lambda v: self.window._set_letter_spacing(float(v)),
+            minimum=LETTER_SPACING_MIN, maximum=LETTER_SPACING_MAX, step=0.5,
+            default=self._defaults.letter_spacing,
+            unit="px", decimals=1, coalesce_ms=60,
+        )
+        self._bind_mode(letter_row, "lyrics", "depth3d", "split")
+        self._hint(
+            layout,
+            "general.letter_spacing.hint",
+            "正数拉开字距、负数收紧；窗口宽度会自动适应最长的一行。",
         )
         lines_row = self._slider(
             layout,
@@ -1358,7 +1359,7 @@ class SettingsDialog(QDialog):
         spacing_row = self._slider(
             layout,
             "general.line_spacing",
-            "歌唱行间距",
+            "歌词行间距",
             getter=lambda: settings.line_spacing,
             apply=self.window._set_spacing,
             minimum=0.50, maximum=3.00, step=0.05, default=self._defaults.line_spacing,

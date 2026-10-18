@@ -85,6 +85,8 @@ THEME_ORDER = ["aurora", "sakura", "sunset", "jade", "ink"]
 WIDTH_MIN, WIDTH_MAX = 240, 1440
 # 唱片/播放器面板的宽度（分离面板里那半边），单独一套；0 = 自动（跟随封面）
 PLAYER_WIDTH_MIN, PLAYER_WIDTH_MAX = 240, 1440
+# 歌词字间距（px）：正数拉开、负数收紧
+LETTER_SPACING_MIN, LETTER_SPACING_MAX = -2.0, 12.0
 # 旧版 width 是「窗口宽」口径，迁移到新口径时减掉左右两个 PAD。
 # （window.PAD = 20；这里不 import window 是为了避免 config → window 循环依赖）
 LEGACY_WIDTH_SHIFT = 40
@@ -136,6 +138,8 @@ class Settings:
     show_prev: bool = False
     show_next: bool = True
     width: int = 380
+    # 歌词字间距（px）：正数拉开、负数收紧。0 = 默认
+    letter_spacing: float = 0.0
     # 唱片/播放器面板宽度：0 = 自动（按封面尺寸算），>= PLAYER_WIDTH_MIN 才生效
     player_width: int = 0
     # 设置窗口的语言与外观（只影响设置窗口本身）
@@ -237,6 +241,9 @@ class Settings:
         # 两边不一致就会出现「拖到头了但值没变」的怪现象。
         self.font_size = max(12, min(200, int(self.font_size)))
         self.width = max(WIDTH_MIN, min(WIDTH_MAX, int(self.width)))
+        self.letter_spacing = max(
+            LETTER_SPACING_MIN, min(LETTER_SPACING_MAX, float(self.letter_spacing))
+        )
         player = int(self.player_width)
         self.player_width = (
             0 if player <= 0 else max(PLAYER_WIDTH_MIN, min(PLAYER_WIDTH_MAX, player))

@@ -79,14 +79,15 @@ STRINGS: dict[str, dict[str, str]] = {
         "general.cover_size": "封面大小",
         "general.width": "歌词宽度（歌词实际能显示多宽）",
         "general.player_width": "播放器宽度",
-        "general.player_width.auto": "自动（跟随封面）",
+        "general.player_width.auto": "自动",
         "general.width.hint": "唱片播放器模式没有歌词列；要改播放器宽度请用下面的「播放器宽度」。",
         "general.font_size": "歌词字号",
         "general.lyric_lines": "歌词列表行数",
-        "general.line_spacing": "歌唱行间距",
+        "general.letter_spacing": "歌词字间距",
+        "general.letter_spacing.hint": "正数拉开字距、负数收紧；窗口宽度会自动适应最长的一行。",
+        "general.line_spacing": "歌词行间距",
         "general.size.hint": (
-            "歌词宽度 = 歌词实际能画文字的宽度；播放器宽度只影响唱片面板"
-            "（分离面板里那半边），选「自动」就跟着封面大小走。\n"
+            "播放器宽度只影响唱片面板（分离面板里那半边），选「自动」就跟着封面大小走。\n"
             "歌词列表行数 / 行间距只在立体卡片、纯歌词面板、分离面板下有意义。"
         ),
         "general.section.overall": "整体",
@@ -113,7 +114,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "lyrics.show_info": "显示歌名、歌手和热度",
         "lyrics.show_info.hint": "只有独立的纯歌词面板显示它；分离面板里的歌词列不显示",
         "lyrics.section.size": "歌词尺寸",
-        "lyrics.size.hint": "「歌词字号」和「歌唱行间距」是滑动条，在左边「界面」分类的「尺寸」里。",
+        "lyrics.size.hint": "「歌词字号」和「歌词行间距」是滑动条，在左边「界面」分类的「尺寸」里。",
         "btn.goto_general": "去「界面」调字号 / 行间距",
         "lyrics.section.sync": "歌词同步（本歌偏移）",
         "sync.none": "当前没有正在播放的歌。默认偏移 {default:+d} ms。",
@@ -262,16 +263,21 @@ STRINGS: dict[str, dict[str, str]] = {
         "general.cover_size": "Cover size",
         "general.width": "Lyric width (usable text width)",
         "general.player_width": "Player width",
-        "general.player_width.auto": "Auto (follow cover)",
+        "general.player_width.auto": "Auto",
         "general.width.hint": (
             "The disc player has no lyric column; use \"Player width\" below instead."
         ),
         "general.font_size": "Lyric font size",
         "general.lyric_lines": "Lyric list lines",
         "general.line_spacing": "Line spacing",
+        "general.letter_spacing": "Letter spacing",
+        "general.letter_spacing.hint": (
+            "Positive spreads letters out, negative tightens them; "
+            "the window width adapts to the longest line."
+        ),
         "general.size.hint": (
-            "Lyric width = the width actually available for text; player width only affects "
-            "the disc panel (the other half of split mode), and \"Auto\" follows the cover size.\n"
+            "Player width only affects the disc panel (the other half of split mode), "
+            "and \"Auto\" follows the cover size.\n"
             "Lyric list lines / line spacing only matter in 3D card, lyrics-only and split mode."
         ),
         "general.section.overall": "Overall",
