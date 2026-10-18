@@ -80,6 +80,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "general.width": "歌词宽度（歌词实际能显示多宽）",
         "general.player_width": "播放器宽度",
         "general.player_width.auto": "自动（跟随封面）",
+        "general.width.hint": "唱片播放器模式没有歌词列；要改播放器宽度请用下面的「播放器宽度」。",
         "general.font_size": "歌词字号",
         "general.lyric_lines": "歌词列表行数",
         "general.line_spacing": "歌唱行间距",
@@ -262,6 +263,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "general.width": "Lyric width (usable text width)",
         "general.player_width": "Player width",
         "general.player_width.auto": "Auto (follow cover)",
+        "general.width.hint": (
+            "The disc player has no lyric column; use \"Player width\" below instead."
+        ),
         "general.font_size": "Lyric font size",
         "general.lyric_lines": "Lyric list lines",
         "general.line_spacing": "Line spacing",

@@ -65,6 +65,7 @@ from .update import (
     describe_source,
     is_newer,
 )
+from .win_util import set_native_topmost
 from .lyrics import normalize
 from .render import (
     draw_karaoke,
@@ -261,6 +262,10 @@ class LyricWindow(QWidget):
         self._head_gap = 0.0
         self._head_block = 0.0
 
+        # 调宽度时短暂显示的虚线框 + 文字（1.2 秒后淡出）
+        self._guide_until = 0.0
+        self._guide_text = ""
+
         self._hit_prev = QRectF()
         self._hit_play = QRectF()
         self._hit_next = QRectF()
@@ -352,7 +357,9 @@ class LyricWindow(QWidget):
         self._suspend_topmost = suspended
         # 本来就没置顶的窗口不用折腾（重复 setWindowFlags 会让窗口闪一下）
         if self.settings.always_on_top:
-            self.apply_flags()
+            # 走原生 Z 序，避免「打开设置窗口时歌词窗闪一下」
+            if not set_native_topmost(self, self.settings.always_on_top and not suspended):
+                self.apply_flags()
 
     def _build_fonts(self) -> dict[str, tuple]:
         size = int(self.settings.font_size)
@@ -654,7 +661,8 @@ class LyricWindow(QWidget):
             # 唱片转速：约 26°/秒，看起来像在转但不晕
             self._spin_angle = (self._spin_angle + delta * 26.0) % 360.0
         animating = (time.monotonic() - self._anim_t0) < (ANIM_DURATION + 0.25)
-        interval = 16 if (playing or animating) else 180
+        guiding = self._guide_until > time.monotonic()
+        interval = 16 if (playing or animating or guiding) else 180
         if self._timer.interval() != interval:
             self._timer.setInterval(interval)
         self.update()
@@ -706,7 +714,38 @@ class LyricWindow(QWidget):
             self._paint_player(painter, card, snapshot, lyrics)
         else:
             self._paint_compact(painter, card, snapshot, lyrics)
+        self._paint_width_guide(painter, card)
         painter.end()
+
+    def _paint_width_guide(self, painter, card: QRectF) -> None:
+        """调宽度时短暂画一圈虚线 + 「歌词宽度 900 px」，1.2 秒后淡出。"""
+        remain = self._guide_until - time.monotonic()
+        if remain <= 0 or not self._guide_text:
+            return
+        alpha = int(210 * min(1.0, remain / 0.4))  # 最后 0.4 秒淡出
+        color = QColor(THEMES[self.settings.theme]["c1"])
+        color.setAlpha(alpha)
+        painter.save()
+        pen = QPen(color)
+        pen.setWidthF(1.5)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        # 只框内容区（不含四周的透明边距），看起来才像一条"宽度提示线"
+        rect = QRectF(
+            card.left() + PAD,
+            card.top() + PAD,
+            max(20.0, card.width() - PAD * 2),
+            max(20.0, card.height() - PAD * 2),
+        )
+        painter.drawRoundedRect(rect, 8, 8)
+        font = QFont(self._fonts["list"][0])
+        font.setPixelSize(13)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(color)
+        painter.drawText(QPointF(rect.left() + 12, rect.top() + 26), self._guide_text)
+        painter.restore()
 
     def _background(self) -> QPixmap:
         ratio = self.devicePixelRatioF()
@@ -2904,13 +2943,43 @@ class LyricWindow(QWidget):
         self._commit(resize=True)
 
     def _set_width(self, value: int) -> None:
-        self.settings.width = value
-        self._commit(resize=True)
+        """改歌词宽度。按歌词对齐方式保持锚点，避免窗口"滑来滑去"。"""
+        align = self.settings.lyric_align
+        before = QRect(self.geometry())
+        self.settings.width = int(value)
+        self._apply_new_width(before, align, f"歌词宽度 {int(self.settings.width)} px")
 
     def _set_player_width(self, value: int) -> None:
         """唱片/播放器面板宽度；0 = 自动（跟随封面）。"""
         self.settings.player_width = 0 if int(value) <= 0 else int(value)
-        self._commit(resize=True)
+        before = QRect(self.geometry())
+        text = (
+            "播放器宽度 自动"
+            if self.settings.player_width == 0
+            else f"播放器宽度 {int(self.settings.player_width)} px"
+        )
+        # 唱片面板一般靠右上，按"右边缘不动"处理
+        self._apply_new_width(before, "right", text)
+
+    def _apply_new_width(self, before: QRect, anchor: str, guide: str) -> None:
+        """按锚点重算窗口，并显示 1.2 秒的宽度提示线。"""
+        self.settings.clamp()
+        self.settings.save()
+        self.recalculate()
+        if anchor == "right":
+            self.move(before.right() - self.width() + 1, self.y())
+        elif anchor == "center":
+            self.move(before.center().x() - self.width() // 2, self.y())
+        else:
+            self.move(before.x(), self.y())
+        self.keep_on_screen()
+        self._remember_position()
+        self.settings.save()
+        self._guide_text = guide
+        self._guide_until = time.monotonic() + 1.2
+        self.update()
+        QTimer.singleShot(1300, self.update)
+        self.settingsChanged.emit()
 
     def _ask_width(self) -> None:
         """想多宽就多宽（预设档位不够用时用这个）。"""
@@ -3078,7 +3147,11 @@ class LyricWindow(QWidget):
 
     def _toggle_always_on_top(self) -> None:
         self.settings.always_on_top = not self.settings.always_on_top
-        self._commit(flags=True)
+        self.settings.save()
+        # 只改 Z 序：不走 _commit(flags=True)，否则 setWindowFlags 会重建窗口、闪一下
+        if not set_native_topmost(self, self.settings.always_on_top):
+            self._commit(flags=True)
+        self.update()
 
     def _reset_position(self) -> None:
         if self.role == "player":

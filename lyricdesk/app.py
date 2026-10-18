@@ -217,11 +217,10 @@ def main() -> int:
             exit_split()
 
     _sync_queued = False
-    # 鼠标穿透 / 置顶这类窗口标志改了以后，两扇面板都要重新套一遍
-    _flag_state = {
-        "click_through": settings.click_through,
-        "always_on_top": settings.always_on_top,
-    }
+    # 鼠标穿透这种真正的窗口标志改了以后，两扇面板都要重新套一遍。
+    # 「置顶」不在这里：它走原生 SetWindowPos（win_util.set_native_topmost），
+    # 走 setWindowFlags 会把窗口重建一次、闪一下。
+    _flag_state = {"click_through": settings.click_through}
 
     def schedule_sync() -> None:
         """模式切换可能发生在某个面板自己的菜单里，延后一拍再拆/建窗口。"""
@@ -235,12 +234,8 @@ def main() -> int:
             _sync_queued = False
             sync_mode_windows()
             rebuild_tray_menu()
-            if (
-                _flag_state["click_through"] != settings.click_through
-                or _flag_state["always_on_top"] != settings.always_on_top
-            ):
+            if _flag_state["click_through"] != settings.click_through:
                 _flag_state["click_through"] = settings.click_through
-                _flag_state["always_on_top"] = settings.always_on_top
                 for win in active_windows():
                     win.apply_flags()
             for win in active_windows():

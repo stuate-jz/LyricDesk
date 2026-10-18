@@ -57,6 +57,7 @@ from .fonts import BUNDLED_FONTS, ONLINE_FONTS, RECOMMENDED, family_for, importe
 from .i18n import set_language, tr
 from .smtc import friendly_player_name
 from .update import homepage_url, releases_url
+from .win_util import set_native_topmost
 
 # 每个歌词主题一套「设置窗口个性」配色（深浅各一份）。
 # 为什么不按主题自动算色：极光和樱花都靠 c1/c2 混色的话，出来是一堆"淡蓝淡粉"，
@@ -1306,7 +1307,7 @@ class SettingsDialog(QDialog):
             minimum=40, maximum=320, step=2, default=self._defaults.cover_size,
             unit="px", coalesce_ms=60,
         )
-        self._slider(
+        width_row = self._slider(
             layout,
             "general.width",
             "歌词宽度（歌词实际能显示多宽）",
@@ -1314,6 +1315,13 @@ class SettingsDialog(QDialog):
             apply=lambda v: self.window._set_width(int(round(v))),
             minimum=WIDTH_MIN, maximum=WIDTH_MAX, step=10, default=self._defaults.width,
             unit="px", coalesce_ms=60,
+        )
+        # 唱片播放器没有歌词列，这一行在 album 模式下置灰（否则"能拖但没反应"）
+        self._bind_mode(width_row, "lyrics", "depth3d", "split")
+        self._hint(
+            layout,
+            "general.width.hint",
+            "唱片播放器模式没有歌词列；要改播放器宽度请用下面的「播放器宽度」。",
         )
         player_width_row = self._slider(
             layout,
@@ -1798,13 +1806,16 @@ class SettingsDialog(QDialog):
         self.update()
 
     def _set_always_on_top(self, checked: bool) -> None:
-        """设置窗口自己的置顶（默认关；开了才是以前的常驻置顶行为）。"""
+        """设置窗口自己的置顶（默认关；开了才是以前的常驻置顶行为）。
+
+        用原生 SetWindowPos 改 Z 序：不重建窗口，所以不会 "hide → show" 闪一下。
+        """
         self._always_on_top = bool(checked)
+        if set_native_topmost(self, self._always_on_top):
+            return
+        # 兜底：非 Windows / 拿不到 HWND 时才走旧的（会闪一次，但至少能用）
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, self._always_on_top)
-        # 改窗口标志会把窗口藏起来，必须再显示一次，否则看起来像「窗口消失了」
         self.show()
-        self.raise_()
-        self.activateWindow()
 
     # ==================================================================
     # 刷新 / 联动
