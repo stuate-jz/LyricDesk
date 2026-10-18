@@ -7,6 +7,7 @@ import threading
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from .config import Settings
+from .bili_client import BiliBridge
 from .lyrics import Lyrics, fetch, load_cached, provider_for_player, save_cached
 from .smtc import SMTC_AVAILABLE, SmtcReader, Snapshot
 
@@ -25,6 +26,10 @@ class Engine(QObject):
         self._key: str | None = None
         self._token = 0
         self._lock = threading.Lock()
+
+        # B 站字幕（可选）：只有 settings.bili_mode 打开、且确实连上调试端口才会用
+        self._bili: BiliBridge | None = None
+        self._bili_lyrics: Lyrics | None = None
 
         self._timer = QTimer(self)
         self._timer.setInterval(400)
@@ -46,6 +51,10 @@ class Engine(QObject):
         return "运行中"
 
     def snapshot(self) -> Snapshot | None:
+        if self.settings.bili_mode and self._bili is not None:
+            snap = self._bili.snapshot()
+            if snap is not None:
+                return snap
         return self._reader.snapshot()
 
     def players(self) -> list[dict]:
@@ -66,6 +75,7 @@ class Engine(QObject):
         self._reader.send_control(action)
 
     def stop(self) -> None:
+        self._stop_bili()
         self._reader.stop()
 
     def join(self, timeout: float | None = None) -> None:
@@ -77,6 +87,21 @@ class Engine(QObject):
     # ------------------------------------------------------------------
 
     def _poll(self) -> None:
+        # B 站字幕优先：有字幕就用字幕，没有就一路回退到原来的 SMTC + 曲库流程
+        if self.settings.bili_mode:
+            if self._bili is None:
+                self._bili = BiliBridge()
+                self._bili.start()
+            bili = self._bili.current()
+            if bili is not None:
+                if bili is not self._bili_lyrics:
+                    self._bili_lyrics = bili
+                    self._lyrics = bili
+                    self.lyricsChanged.emit(bili)
+                return
+        elif self._bili is not None:
+            self._stop_bili()
+
         snapshot = self._reader.snapshot()
         if snapshot is None or snapshot.track is None:
             if self._key is not None:
@@ -113,6 +138,12 @@ class Engine(QObject):
             track.duration,
             provider_for_player(snapshot.source),
         )
+
+    def _stop_bili(self) -> None:
+        bridge, self._bili = self._bili, None
+        self._bili_lyrics = None
+        if bridge is not None:
+            bridge.stop()
 
     def _display_idx_reset(self) -> None:
         # 通知界面这是新歌（界面自己判断是否重置动画）

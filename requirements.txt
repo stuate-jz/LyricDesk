@@ -5,3 +5,4 @@ winrt-Windows.Foundation.Collections>=3.0
 winrt-Windows.Media.Control>=3.0
 winrt-Windows.Storage.Streams>=3.0
 requests>=2.31
+websocket-client>=1.9

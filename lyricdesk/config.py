@@ -131,6 +131,8 @@ class Settings:
     lyric_align: str = "right"
     # 打开音乐软件时自动把歌词显示出来
     auto_show_on_music: bool = True
+    # B 站客户端字幕（需要先用「启动B站歌词模式」脚本带调试端口打开 B 站）
+    bili_mode: bool = False
     tray_hint_shown: bool = False
     # 已不对外暴露（设置窗口里删掉了「显示上一首/下一首按钮」两个开关，
     # 统一由 show_controls 控制整条播放控制）。字段保留是为了老 settings.json

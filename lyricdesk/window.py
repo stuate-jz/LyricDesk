@@ -3174,6 +3174,11 @@ class LyricWindow(QWidget):
             self._commit(flags=True)
         self.update()
 
+    def _toggle_bili_mode(self) -> None:
+        """B 站客户端字幕开关（默认关；关着的时候引擎完全不会碰 9225 端口）。"""
+        self.settings.bili_mode = not self.settings.bili_mode
+        self._commit()
+
     def _reset_position(self) -> None:
         if self.role == "player":
             self.settings.player_pos = [-1, -1]

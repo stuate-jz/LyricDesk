@@ -1639,6 +1639,16 @@ class SettingsDialog(QDialog):
             hint="检测到音乐软件从未运行变成运行时，自动把歌词显示出来",
         )
 
+        self._check(
+            layout,
+            "window.bili_mode",
+            "B 站客户端字幕（需要先用启动脚本打开 B 站）",
+            getter=lambda: settings.bili_mode,
+            apply=lambda value: self._flip("bili_mode", "_toggle_bili_mode", value),
+            hint_key="window.bili_mode.hint",
+            hint="只在你双击过「启动B站歌词模式」时生效；普通听歌不受影响。",
+        )
+
         layout.addSpacing(6)
         self._buttons(
             layout,

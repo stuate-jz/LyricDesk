@@ -7,7 +7,7 @@
 
 #define AppName "桌面歌词"
 #define AppDirName "LyricDesk"
-#define AppVersion "1.6.6"
+#define AppVersion "1.6.7"
 #define AppPublisher "LyricDesk"
 #define AppExeName "LyricDesk.exe"
 
@@ -32,7 +32,7 @@ LicenseFile=packaging\许可协议.txt
 InfoBeforeFile=packaging\更新说明.txt
 
 OutputDir=dist
-OutputBaseFilename=LyricDesk-Setup-v1.6.6
+OutputBaseFilename=LyricDesk-Setup-v1.6.7
 SetupIconFile=desktop-lyric.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
@@ -63,6 +63,8 @@ Source: "packaging\使用说明.txt";  DestDir: "{app}"; Flags: ignoreversion
 Source: "packaging\更新说明.txt";  DestDir: "{app}"; Flags: ignoreversion
 Source: "packaging\许可协议.txt";  DestDir: "{app}"; Flags: ignoreversion
 Source: "packaging\update.json";  DestDir: "{app}"; DestName: "更新源模板.json"; Flags: ignoreversion
+Source: "packaging\启动B站歌词模式.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "packaging\Start-BiliLyrics.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "assets\fonts\SmileySans-LICENSE.txt"; DestDir: "{app}"; DestName: "字体授权-得意黑.txt"; Flags: ignoreversion
 Source: "assets\fonts\LXGWMarkerGothic-LICENSE.txt"; DestDir: "{app}"; DestName: "字体授权-霞鹜漫黑.txt"; Flags: ignoreversion
 
