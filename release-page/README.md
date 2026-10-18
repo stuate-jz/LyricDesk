@@ -8,7 +8,7 @@
 
 **悬浮在桌面上的歌词组件** —— 不挑播放器，带歌词跳动动画，不改你的壁纸
 
-**当前版本 v1.6.5**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
+**当前版本 v1.6.6**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 镜像仓库：[GitHub](https://github.com/stuate-jz/LyricDesk)　·　发布页：[stuate-jz.github.io/LyricDesk](https://stuate-jz.github.io/LyricDesk/)
 
@@ -18,7 +18,7 @@
 
 ## ⬇ 下载
 
-### ⚙ [**LyricDesk-Setup-v1.6.5.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
+### ⚙ [**LyricDesk-Setup-v1.6.6.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 双击一路「下一步」装好即可（不需要管理员权限，不需要改任何系统设置）。
 
@@ -34,10 +34,13 @@
 
 ## 这个版本更新了什么
 
-- 新增：设置界面「更新与关于」里加入发布页网址，点开即可看更新动态
-- 新增：每个主题都有专属的设置界面配色（极光/樱花/落日/青竹/素白 各不相同）
-- 变更：去掉「显示上一首按钮 / 显示下一首按钮」两个开关，统一由「显示播放控制」控制
-- 优化：设置界面主题色标题带与选中态，主题切换一眼可辨
+- 新增：设置界面品牌区、分类图标、白色对勾
+- 优化：倾斜改为真 3D 透视，不再「调大就放大」
+- 优化：窗口宽度上限 1440，歌词宽度与播放器宽度独立
+- 优化：默认改为纯歌词面板、不置顶、落位右上
+- 优化：发布页改为 GitHub 主下载
+- 整理：GitHub 仓库精简，dev 工具不再入仓
+- 修复：视频标题噪声导致歌词匹配不到
 
 ## 四种界面
 

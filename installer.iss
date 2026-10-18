@@ -7,7 +7,7 @@
 
 #define AppName "桌面歌词"
 #define AppDirName "LyricDesk"
-#define AppVersion "1.6.5"
+#define AppVersion "1.6.6"
 #define AppPublisher "LyricDesk"
 #define AppExeName "LyricDesk.exe"
 
@@ -32,7 +32,7 @@ LicenseFile=packaging\许可协议.txt
 InfoBeforeFile=packaging\更新说明.txt
 
 OutputDir=dist
-OutputBaseFilename=LyricDesk-Setup-v1.6.5
+OutputBaseFilename=LyricDesk-Setup-v1.6.6
 SetupIconFile=desktop-lyric.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
