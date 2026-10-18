@@ -11,20 +11,25 @@ Spotify、PotPlayer、foobar2000 等。同时开多个时可以右键指定跟�
 
 首次启动默认使用**立体卡片**模式（封面方块 + 四个磨砂三角 + 向内倾斜的歌词列表）。
 
-![效果](screenshot.png)
+![效果](assets/screenshots/screenshot.png)
 
 立体卡片模式：
 
-![立体卡片](screenshot-3d.png)
+![立体卡片](assets/screenshots/screenshot-3d.png)
 
 ## 启动
 
-> 发新版 / 做发布页：看 [发布清单.md](发布清单.md)——每次只要一条命令加三步网页操作。
-> 发布页文件在 `release-page/`（Gitee 用）；GitHub Pages 用的那份在 `docs/`，由 `dev\build_pages.py` 同步。
+> 发布页文件在 `release-page/`（Gitee 用）；GitHub Pages 用的那份在 `docs/`。
+> 发版脚本与同步脚本放在开发机的 `dev\` 目录，属于本机工具，不随仓库发布。
 
-双击 **`start.vbs`**（无控制台窗口）。
+源码方式启动：
 
-如果没反应，双击 **`debug.bat`**，它会显示具体错误信息。
+```
+pythonw run.pyw
+```
+
+（开发机上也可以用 `dev\start.vbs`，它只是把上面这条命令藏掉控制台窗口；
+出错时跑 `dev\debug.bat` 能看到具体报错。）
 
 ## 用法
 
@@ -78,7 +83,7 @@ Spotify、PotPlayer、foobar2000 等。同时开多个时可以右键指定跟�
 文字立体：上下倾斜 / 左右倾斜可以同时生效（两个方向都拉满时文字平面像朝一个角倒过去），
 再叠上整体旋转可以做出各种角度；窗口会按当前参数自动多留一圈透明余量，所以拉到最大也不会被裁掉。
 
-![三种倾斜组合](screenshot-3d-tilt.png)
+![三种倾斜组合](assets/screenshots/screenshot-3d-tilt.png)
 
 其余分类：主题 / 界面模式 / 专辑样式、歌词字体（内置、导入 ttf·otf、从系统字体中选择）、
 歌词排版、歌词同步偏移、跟随哪个播放器、唱片面板的封面与进度条、锁定位置 / 鼠标穿透 / 置顶、
@@ -106,7 +111,7 @@ Spotify、PotPlayer、foobar2000 等。同时开多个时可以右键指定跟�
 - **专辑样式**（仅立体卡片，只影响左侧封面区，右侧歌词不变）：
   经典（方块+菱形）/ 黑胶唱片（带唱臂）/ 封面+唱片
 
-  ![立体卡片样式](screenshot-3d-styles.png)
+![立体卡片样式](assets/screenshots/screenshot-3d-styles.png)
 - **歌词列表行数**：1 / 3 / 5 / 7 / 9 / 11 行（想更细就在设置窗口里拖滑动条，1 ~ 15 行）
 - **歌词字体**：内置「得意黑」「霞鹜漫黑」（随程序打包，装上就能用、不用联网）/
   导入自己的 ttf·otf 字体 / 从系统字体中选择 / 打开字体文件夹
@@ -165,40 +170,24 @@ pip install --user PySide6-Essentials winrt-runtime winrt-Windows.Foundation ^
 ## 改完代码，让桌面上的程序立刻生效（开发用）
 
 桌面上的程序是**打包后的 exe**，改源码不会自动生效 —— 必须重新打包并覆盖安装目录。
-项目里放了一个一键脚本，改完代码在项目根目录跑：
+手动三步：
 
-```powershell
-powershell -ExecutionPolicy Bypass -File dev\deploy_local.ps1
-```
-
-它会依次做四件事：
-
-1. 结束正在运行的桌面歌词（避开 exe 占用和单实例检查）；
+1. 结束正在运行的桌面歌词（托盘退出 / 任务管理器），避开 exe 占用和单实例检查；
 2. `python -m PyInstaller desktop-lyric.spec --noconfirm` 重新打包；
-3. 把 `dist\LyricDesk.exe` 覆盖到 `%LOCALAPPDATA%\Programs\LyricDesk\LyricDesk.exe`；
-4. 重新启动 —— 桌面/托盘里的歌词立刻就是刚改完的版本，设置、导入的字体、
-   歌词缓存全部保留（`%APPDATA%\LyricDesk` 不动）。
+3. 把 `dist\LyricDesk.exe` 覆盖到 `%LOCALAPPDATA%\Programs\LyricDesk\LyricDesk.exe`，再启动。
 
-三个可选参数：
+`%APPDATA%\LyricDesk` 里的设置、导入的字体、歌词缓存都不会被动。
 
-| 参数 | 用途 |
-| --- | --- |
-| `-SkipBuild` | 不重新打包，只把现有 `dist\LyricDesk.exe` 覆盖过去并重启（秒级） |
-| `-Source` | 不打包、不动安装目录，直接用 `pythonw run.pyw` 从源码启动（最快看到效果） |
-| `-NoRestart` | 覆盖完不自动启动 |
-
-例如只想快速看一眼效果、不想等打包：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File dev\deploy_local.ps1 -Source
-```
+> 开发机上有一个把这三步包起来的 `dev\deploy_local.ps1`（还有 `-SkipBuild` /
+> `-Source` / `-NoRestart` 三个开关），它和 `dev\` 里其它脚本一样是本机工具，不在仓库内。
 
 ## 打包成独立程序（发给别人用，对方不需要装 Python）
 
 ```
-python dev\make_icon.py            # 重新生成图标（改过图标才需要）
 python -m PyInstaller desktop-lyric.spec --noconfirm
 ```
+
+（改过图标才需要重新生成 `desktop-lyric.ico`，用本机 `dev\make_icon.py`，不在仓库内。）
 
 默认输出**单文件** `dist\LyricDesk.exe`，约 39 MB，双击即可运行。
 
