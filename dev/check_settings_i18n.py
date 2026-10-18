@@ -140,9 +140,9 @@ def menu_labels(window) -> list[str]:
 def main() -> int:
     app = QApplication(sys.argv)
 
-    print("1) 宽度默认值 380 / 范围常量 / 不迁移老配置")
+    print("1) 宽度默认值 380 / 范围常量 / 老配置迁移")
     check("Settings() 默认宽度是 380", Settings().width == 380, str(Settings().width))
-    check("范围常量是 240 / 2560", (WIDTH_MIN, WIDTH_MAX) == (240, 2560))
+    check("范围常量是 240 / 1440", (WIDTH_MIN, WIDTH_MAX) == (240, 1440))
     source = (ROOT / "lyricdesk" / "window.py").read_text(encoding="utf-8")
     check(
         "_ask_width 用的是范围常量而不是字面量",
@@ -155,7 +155,7 @@ def main() -> int:
     )
     config.SETTINGS_PATH.write_text(json.dumps({"width": 880, "x": 10, "y": 20}), encoding="utf-8")
     old = Settings.load()
-    check("老配置里的 880 原样保留（没被迁移成 380）", old.width == 880, str(old.width))
+    check("老配置 880 按新口径迁移成 840（视觉宽度不变）", old.width == 840, str(old.width))
     check("「跟随系统」在本机解析成中文", i18n.resolve("") == "zh_CN", i18n.resolve(""))
 
     settings = Settings()
@@ -164,11 +164,11 @@ def main() -> int:
     window.show()
     app.processEvents()
     window.recalculate()
-    from lyricdesk.window import MARGIN
+    from lyricdesk.window import MARGIN, PAD
 
-    expected_px = 380 + (MARGIN + window._overscan) * 2
+    expected_px = 380 + PAD * 2 + (MARGIN + window._overscan) * 2
     check(
-        "默认窗口像素宽 ≈ 380 + 2×(MARGIN+余量)",
+        "默认窗口像素宽 ≈ 380 + 2×PAD + 2×(MARGIN+余量)",
         abs(window.width() - expected_px) <= 2,
         f"实际 {window.width()} / 预期 {expected_px}",
     )
@@ -335,6 +335,10 @@ def main() -> int:
     from lyricdesk.window import set_all_topmost_suspended
 
     check("默认没挂起", window._suspend_topmost is False)
+    # 新装默认不置顶了（任务 4），这里要测的是「挂起/恢复」逻辑，先显式打开置顶
+    settings.always_on_top = True
+    window.apply_flags()
+    app.processEvents()
     check(
         "默认是置顶的（settings.always_on_top=True）",
         bool(window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint),

@@ -88,15 +88,16 @@ def main() -> int:
         ("左右倾斜", -0.80, 0.80, 0.01),
         ("整体旋转", -90.0, 90.0, 1.0),
         ("封面大小", 40, 320, 2),
-        ("窗口宽度", 240, 2560, 10),
+        ("歌词宽度（歌词实际能显示多宽）", 240, 1440, 10),
+        ("播放器宽度", 0, 1440, 10),
         ("歌词字号", 12, 200, 1),
         ("歌词列表行数", 1, 15, 1),
         ("歌唱行间距", 0.50, 3.00, 0.05),
         ("整体不透明度", 5, 100, 1),
     ]
     check(
-        "一共 9 条滑动条",
-        len(rows) == 9,
+        "一共 10 条滑动条",
+        len(rows) == 10,
         f"实际 {len(rows)} 条",
     )
     for row, (title, lo, hi, step) in zip(rows, expected):
@@ -114,7 +115,8 @@ def main() -> int:
         "左右倾斜": "text_depth_h",
         "整体旋转": "text_tilt",
         "封面大小": "cover_size",
-        "窗口宽度": "width",
+        "歌词宽度（歌词实际能显示多宽）": "width",
+        "播放器宽度": "player_width",
         "歌词字号": "font_size",
         "歌词列表行数": "lyric_lines",
         "歌唱行间距": "line_spacing",
@@ -161,7 +163,7 @@ def main() -> int:
     check("菜单里有「设置…」", "设置…" in labels)
 
     print("\n设置窗口里的替代入口：")
-    for name in ("歌词排版", "整体不透明度", "上下倾斜", "左右倾斜", "整体旋转", "窗口宽度"):
+    for name in ("歌词排版", "整体不透明度", "上下倾斜", "左右倾斜", "整体旋转", "歌词宽度", "播放器宽度"):
         found = any(
             name in child.text()
             for child in dialog.findChildren(type(dialog._click_warn))
@@ -206,22 +208,24 @@ def main() -> int:
     settings.mode = "depth3d"
     settings.clamp()
 
-    print("\n文字倾斜的透明余量：")
+    print("\n文字倾斜的透明余量（真透视后按包围盒现算）：")
     settings.text_depth_v = 0.0
     settings.text_depth_h = 0.32
     settings.text_tilt = 0.0
     window.recalculate()
     base = (window._overscan, window._overscan_v)
-    check("默认参数下保持原来的 140 / 76", base == (140, 76), str(base))
+    check("默认倾斜不需要额外余量（透视只会往小里缩）", base == (0, 0), str(base))
     settings.text_depth_v = 0.80
     settings.text_depth_h = 0.80
     settings.text_tilt = 0.0
     window.recalculate()
     wide = window._overscan
-    check("两个方向拉满时余量变大", wide > 140, f"{wide} / {window._overscan_v}")
+    check("两个方向拉满：横向不需要余量", wide == 0, str(wide))
+    check("纵向余量按包围盒现算（不再是写死 76）", 0 <= window._overscan_v <= 80, str(window._overscan_v))
+    prev_v = window._overscan_v
     settings.text_tilt = 60.0
     window.recalculate()
-    check("再叠上旋转还够用", window._overscan_v > 76, str(window._overscan_v))
+    check("再叠上旋转，余量跟着变大", window._overscan_v > prev_v, f"{prev_v} → {window._overscan_v}")
 
     print("\n数值框（正数带 + 号）：")
     spin = rows[0].spin

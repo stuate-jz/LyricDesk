@@ -15,6 +15,7 @@ from pathlib import Path
 import requests
 
 from .config import cache_dir
+from .titles import clean_title
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -660,7 +661,13 @@ def fetch(
 
     prefer 是优先使用的曲库 key（qq / kugou / netease）——
     用户在放哪个播放器，就先试它自己家的曲库。
+
+    视频平台的标题常带 `_哔哩哔哩_bilibili` / `【4K修复】` 这类噪声，
+    搜曲库之前先洗一遍；歌曲 key（settings.song_offsets）仍用原始标题，不受影响。
     """
+    title = clean_title(title) or (title or "")
+    artist = clean_title(artist) or (artist or "")
+
     queries = []
     if artist:
         queries.append(f"{title} {artist}".strip())

@@ -26,6 +26,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "zh_CN": {
         # ---------- 外壳 ----------
         "app.title": "设置 · 桌面歌词",
+        "dialog.title": "设置",
         "top.always_on_top": "置顶显示",
         "top.always_on_top.hint": "让设置窗口一直浮在其它程序上面",
         "btn.close": "关闭",
@@ -76,11 +77,17 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "general.section.size": "尺寸",
         "general.cover_size": "封面大小",
-        "general.width": "窗口宽度",
+        "general.width": "歌词宽度（歌词实际能显示多宽）",
+        "general.player_width": "播放器宽度",
+        "general.player_width.auto": "自动（跟随封面）",
         "general.font_size": "歌词字号",
         "general.lyric_lines": "歌词列表行数",
         "general.line_spacing": "歌唱行间距",
-        "general.size.hint": "歌词列表行数 / 行间距只在立体卡片、纯歌词面板、分离面板下有意义。",
+        "general.size.hint": (
+            "歌词宽度 = 歌词实际能画文字的宽度；播放器宽度只影响唱片面板"
+            "（分离面板里那半边），选「自动」就跟着封面大小走。\n"
+            "歌词列表行数 / 行间距只在立体卡片、纯歌词面板、分离面板下有意义。"
+        ),
         "general.section.overall": "整体",
         "general.ui_opacity": "整体不透明度",
         "general.ui_opacity.hint": "整体不透明度只作用于桌面歌词本身；设置窗口自己不受影响。",
@@ -198,6 +205,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "en": {
         # ---------- shell ----------
         "app.title": "Settings · Desktop Lyrics",
+        "dialog.title": "Settings",
         "top.always_on_top": "Always on top",
         "top.always_on_top.hint": "Keep this settings window above other apps",
         "btn.close": "Close",
@@ -251,11 +259,15 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "general.section.size": "Size",
         "general.cover_size": "Cover size",
-        "general.width": "Window width",
+        "general.width": "Lyric width (usable text width)",
+        "general.player_width": "Player width",
+        "general.player_width.auto": "Auto (follow cover)",
         "general.font_size": "Lyric font size",
         "general.lyric_lines": "Lyric list lines",
         "general.line_spacing": "Line spacing",
         "general.size.hint": (
+            "Lyric width = the width actually available for text; player width only affects "
+            "the disc panel (the other half of split mode), and \"Auto\" follows the cover size.\n"
             "Lyric list lines / line spacing only matter in 3D card, lyrics-only and split mode."
         ),
         "general.section.overall": "Overall",

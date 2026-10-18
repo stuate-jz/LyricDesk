@@ -79,9 +79,15 @@ THEMES: dict[str, dict[str, str]] = {
 
 THEME_ORDER = ["aurora", "sakura", "sunset", "jade", "ink"]
 
-# 窗口宽度的可调范围：clamp()、「自定义宽度…」对话框、设置窗口的滑动条
-# 都从这里取，避免以后三处对不上
-WIDTH_MIN, WIDTH_MAX = 240, 2560
+# 歌词宽度的可调范围：clamp()、「自定义宽度…」对话框、设置窗口的滑动条
+# 都从这里取，避免以后三处对不上。
+# 语义：width = 歌词**实际能画文字**的像素宽（不含 MARGIN / PAD / 倾斜余量）。
+WIDTH_MIN, WIDTH_MAX = 240, 1440
+# 唱片/播放器面板的宽度（分离面板里那半边），单独一套；0 = 自动（跟随封面）
+PLAYER_WIDTH_MIN, PLAYER_WIDTH_MAX = 240, 1440
+# 旧版 width 是「窗口宽」口径，迁移到新口径时减掉左右两个 PAD。
+# （window.PAD = 20；这里不 import window 是为了避免 config → window 循环依赖）
+LEGACY_WIDTH_SHIFT = 40
 
 # 界面语言："" 跟随系统 / zh_CN 中文 / en English
 LANGUAGES = ("", "zh_CN", "en")
@@ -95,7 +101,7 @@ class Settings:
     """所有可调参数。保存为 JSON。"""
 
     theme: str = "aurora"
-    mode: str = "depth3d"
+    mode: str = "lyrics"
     font_family: str = "Microsoft YaHei UI"
     font_size: int = 38
     opacity: float = 0.90
@@ -130,6 +136,8 @@ class Settings:
     show_prev: bool = False
     show_next: bool = True
     width: int = 380
+    # 唱片/播放器面板宽度：0 = 自动（按封面尺寸算），>= PLAYER_WIDTH_MIN 才生效
+    player_width: int = 0
     # 设置窗口的语言与外观（只影响设置窗口本身）
     language: str = ""
     dialog_theme: str = "auto"
@@ -137,7 +145,7 @@ class Settings:
     y: int = -1
     locked: bool = False
     click_through: bool = False
-    always_on_top: bool = True
+    always_on_top: bool = False
     offset_ms: int = 0
     # 每首歌单独记的偏移：{"歌名|歌手": 毫秒}。
     # 有的歌歌词是另一个版本的（整体差几秒），调好之后不该影响别的歌，
@@ -145,7 +153,7 @@ class Settings:
     song_offsets: dict = field(default_factory=dict)
     # 设置文件的格式版本：2 起偏移才是「一歌一记」。
     # 老文件没有这个字段，用来判断要不要把遗留的全局偏移清掉。
-    settings_version: int = 2
+    settings_version: int = 3
     preferred_player: str = ""
     # 检查更新的来源：owner/repo、gitee:owner/repo、http(s) 链接或本地 json 路径
     update_source: str = ""
@@ -201,6 +209,16 @@ class Settings:
         # 默认值不会被误清。
         if "settings_version" not in raw and obj.offset_ms and not obj.song_offsets:
             obj.offset_ms = 0
+        # 版本 3：width 的含义从「窗口宽」改成「歌词可用宽」。
+        # 老用户按 2×PAD 减一下，歌词的视觉宽度不变（窗口总宽也不变）。
+        try:
+            version = int(raw.get("settings_version", 2))
+        except (TypeError, ValueError):
+            version = 2
+        if version < 3:
+            obj.width = max(WIDTH_MIN, int(raw.get("width", obj.width)) - LEGACY_WIDTH_SHIFT)
+        # 迁移完之后写回当前格式号，否则每次启动都会再减一次
+        obj.settings_version = 3
         obj.clamp()
         return obj
 
@@ -219,6 +237,10 @@ class Settings:
         # 两边不一致就会出现「拖到头了但值没变」的怪现象。
         self.font_size = max(12, min(200, int(self.font_size)))
         self.width = max(WIDTH_MIN, min(WIDTH_MAX, int(self.width)))
+        player = int(self.player_width)
+        self.player_width = (
+            0 if player <= 0 else max(PLAYER_WIDTH_MIN, min(PLAYER_WIDTH_MAX, player))
+        )
         if self.language not in LANGUAGES:
             self.language = ""
         if self.dialog_theme not in DIALOG_THEMES:

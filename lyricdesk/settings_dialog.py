@@ -17,8 +17,8 @@ from __future__ import annotations
 import re
 import sys
 
-from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFontDatabase
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -41,6 +42,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .autostart import is_enabled
 from .config import (
+    PLAYER_WIDTH_MAX,
     THEMES,
     THEME_ORDER,
     WIDTH_MAX,
@@ -201,7 +203,33 @@ def _style_context(theme: str, mode: str) -> dict[str, str]:
     # 滑块圆钮：深色皮肤上要够亮，浅色皮肤上用白钮 + 彩色描边
     context["HANDLE"] = palette["text"] if mode == "dark" else "#ffffff"
     context["HANDLE_HOVER"] = "#ffffff" if mode == "dark" else "#f2f5fb"
+    context["CHECK_ICON"] = _check_icon_rule()
     return context
+
+
+# 勾选框里那个白色对勾。Qt 的 QSS `image:` 只认文件路径（data: URL 不生效），
+# 所以这里把 SVG 落到缓存目录，再让样式表引用它。
+_CHECK_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+    '<path d="M3.5 8.5l3 3 6-6" stroke="#ffffff" stroke-width="2" '
+    'fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+)
+_CHECK_ICON_CACHE: list[str] = []
+
+
+def _check_icon_rule() -> str:
+    if _CHECK_ICON_CACHE:
+        return _CHECK_ICON_CACHE[0]
+    path = cache_dir() / "ui" / "check.svg"
+    try:
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_CHECK_SVG, encoding="utf-8")
+        rule = f'image: url("{path.as_posix()}");'
+    except OSError:
+        rule = ""  # 缓存目录写不了就退回纯色块，不至于整段样式失效
+    _CHECK_ICON_CACHE.append(rule)
+    return rule
 
 
 def _render(template: str, context: dict[str, str]) -> str:
@@ -220,6 +248,8 @@ QLabel#section {
     color: %TEXT_DIM%; font-size: 12px; font-weight: 600;
     padding-top: 8px; padding-bottom: 2px;
 }
+QLabel#brand { color: %TEXT%; font-size: 15px; font-weight: 600; }
+QLabel#brand { color: %TEXT%; font-size: 15px; font-weight: 600; }
 QLabel#hint { color: %TEXT_DIM%; font-size: 12px; }
 QLabel#warn { color: %WARN%; font-size: 12px; font-weight: 600; }
 QLabel#value { color: %TEXT_DIM%; font-size: 12px; }
@@ -290,8 +320,11 @@ QCheckBox::indicator {
     width: 15px; height: 15px; border-radius: 4px;
     border: 1px solid %LINE%; background: %CARD%;
 }
-/* 勾选符号的颜色 Qt 不接受 QSS 设置，这里用 on_accent 描边保证"勾上了"看得出来 */
-QCheckBox::indicator:checked { background: %ACCENT%; border: 1px solid %ON_ACCENT%; }
+/* 勾选时：主题色块 + 内联 SVG 白色对勾（不新增图片文件） */
+QCheckBox::indicator:checked {
+    background: %ACCENT%; border: 1px solid %ACCENT%;
+    %CHECK_ICON%
+}
 QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
 QScrollBar::handle:vertical { background: %ACCENT_SOFT%; border-radius: 5px; min-height: 30px; }
 QScrollBar::handle:vertical:hover { background: %ACCENT%; }
@@ -372,7 +405,10 @@ QCheckBox::indicator {
     width: 15px; height: 15px; border-radius: 4px;
     border: 1px solid %LINE%; background: %PANEL%;
 }
-QCheckBox::indicator:checked { background: %ACCENT%; border: 1px solid %ON_ACCENT%; }
+QCheckBox::indicator:checked {
+    background: %ACCENT%; border: 1px solid %ACCENT%;
+    %CHECK_ICON%
+}
 QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
 QScrollBar::handle:vertical { background: %ACCENT_SOFT%; border-radius: 5px; min-height: 30px; }
 QScrollBar::handle:vertical:hover { background: %ACCENT%; }
@@ -541,6 +577,7 @@ class SliderRow(QWidget):
         decimals: int = 0,
         signed: bool = False,
         coalesce_ms: int = 0,
+        special_min: str = "",
         tooltip: str = "",
         parent=None,
     ) -> None:
@@ -573,6 +610,9 @@ class SliderRow(QWidget):
         self.spin.setValue(float(max(minimum, min(maximum, value))))
         if unit:
             self.spin.setSuffix(f" {unit}")
+        if special_min:
+            # 最小刻度显示成一句话（比如播放器宽度的「自动」）
+            self.spin.setSpecialValueText(special_min)
         self.spin.setFixedWidth(100)
         self.spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -596,6 +636,9 @@ class SliderRow(QWidget):
         self.spin.valueChanged.connect(self._from_spin)
 
     # ---------- 换算 ----------
+
+    def set_special_min(self, text: str) -> None:
+        self.spin.setSpecialValueText(text)
 
     def _to_ticks(self, value: float) -> int:
         return int(round(float(value) / self._step))
@@ -669,13 +712,13 @@ class SliderRow(QWidget):
 class SettingsDialog(QDialog):
     """程序设置窗口（非模态，改动即时生效）。"""
 
-    # 左侧分类：key 与中文原文
+    # 左侧分类：(Fluent 图标字形, key, 中文原文)
     NAV = (
-        ("nav.general", "界面"),
-        ("nav.lyrics", "歌词"),
-        ("nav.player", "播放"),
-        ("nav.window", "窗口与交互"),
-        ("nav.update", "更新与关于"),
+        ("\uE7F4", "nav.general", "界面"),
+        ("\uE8D6", "nav.lyrics", "歌词"),
+        ("\uE768", "nav.player", "播放"),
+        ("\uE8A7", "nav.window", "窗口与交互"),
+        ("\uE946", "nav.update", "更新与关于"),
     )
 
     def __init__(self, window, parent=None) -> None:
@@ -752,11 +795,18 @@ class SettingsDialog(QDialog):
 
         body = QHBoxLayout()
         body.setSpacing(12)
+        sidebar = QWidget()
+        sidebar.setFixedWidth(178)
+        side_col = QVBoxLayout(sidebar)
+        side_col.setContentsMargins(0, 0, 0, 0)
+        side_col.setSpacing(8)
+        side_col.addWidget(self._brand())
         self.nav = QListWidget()
-        self.nav.setFixedWidth(150)
         self.nav.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.nav.setIconSize(QSize(18, 18))
+        side_col.addWidget(self.nav, 1)
         self.pages = QStackedWidget()
-        body.addWidget(self.nav)
+        body.addWidget(sidebar)
         body.addWidget(self.pages, 1)
         outer.addLayout(body, 1)
 
@@ -778,10 +828,73 @@ class SettingsDialog(QDialog):
         self._page_window()
         self._page_update()
 
-        for key, default in self.NAV:
-            self.nav.addItem(tr(key, default))
+        for glyph, key, default in self.NAV:
+            item = QListWidgetItem(tr(key, default))
+            item.setData(Qt.ItemDataRole.UserRole, glyph)
+            self.nav.addItem(item)
         self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.nav.setCurrentRow(0)
+
+    def _brand(self) -> QWidget:
+        """左侧顶部的品牌区：图标 + 「设置」+ 版本号。"""
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(2, 0, 2, 8)
+        row.setSpacing(10)
+
+        icon = QLabel()
+        icon.setFixedSize(44, 44)
+        icon.setPixmap(self._brand_pixmap())
+        row.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+
+        column = QVBoxLayout()
+        column.setSpacing(1)
+        column.setContentsMargins(0, 2, 0, 0)
+        self._brand_title = QLabel(tr("dialog.title", "设置"))
+        self._brand_title.setObjectName("brand")
+        self._brand_version = QLabel(f"v{__version__}")
+        self._brand_version.setObjectName("value")
+        column.addWidget(self._brand_title)
+        column.addWidget(self._brand_version)
+        column.addStretch(1)
+        row.addLayout(column, 1)
+        return holder
+
+    def _brand_pixmap(self) -> QPixmap:
+        """程序图标（项目里的 .ico）；读不到就画一个音符兜底。"""
+        icon = QIcon(str(app_dir() / "desktop-lyric.ico"))
+        if not icon.isNull():
+            return icon.pixmap(QSize(44, 44))
+        pixmap = QPixmap(44, 44)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(QColor("#38bdf8"))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(0, 0, 44, 44, 12, 12)
+        painter.setPen(QColor("#0b1020"))
+        font = QFont()
+        font.setPixelSize(26)
+        painter.setFont(font)
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "\u266a")
+        painter.end()
+        return pixmap
+
+    def _nav_icon(self, glyph: str, color: QColor) -> QIcon:
+        """把 Fluent 字形画成图标（按主题色着色，2× 渲染保证 150% 缩放下不糊）。"""
+        family = getattr(self.window, "_icon_family", "") or "Segoe UI Symbol"
+        pixmap = QPixmap(36, 36)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        font = QFont(family)
+        font.setPixelSize(22)
+        painter.setFont(font)
+        painter.setPen(color)
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, glyph)
+        painter.end()
+        pixmap.setDevicePixelRatio(2.0)
+        return QIcon(pixmap)
 
     def _page(self, name_key: str, name_default: str) -> QVBoxLayout:
         """新建一个分类页，返回可以往里塞控件的竖直布局。
@@ -857,6 +970,8 @@ class SettingsDialog(QDialog):
         decimals: int = 0,
         signed: bool = False,
         coalesce_ms: int = 0,
+        special_min_key: str = "",
+        special_min: str = "",
     ) -> SliderRow:
         row = SliderRow(
             self._t(key, default_text),
@@ -870,6 +985,7 @@ class SettingsDialog(QDialog):
             decimals=decimals,
             signed=signed,
             coalesce_ms=coalesce_ms,
+            special_min=tr(special_min_key, special_min) if special_min_key else special_min,
             tooltip=tr("slider.reset.tooltip", "双击恢复默认值"),
         )
         self._bind_text(row, key, default_text, "set_title")
@@ -877,6 +993,10 @@ class SettingsDialog(QDialog):
         if unit_key:
             self._i18n_refresh.append(
                 lambda r=row, k=unit_key, d=unit: r.set_unit(tr(k, d))
+            )
+        if special_min_key:
+            self._i18n_refresh.append(
+                lambda r=row, k=special_min_key, d=special_min: r.set_special_min(tr(k, d))
             )
         layout.addWidget(row)
         self._refreshers.append(lambda r=row, g=getter: r.set_value(g()))
@@ -1091,12 +1211,25 @@ class SettingsDialog(QDialog):
         self._slider(
             layout,
             "general.width",
-            "窗口宽度",
+            "歌词宽度（歌词实际能显示多宽）",
             getter=lambda: settings.width,
             apply=lambda v: self.window._set_width(int(round(v))),
             minimum=WIDTH_MIN, maximum=WIDTH_MAX, step=10, default=self._defaults.width,
             unit="px", coalesce_ms=60,
         )
+        player_width_row = self._slider(
+            layout,
+            "general.player_width",
+            "播放器宽度",
+            getter=lambda: settings.player_width,
+            apply=lambda v: self.window._set_player_width(int(round(v))),
+            minimum=0, maximum=PLAYER_WIDTH_MAX, step=10,
+            default=self._defaults.player_width,
+            unit="px", coalesce_ms=60,
+            special_min_key="general.player_width.auto",
+            special_min="自动（跟随封面）",
+        )
+        self._bind_mode(player_width_row, "album", "split")
         self._slider(
             layout,
             "general.font_size",
@@ -1533,7 +1666,9 @@ class SettingsDialog(QDialog):
     def retranslate(self) -> None:
         """语言切换后把已建好的控件文案重刷一遍（不重建窗口）。"""
         self.setWindowTitle(tr("app.title", "设置 · 桌面歌词"))
-        for index, (key, default) in enumerate(self.NAV):
+        if getattr(self, "_brand_title", None) is not None:
+            self._brand_title.setText(tr("dialog.title", "设置"))
+        for index, (_glyph, key, default) in enumerate(self.NAV):
             item = self.nav.item(index)
             if item is not None:
                 item.setText(tr(key, default))
@@ -1553,6 +1688,15 @@ class SettingsDialog(QDialog):
         self._style_mode = mode
         self._style_theme = settings.theme
         self.setStyleSheet(build_style(mode, settings.theme))
+        # 左侧分类图标跟着主题色走
+        accent = QColor(palette_for(mode, settings.theme)["accent"])
+        nav = getattr(self, "nav", None)
+        if nav is not None:
+            for index in range(nav.count()):
+                item = nav.item(index)
+                glyph = item.data(Qt.ItemDataRole.UserRole)
+                if glyph:
+                    item.setIcon(self._nav_icon(str(glyph), accent))
         self.update()
 
     def _set_always_on_top(self, checked: bool) -> None:

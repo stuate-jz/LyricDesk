@@ -143,13 +143,13 @@
     </div>
     <div class="btns">
       <a class="btn btn-main" id="download"
-         href="https://gitee.com/pursue-studies/LyricDesk/releases/latest"
-         target="_blank" rel="noopener">&#8681;&nbsp;下载 Windows 版（Gitee）</a>
-      <a class="btn btn-ghost" id="dl-github"
          href="https://github.com/stuate-jz/LyricDesk/releases/latest"
-         target="_blank" rel="noopener">GitHub 备用下载</a>
+         target="_blank" rel="noopener">&#8681;&nbsp;下载 Windows 版（GitHub）</a>
+      <a class="btn btn-ghost" id="dl-gitee"
+         href="https://gitee.com/pursue-studies/LyricDesk/releases/latest"
+         target="_blank" rel="noopener">Gitee 备用下载（国内更快）</a>
     </div>
-    <div class="hint" id="sizehint">约 45 MB · 安装包，双击一路下一步 · Windows 10 / 11　｜　国内建议用 Gitee，速度更稳；GitHub 需要能访问外网。</div>
+    <div class="hint" id="sizehint">约 45 MB · 安装包 · Windows 10/11　｜　GitHub 需要能访问外网；国内网络不稳时用 Gitee。</div>
   </div>
 
   <div class="card" style="margin-top:26px">
@@ -220,8 +220,8 @@
   <footer>
     <div id="reqline">Windows 10 1809 或更高（Win11 最佳）</div>
     <div>全部版本：
-      <a href="https://gitee.com/pursue-studies/LyricDesk/releases" target="_blank" rel="noopener">Gitee</a> ·
-      <a href="https://github.com/stuate-jz/LyricDesk/releases" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/stuate-jz/LyricDesk/releases" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="https://gitee.com/pursue-studies/LyricDesk/releases" target="_blank" rel="noopener">Gitee</a>
     </div>
     <div>桌面歌词 LyricDesk · 免费使用</div>
   </footer>
@@ -232,8 +232,8 @@
    下面的 FALLBACK 只在直接双击本地打开（file:// 读不到 json）或 fetch 失败时兜底，
    所以要跟当前版本保持一致：version / date / notes 跟 packaging/update.json 同步。 */
 const FALLBACK = {
-  version: "1.6.5",
-  date: "2026-10-11",
+  version: "1.6.6",
+  date: "2026-10-18",
   notes: "· 新增：设置界面「更新与关于」里加入发布页网址，点开即可看更新动态\n· 新增：每个主题都有专属的设置界面配色（极光/樱花/落日/青竹/素白 各不相同）\n· 变更：去掉「显示上一首按钮 / 显示下一首按钮」两个开关，统一由「显示播放控制」控制\n· 优化：设置界面主题色标题带与选中态，主题切换一眼可辨",
   url: "https://gitee.com/pursue-studies/LyricDesk/releases",
   page_url: "https://gitee.com/pursue-studies/LyricDesk/releases",
@@ -243,7 +243,7 @@ const FALLBACK = {
 };
 
 /* 体积行尾巴：两个平台都提示一下，Gitee 优先 */
-const SIZE_TAIL = "· 安装包，双击一路下一步 · Windows 10 / 11　｜　国内建议用 Gitee，速度更稳；GitHub 需要能访问外网。";
+const SIZE_TAIL = "· 安装包 · Windows 10/11　｜　GitHub 需要能访问外网；国内网络不稳时用 Gitee。";
 
 function text(id, value) {
   const el = document.getElementById(id);

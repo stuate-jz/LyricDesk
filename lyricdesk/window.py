@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
-from .config import THEMES, WIDTH_MAX, WIDTH_MIN, Settings
+from .config import PLAYER_WIDTH_MIN, THEMES, WIDTH_MAX, WIDTH_MIN, Settings
 from .covers import CoverLoader
 from . import heat as heat_lookup
 from .i18n import tr
@@ -78,6 +78,40 @@ from .render import (
 
 MARGIN = 24
 PAD = 20
+
+# 深度拉满时平面转多少度（约等于手指在桌面上一张卡片的倾斜）
+MAX_DEPTH_ANGLE = 42.0
+
+
+def depth_angle(value: float) -> float:
+    """把滑块的 -0.80~+0.80 映射成旋转角（1.35 次幂让小值更平缓）。"""
+    v = max(-0.80, min(0.80, float(value))) / 0.80
+    return math.copysign(MAX_DEPTH_ANGLE * (abs(v) ** 1.35), v)
+
+
+def _project_points(
+    points, width: float, height: float, theta_h: float, theta_v: float
+) -> list[tuple[float, float]]:
+    """把单位坐标点 (u,v) ∈ [-1,1]² 投影到屏幕（相对平面中心）。
+
+    虚拟相机在平面正前方 D 处，按透视除法缩小远处的点；最后按
+    「离相机最近的点的缩放 = 1」归一化 —— 这样把倾斜调大只会让远侧变小，
+    不会出现「一开倾角整块缩小」或者「越调越大」的跳变。
+    """
+    D = 1.5 * width
+    cos_h, sin_h = math.cos(theta_h), math.sin(theta_h)
+    cos_v, sin_v = math.cos(theta_v), math.sin(theta_v)
+    raw: list[tuple[float, float, float]] = []
+    for u, v in points:
+        x, y, z = u * width / 2.0, v * height / 2.0, 0.0
+        # 绕竖直轴（左右倾斜）
+        x, z = x * cos_h + z * sin_h, -x * sin_h + z * cos_h
+        # 绕水平轴（上下倾斜）
+        y, z = y * cos_v - z * sin_v, y * sin_v + z * cos_v
+        k = D / (D + z)
+        raw.append((x * k, y * k, k))
+    nearest = max(item[2] for item in raw) or 1.0
+    return [(x / nearest, y / nearest) for x, y, _k in raw]
 TEXT_GAP = 18
 CONTROLS_GAP = 16.0
 ANIM_DURATION = 0.34
@@ -367,6 +401,10 @@ class LyricWindow(QWidget):
         self._overscan = 0
         self._overscan_v = 0
         mode = self._effective_mode()
+        # 窗口宽 = 内容宽 + 左右 PAD + 左右 MARGIN / 倾斜余量。
+        # 歌词 / 立体卡片用 settings.width（歌词实际能画多宽），
+        # 唱片面板用 settings.player_width（0 = 按封面自动算）。
+        window_w = float(settings.width)
         if mode == "depth3d":
             fm_list = self._metrics["list"]
             self._list_slot = fm_list.height() * 1.52 * settings.line_spacing
@@ -403,6 +441,11 @@ class LyricWindow(QWidget):
             self._album_text_h = text_h
             art_h = self._disc_size if settings.show_cover else 0.0
             content_h = PAD * 2 + max(art_h, text_h)
+            if settings.player_width >= PLAYER_WIDTH_MIN:
+                window_w = float(settings.player_width)
+            else:
+                # 自动：按封面 + 文字需要的宽度（保持原来的观感）
+                window_w = float(max(280, int(self._disc_size) + 220))
         elif mode == "lyrics":
             fm_list = self._metrics["list"]
             self._list_slot = fm_list.height() * 1.52 * settings.line_spacing
@@ -453,7 +496,7 @@ class LyricWindow(QWidget):
             )
 
         self.resize(
-            int(settings.width) + (MARGIN + self._overscan) * 2,
+            int(window_w) + PAD * 2 + (MARGIN + self._overscan) * 2,
             int(content_h) + (MARGIN + self._overscan_v) * 2,
         )
         self._bg_key = None
@@ -467,34 +510,35 @@ class LyricWindow(QWidget):
     def _tilt_overscan(self, list_w: float, list_h: float) -> tuple[int, int]:
         """按当前的倾斜 / 旋转算出要留的透明余量（x, y）。
 
-        `_list_transform()` 会把歌词那一列映射到一个「内倾 + 旋转」的四边形上，
-        近端四角会被放大，所以窗口必须比内容多留一圈，否则文字会被裁掉。
-
-        以前这里写死 140 / 76，是按老的 ±0.5 景深估的。现在景深和旋转的范围
-        都放宽了（±0.80 / ±90°），最狠的组合（两个方向都拉满）四角会放大
-        `(1 + 0.45 × 0.80)² ≈ 1.85` 倍，再叠上旋转，老余量必然裁字。
-
-        所以这里按实际参数现算：取「最大放大系数 m」乘上旋转后的投影，
-        得到四边形相对内容框的最大外扩量。上限做了封顶 —— 超出就只是极端
-        组合下略微裁一点，总比把窗口撑到几千像素、挡住整个桌面好。
+        `_list_transform()` 用的是真透视投影（虚拟相机 + 透视除法），
+        「近边放大」的幅度不再是 1 + 0.45×depth 那种线性公式，
+        所以这里干脆按同一套公式把 8 个点（四角 + 四边中点）投影出来，
+        取旋转后的包围盒，多出来的那圈就是必须留的余量。
         """
-        near = 0.45  # 与 _list_transform() 里的 near 保持一致
-        depth_h = abs(float(self.settings.text_depth_h))
-        depth_v = abs(float(self.settings.text_depth_v))
-        m = (1.0 + near * depth_h) * (1.0 + near * depth_v)
+        # 和 _list_transform() 用同一块「文字宽度」来算，透视平面才是同一张
+        width = self._lyric_text_width(max(60.0, float(list_w)))
+        height = max(40.0, float(list_h))
+        theta_h = math.radians(depth_angle(self.settings.text_depth_h))
+        theta_v = math.radians(depth_angle(self.settings.text_depth_v))
+        projected = _project_points(
+            (
+                (-1, -1), (1, -1), (1, 1), (-1, 1),
+                (0, -1), (0, 1), (-1, 0), (1, 0),
+            ),
+            width,
+            height,
+            theta_h,
+            theta_v,
+        )
         angle = math.radians(min(90.0, abs(float(self.settings.text_tilt))))
         cos_a = abs(math.cos(angle))
         sin_a = abs(math.sin(angle))
-        # 旋转后的外接框：横向 = 宽向投影 + 高向投影（纵向同理）
-        bound_x = (list_w / 2.0) * m * cos_a + (list_h / 2.0) * m * sin_a
-        bound_y = (list_w / 2.0) * m * sin_a + (list_h / 2.0) * m * cos_a
-        extra_x = max(0.0, bound_x - list_w / 2.0)
-        extra_y = max(0.0, bound_y - list_h / 2.0)
-        # 下限保持原来的观感（默认参数下算出来是 0，这里兜到 140 / 76）
-        return (
-            int(min(560.0, max(140.0, extra_x))),
-            int(min(360.0, max(76.0, extra_y))),
-        )
+        bound_x = max(abs(px) * cos_a + abs(py) * sin_a for px, py in projected)
+        bound_y = max(abs(px) * sin_a + abs(py) * cos_a for px, py in projected)
+        extra_x = max(0.0, bound_x - width / 2.0)
+        extra_y = max(0.0, bound_y - height / 2.0)
+        # 上限只是防止极端组合把窗口撑到几千像素
+        return (int(min(560.0, extra_x)), int(min(360.0, extra_y)))
 
     def _effective_mode(self) -> str:
         """面板角色优先于全局界面模式。"""
@@ -538,20 +582,20 @@ class LyricWindow(QWidget):
             return
 
         if settings.x < 0:
-            self._center_bottom()
+            self._default_position()
         else:
             self.move(settings.x, settings.y)
 
-    def _center_bottom(self) -> None:
+    def _default_position(self) -> None:
+        """新装用户的默认落位：屏幕右上偏中（1707 宽的屏上大约 x≈915、y=25）。
+
+        用比例算而不是写死坐标，换分辨率 / 缩放也不会跑到屏幕外。
+        """
         screen = self.screen() or QApplication.primaryScreen()
         area = screen.availableGeometry()
-        full = screen.geometry()
-        # 任务栏若设为自动隐藏，availableGeometry 不会为它让出空间，
-        # 这里多留一些底部余量，免得被弹出的任务栏盖住。
-        margin = 150 if area.height() >= full.height() - 4 else 90
         self.move(
-            area.x() + (area.width() - self.width()) // 2,
-            area.y() + area.height() - self.height() - margin,
+            area.x() + int(area.width() * 0.81) - self.width(),
+            area.y() + 25,
         )
         self._remember_position()
 
@@ -1078,6 +1122,40 @@ class LyricWindow(QWidget):
         finally:
             painter.restore()
 
+    def _lyric_text_width(self, band: float) -> float:
+        """当前歌词里最长一行的像素宽（用于决定透视平面的宽度）。
+
+        透视的强弱跟「文字这块有多宽」走，而不是跟窗口有多宽走 ——
+        否则同一个窗口拉到 1440 之后，同样一句歌词的变形会明显变轻。
+        """
+        fm = self._metrics.get("list")
+        fm_cur = self._metrics.get("list_cur") or fm
+        lyrics = getattr(self.engine, "lyrics", None)
+        if fm is None or lyrics is None or not getattr(lyrics, "lines", None):
+            return band
+        key = (
+            id(lyrics),
+            len(lyrics.lines),
+            round(fm.height(), 2),
+            round(fm_cur.height(), 2),
+            round(band, 1),
+            round(float(self.settings.line_spacing), 3),
+        )
+        cached = getattr(self, "_text_w_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        widest = 0.0
+        for line in lyrics.lines:
+            if line.text:
+                widest = max(
+                    widest,
+                    fm.horizontalAdvance(line.text),
+                    fm_cur.horizontalAdvance(line.text),
+                )
+        value = max(60.0, min(band, widest))
+        self._text_w_cache = (key, value)
+        return value
+
     def _list_transform(self, left, right, center_y):
         """把歌词文字放在一个向内倾斜的平面上（上下 / 左右可同时生效）。"""
         tilt = float(self.settings.text_tilt)
@@ -1091,48 +1169,42 @@ class LyricWindow(QWidget):
         if abs(tilt) < 0.01 and abs(depth_v) < 0.001 and abs(depth_h) < 0.001:
             return None
 
-        width = max(60.0, right - left)
+        band = max(60.0, right - left)
+        width = self._lyric_text_width(band)
         height = max(40.0, self._list_slot * self._list_count)
-        cx = (left + right) / 2.0
+        # 按「歌词排版」决定这块文字贴在哪边：透视只作用在文字自己身上
+        align = self.settings.lyric_align
+        if align == "left":
+            x0 = left
+        elif align == "center":
+            x0 = (left + right - width) / 2.0
+        else:
+            x0 = right - width
+        x1 = x0 + width
+        cx = (x0 + x1) / 2.0
         cy = center_y
 
         src = QPolygonF(
             [
-                QPointF(left, cy - height / 2.0),
-                QPointF(right, cy - height / 2.0),
-                QPointF(right, cy + height / 2.0),
-                QPointF(left, cy + height / 2.0),
+                QPointF(x0, cy - height / 2.0),
+                QPointF(x1, cy - height / 2.0),
+                QPointF(x1, cy + height / 2.0),
+                QPointF(x0, cy + height / 2.0),
             ]
         )
 
-        # 两个方向各自给出「窄 / 宽」缩放，四角按乘积放大缩小。
-        # 负号 = 反方向（右窄左宽 / 下窄上宽）：把两侧的缩放对调即可，
-        # 这样近端放大的幅度不变，窗口不用额外留边。
-        near = 0.45
-
-        far_h, near_h = 1.0 - abs(depth_h), 1.0 + near * abs(depth_h)
-        if depth_h < 0:
-            far_h, near_h = near_h, far_h
-
-        far_v, near_v = 1.0 - abs(depth_v), 1.0 + near * abs(depth_v)
-        if depth_v < 0:
-            far_v, near_v = near_v, far_v
-
-        tl = far_h * far_v
-        tr = near_h * far_v
-        br = near_h * near_v
-        bl = far_h * near_v
-        corners = [
-            (cx - width / 2.0 * tl, cy - height / 2.0 * tl),
-            (cx + width / 2.0 * tr, cy - height / 2.0 * tr),
-            (cx + width / 2.0 * br, cy + height / 2.0 * br),
-            (cx - width / 2.0 * bl, cy + height / 2.0 * bl),
-        ]
+        # 真·透视：平面绕中心转两个轴，再用「虚拟相机 + 透视除法」投影。
+        # 旧的「近边 ×(1+0.45d)、远边 ×(1−d)」是线性缩放，调大就会把字撑大，
+        # 而且整块窗口一起缩，窗口越宽越夸张；这里换成真正的 3D 透视。
+        theta_v = math.radians(depth_angle(depth_v))
+        theta_h = math.radians(depth_angle(depth_h))
+        corners = _project_points(
+            ((-1, -1), (1, -1), (1, 1), (-1, 1)), width, height, theta_h, theta_v
+        )
         angle = math.radians(tilt)
         cos_a, sin_a = math.cos(angle), math.sin(angle)
         dst = QPolygonF()
-        for x, y in corners:
-            dx, dy = x - cx, y - cy
+        for dx, dy in corners:
             dst.append(
                 QPointF(cx + dx * cos_a - dy * sin_a, cy + dx * sin_a + dy * cos_a)
             )
@@ -2833,6 +2905,11 @@ class LyricWindow(QWidget):
 
     def _set_width(self, value: int) -> None:
         self.settings.width = value
+        self._commit(resize=True)
+
+    def _set_player_width(self, value: int) -> None:
+        """唱片/播放器面板宽度；0 = 自动（跟随封面）。"""
+        self.settings.player_width = 0 if int(value) <= 0 else int(value)
         self._commit(resize=True)
 
     def _ask_width(self) -> None:

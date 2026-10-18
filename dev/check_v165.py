@@ -281,7 +281,8 @@ def main() -> int:
     old = Settings.load()
     check(
         "带 show_prev/show_next 的老配置能加载",
-        old.show_prev is True and old.show_next is False and old.width == 500,
+        # width 500 是旧口径（窗口宽），v3 迁成歌词可用宽 500-40=460
+        old.show_prev is True and old.show_next is False and old.width == 460,
         f"{old.show_prev}/{old.show_next}/{old.width}",
     )
     check(
