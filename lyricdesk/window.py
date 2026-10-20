@@ -3175,8 +3175,58 @@ class LyricWindow(QWidget):
         self.update()
 
     def _toggle_bili_mode(self) -> None:
-        """B 站客户端字幕开关（默认关；关着的时候引擎完全不会碰 9225 端口）。"""
-        self.settings.bili_mode = not self.settings.bili_mode
+        """B 站客户端字幕开关。
+
+        打开时自动准备 B 站：端口在就什么都不做；B 站没跑就带端口启动；
+        B 站正在跑（不带端口）→ 问一次再重启（会中断当前播放）。
+        """
+        if self.settings.bili_mode:
+            self.settings.bili_mode = False
+            self._commit()
+            return
+
+        from PySide6.QtWidgets import QMessageBox
+
+        from . import bili_launcher
+
+        if not bili_launcher.debug_ready():
+            exe = bili_launcher.find_exe()
+            if exe is None:
+                box = self._update_box(
+                    QMessageBox.Icon.Warning,
+                    "B 站字幕",
+                    "没找到 B 站客户端",
+                    "需要先安装「哔哩哔哩」电脑版；装好后再勾选这个开关。",
+                )
+                box.addButton("知道了", QMessageBox.ButtonRole.AcceptRole)
+                box.exec()
+                self._commit()  # 让设置窗口把勾去掉
+                return
+
+            if bili_launcher.is_running(exe):
+                box = self._update_box(
+                    QMessageBox.Icon.Question,
+                    "B 站字幕",
+                    "读取字幕需要重启 B 站",
+                    "当前正在播放的视频会中断。重启后会自动用「可读取字幕」的方式打开 B 站，要继续吗？",
+                )
+                go = box.addButton("继续", QMessageBox.ButtonRole.AcceptRole)
+                box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+                box.exec()
+                if box.clickedButton() is not go:
+                    self._commit()
+                    return
+                bili_launcher.restart_with_debug(exe)
+            else:
+                bili_launcher.launch_with_debug(exe)
+
+            if not bili_launcher.wait_ready(6.0):
+                self.requestNotify.emit(
+                    "B 站字幕",
+                    "调试端口还没就绪。等 B 站完全打开后，取消再勾选一次这个开关即可。",
+                )
+
+        self.settings.bili_mode = True
         self._commit()
 
     def _reset_position(self) -> None:

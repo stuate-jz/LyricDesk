@@ -326,6 +326,25 @@ def main() -> int:
         )
 
     QTimer.singleShot(2500, first_run_hint)
+    # B 站字幕开着、但 B 站没带调试端口（例如用户自己重开过 B 站）：提示一次怎么恢复
+    def bili_port_hint() -> None:
+        if not settings.bili_mode:
+            return
+        from . import bili_launcher
+
+        if bili_launcher.debug_ready():
+            return
+        exe = bili_launcher.find_exe()
+        if exe is not None and bili_launcher.is_running(exe):
+            tray.showMessage(
+                "B 站字幕",
+                "没检测到调试端口。到设置里把「B 站客户端字幕」取消再勾选一次，"
+                "程序会帮你重启 B 站。",
+                make_icon(),
+                10000,
+            )
+
+    QTimer.singleShot(6000, bili_port_hint)
     # 配好更新源之后，启动时静默自查一次（24 小时内只查一次）
     QTimer.singleShot(8000, main_window.auto_check_update)
 

@@ -37,8 +37,8 @@ INJECT_JS = r"""
   }
   function kindOf(u) {
     u = String(u || '');
-    if (u.indexOf('/x/player/v2') >= 0) return 'player';
-    if (u.indexOf('/x/web-interface/view') >= 0) return 'view';
+    if (/player\/(wbi\/)?v2/.test(u)) return 'player';
+    if (/web-interface\/(wbi\/)?view/.test(u)) return 'view';
     return '';
   }
   var origFetch = window.fetch;
@@ -76,6 +76,18 @@ INJECT_JS = r"""
 # 读当前状态：标题、两个接口的返回、<video> 的进度
 READ_JS = r"""
 (function () {
+  // 注入比页面请求晚时，从 performance 里找到已经发生过的请求，带上同样的签名再取一次
+  function refetch(kind, re) {
+    var list = performance.getEntriesByType('resource').filter(function (e) { return re.test(e.name); });
+    if (!list.length) { return; }
+    list.sort(function (a, b) { return b.startTime - a.startTime; });
+    fetch(list[0].name, { credentials: 'include' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { try { window.__LD[kind] = j; } catch (e) {} })
+      .catch(function () {});
+  }
+  if (window.__LD && !window.__LD.player) { refetch('player', /player\/(wbi\/)?v2/); }
+  if (window.__LD && !window.__LD.view) { refetch('view', /web-interface\/(wbi\/)?view/); }
   var v = document.querySelector('video');
   var out = {
     title: document.title || '',
@@ -151,9 +163,13 @@ def parse_state(raw: str | None) -> BiliState | None:
     if not isinstance(data, dict):
         return None
 
-    view = _dig(data, "view", "data") or {}
+    view_data = _dig(data, "view", "data") or {}
+    # /x/web-interface/view 是 data.title；/x/web-interface/wbi/view/detail 是 data.View.title
+    view = _dig(data, "view", "data", "View") or {}
     player = _dig(data, "player", "data") or {}
-    title = str(view.get("title") or data.get("title") or "").strip()
+    title = str(
+        view.get("title") or view_data.get("title") or data.get("title") or ""
+    ).strip()
     title = clean_title(title) or title
 
     subtitle_url = ""
@@ -167,7 +183,11 @@ def parse_state(raw: str | None) -> BiliState | None:
     return BiliState(
         title=title,
         subtitle_url=subtitle_url,
-        duration=_num(view.get("duration")) or _num(data.get("duration")),
+        duration=(
+            _num(view.get("duration"))
+            or _num(view_data.get("duration"))
+            or _num(data.get("duration"))
+        ),
         position=_num(data.get("position")),
         playing=not bool(data.get("paused")),
         stamp=time.monotonic(),
@@ -195,7 +215,10 @@ def to_lines(payload) -> list[LyricLine]:
 
 
 def _find_page(timeout: float = 0.8) -> dict | None:
-    """调试端口里找一个 bilibili 的页面 target。"""
+    """调试端口里找一个 bilibili 的页面 target。
+
+    优先 `player.html`：视频、`<video>` 和播放器接口都在那一页；首页只用来兜底。
+    """
     try:
         resp = requests.get(DEBUG_URL, timeout=timeout)
         if resp.status_code != 200:
@@ -205,13 +228,18 @@ def _find_page(timeout: float = 0.8) -> dict | None:
         return None
     if not isinstance(targets, list):
         return None
+    fallback = None
     for item in targets:
         if not isinstance(item, dict) or item.get("type") != "page":
             continue
         url = str(item.get("url") or "")
-        if "bilibili.com" in url and item.get("webSocketDebuggerUrl"):
+        if "bilibili.com" not in url or not item.get("webSocketDebuggerUrl"):
+            continue
+        if "player.html" in url:
             return item
-    return None
+        if fallback is None:
+            fallback = item
+    return fallback
 
 
 def available(timeout: float = 0.25) -> bool:
