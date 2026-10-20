@@ -161,8 +161,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "window.on_top.hint": "始终浮在其它窗口上面",
         "window.auto_show": "打开音乐软件时自动显示歌词",
         "window.auto_show.hint": "检测到音乐软件从未运行变成运行时，自动把歌词显示出来",
-        "window.bili_mode": "B 站客户端字幕（需要先用启动脚本打开 B 站）",
-        "window.bili_mode.hint": "只在你双击过「启动B站歌词模式」时生效；普通听歌不受影响。",
+        "window.bili_mode": "B 站客户端字幕",
+        "window.bili_mode.hint": (
+            "勾选后会自动让 B 站以「可读取字幕」的方式运行（必要时会重启 B 站一次）；"
+            "普通听歌不受影响。"
+        ),
+        "btn.restart_bili": "重启 B 站并读取字幕",
         "btn.default_position": "回到默认位置",
         "btn.minimize_tray": "最小化到托盘",
         "window.tray.hint": "「最小化到托盘」只是把歌词收起来，程序仍在后台运行。",
@@ -362,11 +366,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "window.on_top.hint": "Stay above other windows",
         "window.auto_show": "Show lyrics when a music app opens",
         "window.auto_show.hint": "Shows the lyrics when a music app goes from not running to running",
-        "window.bili_mode": "Bilibili client subtitles (open Bilibili with the launcher script first)",
+        "window.bili_mode": "Bilibili client subtitles",
         "window.bili_mode.hint": (
-            "Only works after you started Bilibili with \"Start Bilibili lyrics mode\"; "
+            "Bilibili is restarted with subtitle access when needed; "
             "normal music playback is unaffected."
         ),
+        "btn.restart_bili": "Restart Bilibili for subtitles",
         "btn.default_position": "Move to default position",
         "btn.minimize_tray": "Minimize to tray",
         "window.tray.hint": "Minimizing to tray only hides the lyrics; the app keeps running.",

@@ -339,13 +339,10 @@ def main() -> int:
             return
         exe = bili_launcher.find_exe()
         if exe is not None and bili_launcher.is_running(exe):
-            tray.showMessage(
-                "B 站字幕",
-                "没检测到调试端口。到设置里把「B 站客户端字幕」取消再勾选一次，"
-                "程序会帮你重启 B 站。",
-                make_icon(),
-                10000,
-            )
+            # 直接问一句，点「重启 B 站」就自动搞定
+            windows = active_windows()
+            if windows:
+                windows[0]._ask_restart_bili()
 
     QTimer.singleShot(6000, bili_port_hint)
     # 配好更新源之后，启动时静默自查一次（24 小时内只查一次）

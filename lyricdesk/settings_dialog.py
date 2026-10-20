@@ -1648,6 +1648,10 @@ class SettingsDialog(QDialog):
             hint_key="window.bili_mode.hint",
             hint="只在你双击过「启动B站歌词模式」时生效；普通听歌不受影响。",
         )
+        self._buttons(
+            layout,
+            ("btn.restart_bili", "重启 B 站并读取字幕", self.window._ask_restart_bili),
+        )
 
         layout.addSpacing(6)
         self._buttons(
