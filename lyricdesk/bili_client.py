@@ -170,6 +170,8 @@ def parse_state(raw: str | None) -> BiliState | None:
     title = str(
         view.get("title") or view_data.get("title") or data.get("title") or ""
     ).strip()
+    if title.lower() in ("undefined", "null", "about:blank"):
+        title = ""
     title = clean_title(title) or title
 
     subtitle_url = ""
@@ -179,6 +181,10 @@ def parse_state(raw: str | None) -> BiliState | None:
             if isinstance(item, dict) and item.get("subtitle_url"):
                 subtitle_url = str(item["subtitle_url"])
                 break
+
+    # 有字幕轨但标题还没加载出来（刚重启播放器时常见）→ 先给个占位标题
+    if not title and subtitle_url:
+        title = "B 站视频"
 
     return BiliState(
         title=title,

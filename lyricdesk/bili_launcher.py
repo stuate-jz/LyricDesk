@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -164,3 +165,70 @@ def wait_ready(timeout: float = 6.0) -> bool:
             return True
         time.sleep(0.4)
     return False
+
+
+class BiliWatcher:
+    """开关打开时的后台守护：B 站被「普通方式」打开就自动带端口重启一次。
+
+    只在「刚刚出现」的这一刻动手（还没开始播，重启基本无感）；
+    已经在跑却没有端口的（比如启动本程序前就开着 B 站）**不会**擅自打断，
+    只提示一次让用户关掉重开 / 取消再勾选一次。
+    """
+
+    def __init__(self, notify=None, interval: float = 2.0) -> None:
+        self._notify = notify
+        self._interval = interval
+        self._exe: Path | None = None
+        self._was_running: bool | None = None
+        self._notified = False
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._run, name="bili-watch", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval):
+            try:
+                self._tick()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _tick(self) -> None:
+        """一次检查（单独拆出来，方便自检直接调）。"""
+        if self._stop.is_set():
+            return
+        if debug_ready():
+            self._was_running = True
+            self._notified = False
+            return
+        if self._exe is None:
+            self._exe = find_exe()
+            if self._exe is None:
+                return
+        if self._was_running is None:
+            # 第一次只记基线：启动前就开着的 B 站不擅自重启
+            self._was_running = is_running(self._exe)
+            return
+        if not is_running(self._exe):
+            self._was_running = False
+            self._notified = False
+            return
+        if not self._was_running:
+            # 刚刚出现 = 用户用普通方式打开了 B 站 → 趁还没开始播，带端口重启
+            self._was_running = True
+            if restart_with_debug(self._exe):
+                wait_ready(6.0)
+            return
+        if not self._notified:
+            self._notified = True
+            if self._notify is not None:
+                self._notify(
+                    "B 站当前不是以「歌词模式」启动的。关掉再打开（或取消再勾选一次开关）即可。"
+                )

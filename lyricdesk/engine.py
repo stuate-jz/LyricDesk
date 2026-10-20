@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from .config import Settings
 from .bili_client import BiliBridge
+from .bili_launcher import BiliWatcher
 from .lyrics import Lyrics, fetch, load_cached, provider_for_player, save_cached
 from .smtc import SMTC_AVAILABLE, SmtcReader, Snapshot
 
@@ -15,6 +16,8 @@ from .smtc import SMTC_AVAILABLE, SmtcReader, Snapshot
 class Engine(QObject):
     lyricsChanged = Signal(object)
     trackChanged = Signal(object)
+    # 后台守护想给用户提个醒（标题, 正文）——托盘气泡
+    notice = Signal(str, str)
 
     def __init__(self, settings: Settings) -> None:
         super().__init__()
@@ -30,6 +33,7 @@ class Engine(QObject):
         # B 站字幕（可选）：只有 settings.bili_mode 打开、且确实连上调试端口才会用
         self._bili: BiliBridge | None = None
         self._bili_lyrics: Lyrics | None = None
+        self._bili_watch: BiliWatcher | None = None
 
         self._timer = QTimer(self)
         self._timer.setInterval(400)
@@ -92,6 +96,10 @@ class Engine(QObject):
             if self._bili is None:
                 self._bili = BiliBridge()
                 self._bili.start()
+            if self._bili_watch is None:
+                # 只在开关打开时才有这个守护线程：B 站被普通方式打开 → 自动带端口重启
+                self._bili_watch = BiliWatcher(self._bili_notice)
+                self._bili_watch.start()
             bili = self._bili.current()
             if bili is not None:
                 if bili is not self._bili_lyrics:
@@ -99,8 +107,19 @@ class Engine(QObject):
                     self._lyrics = bili
                     self.lyricsChanged.emit(bili)
                 return
+            if self._bili_lyrics is not None:
+                # 字幕没了（关掉视频 / 关了 B 站）→ 清掉再走普通流程，别挂着上一段
+                self._bili_lyrics = None
+                self._lyrics = None
+                self._key = None
+                self.lyricsChanged.emit(None)
         elif self._bili is not None:
             self._stop_bili()
+            if self._bili_lyrics is not None:
+                self._bili_lyrics = None
+                self._lyrics = None
+                self._key = None
+                self.lyricsChanged.emit(None)
 
         snapshot = self._reader.snapshot()
         if snapshot is None or snapshot.track is None:
@@ -140,10 +159,16 @@ class Engine(QObject):
         )
 
     def _stop_bili(self) -> None:
+        watcher, self._bili_watch = self._bili_watch, None
+        if watcher is not None:
+            watcher.stop()
         bridge, self._bili = self._bili, None
         self._bili_lyrics = None
         if bridge is not None:
             bridge.stop()
+
+    def _bili_notice(self, text: str) -> None:
+        self.notice.emit("B 站字幕", text)
 
     def _display_idx_reset(self) -> None:
         # 通知界面这是新歌（界面自己判断是否重置动画）

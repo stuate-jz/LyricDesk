@@ -110,6 +110,9 @@ def main() -> int:
     def notify(title: str, message: str) -> None:
         tray.showMessage(title, message, make_icon(), 8000)
 
+    # 引擎的后台守护（B 站字幕）也用同一个托盘气泡
+    engine.notice.connect(notify)
+
     def toggle_visibility() -> None:
         windows = active_windows()
         if not windows:
