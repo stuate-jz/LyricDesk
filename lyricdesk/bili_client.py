@@ -95,7 +95,9 @@ READ_JS = r"""
     player: (window.__LD && window.__LD.player) || null,
     position: v ? Number(v.currentTime || 0) : 0,
     duration: v ? Number(v.duration || 0) : 0,
-    paused: v ? !!v.paused : true
+    paused: v ? !!v.paused : true,
+    hasVideo: !!v,
+    visible: document.visibilityState === 'visible'
   };
   return JSON.stringify(out);
 })()
@@ -111,7 +113,22 @@ class BiliState:
     duration: float = 0.0
     position: float = 0.0
     playing: bool = False
+    has_video: bool = True
+    visible: bool = True
     stamp: float = 0.0  # 读到这份状态时的 time.monotonic()
+
+    @property
+    def active(self) -> bool:
+        """这个页面还算不算「正在看 B 站」。
+
+        B 站关掉播放窗口时只是把 player.html 隐藏，`<video>` 和字幕数据都还在；
+        如果只看`字幕地址存在`就会一直挂着旧字幕。规则：
+        - 正在播（哪怕窗口最小化/隐藏）→ 有效；
+        - 暂停但窗口可见（停下来读字幕）→ 有效；
+        - 暂停 + 窗口隐藏（关掉播放页）→ 失效；
+        - 没有 <video>（页面被回收）→ 失效。
+        """
+        return bool(self.has_video and (self.playing or self.visible))
 
     def snapshot(self) -> Snapshot | None:
         """合成一个给界面用的快照；播放中按时间插值，避免进度一格一格跳。"""
@@ -196,6 +213,8 @@ def parse_state(raw: str | None) -> BiliState | None:
         ),
         position=_num(data.get("position")),
         playing=not bool(data.get("paused")),
+        has_video=bool(data.get("hasVideo", True)),
+        visible=bool(data.get("visible", True)),
         stamp=time.monotonic(),
     )
 
@@ -287,12 +306,28 @@ class BiliBridge:
 
     def current(self) -> Lyrics | None:
         with self._lock:
-            return self._lyrics
+            state = self._state
+            lyrics = self._lyrics
+        if state is None or not state.active:
+            return None
+        return lyrics
+
+    def has_state(self) -> bool:
+        """有没有连上 B 站页面（不管当前算不算在播）。"""
+        with self._lock:
+            return self._state is not None
+
+    def active(self) -> bool:
+        """B 站当前算不算「正在看」（关掉播放页后是 False）。"""
+        with self._lock:
+            return bool(self._state is not None and self._state.active)
 
     def snapshot(self) -> Snapshot | None:
         with self._lock:
             state = self._state
-        return state.snapshot() if state is not None else None
+        if state is None or not state.active:
+            return None
+        return state.snapshot()
 
     # ---------- 线程体 ----------
 

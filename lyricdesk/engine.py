@@ -59,7 +59,21 @@ class Engine(QObject):
             snap = self._bili.snapshot()
             if snap is not None:
                 return snap
-        return self._reader.snapshot()
+        return self._reader_view()
+
+    def _reader_view(self) -> Snapshot | None:
+        """普通 SMTC 快照；但 B 站播放页关了以后，B 站自己的媒体会话别再顶着用。"""
+        snap = self._reader.snapshot()
+        if (
+            self.settings.bili_mode
+            and self._bili is not None
+            and self._bili.has_state()
+            and not self._bili.active()
+            and snap is not None
+            and "bilibili" in (snap.source or "").lower()
+        ):
+            return None
+        return snap
 
     def players(self) -> list[dict]:
         """当前有媒体会话的播放器（用于让用户选择跟随哪一个）。"""
@@ -121,7 +135,7 @@ class Engine(QObject):
                 self._key = None
                 self.lyricsChanged.emit(None)
 
-        snapshot = self._reader.snapshot()
+        snapshot = self._reader_view()
         if snapshot is None or snapshot.track is None:
             if self._key is not None:
                 self._key = None
