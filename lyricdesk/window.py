@@ -256,6 +256,7 @@ class LyricWindow(QWidget):
         self._covers: dict[str, QPixmap] = {}
         self._cover_tints: dict[str, QColor] = {}
         self._cover_cache: dict[tuple, QPixmap] = {}
+        self._requested_cover_key = ""
         self._thumb_pixmap: QPixmap | None = None
         self._thumb_key: str | None = None
 
@@ -754,9 +755,14 @@ class LyricWindow(QWidget):
             self._display_idx = -1
             self._anim_t0 = time.monotonic()
             self._scroll_ready = False
-            albummid = getattr(lyrics, "albummid", "") if lyrics is not None else ""
-            if albummid and albummid not in self._covers:
-                self._cover_loader.request(albummid)
+        cover_key = self._cover_key(lyrics)
+        if (
+            cover_key
+            and cover_key != self._requested_cover_key
+            and cover_key not in self._covers
+        ):
+            self._requested_cover_key = cover_key
+            self._cover_loader.request(cover_key)
 
         if mode == "album":
             self._paint_album(painter, card, snapshot, lyrics)
@@ -1307,7 +1313,7 @@ class LyricWindow(QWidget):
         left = card.left() + PAD
         right = card.right() - PAD
         cy = card.center().y()
-        albummid = getattr(lyrics, "albummid", "") if lyrics is not None else ""
+        cover_key = self._cover_key(lyrics)
 
         # 「显示封面」关掉时，整块封面/唱片都不画，文字用满整行宽度
         block_w = 0.0
@@ -1321,22 +1327,22 @@ class LyricWindow(QWidget):
             if shape == "square":
                 side = disc * 0.82
                 block_w = side * self.SQUARE_BLOCK_RATIO
-                cover = self._cover_for(albummid, int(side))
+                cover = self._cover_for(cover_key, int(side))
                 self._draw_album_square(
                     painter, box.left(), cy, side, cover, snapshot, colors
                 )
             elif shape == "classic":
                 block_w = disc
-                art = self._cover_for(albummid, int(disc / 1.41421 * 0.72))
+                art = self._cover_for(cover_key, int(disc / 1.41421 * 0.72))
                 self._draw_classic_art(painter, box, art, colors)
             elif shape == "vinyl":
                 block_w = disc
-                cover = self._cover_for(albummid, int(disc * 0.62))
+                cover = self._cover_for(cover_key, int(disc * 0.62))
                 self._draw_vinyl(painter, box, cover, snapshot, colors)
                 self._draw_tonearm(painter, box, colors)
             else:
                 block_w = disc
-                cover = self._cover_for(albummid, int(disc * 0.62))
+                cover = self._cover_for(cover_key, int(disc * 0.62))
                 self._draw_vinyl(painter, box, cover, snapshot, colors)
 
         text_left = left if block_w <= 0.0 else left + block_w + TEXT_GAP
@@ -1618,8 +1624,8 @@ class LyricWindow(QWidget):
                 cover_size,
                 cover_size,
             )
-            albummid = getattr(lyrics, "albummid", "") if lyrics is not None else ""
-            self._draw_cover(painter, cover, albummid, snapshot, now, colors)
+            cover_key = self._cover_key(lyrics)
+            self._draw_cover(painter, cover, cover_key, snapshot, now, colors)
             text_left = cover.right() + TEXT_GAP
 
         text_w = max(80.0, text_right - text_left)
@@ -1937,12 +1943,12 @@ class LyricWindow(QWidget):
     # 子绘制
     # ==================================================================
 
-    def _draw_cover(self, painter, rect, albummid, snapshot, now, colors) -> None:
+    def _draw_cover(self, painter, rect, cover_key, snapshot, now, colors) -> None:
         radius = rect.width() * 0.16
         path = QPainterPath()
         path.addRoundedRect(rect, radius, radius)
 
-        target = self._cover_for(albummid, int(rect.width()))
+        target = self._cover_for(cover_key, int(rect.width()))
         if target is not None:
             painter.save()
             painter.setClipPath(path)
@@ -2132,30 +2138,40 @@ class LyricWindow(QWidget):
         painter.drawText(rect, int(flag), display)
         painter.restore()
 
+    def _cover_key(self, lyrics) -> str:
+        """封面键：B 站视频 URL 优先，其次是曲库 albummid。"""
+        url = getattr(lyrics, "cover_url", "") if lyrics is not None else ""
+        url = url or getattr(self.engine, "bili_cover", "") or ""
+        return url or (getattr(lyrics, "albummid", "") if lyrics is not None else "")
+
     def _scale_cover(self, pixmap: QPixmap, key, size: int) -> QPixmap:
         cache_key = (key, int(size))
         cached = self._cover_cache.get(cache_key)
         if cached is not None:
             return cached
         ratio = self.devicePixelRatioF()
+        side = max(1, int(size * ratio))
         scaled = pixmap.scaled(
-            int(size * ratio),
-            int(size * ratio),
+            side,
+            side,
             Qt.AspectRatioMode.KeepAspectRatioByExpanding,
             Qt.TransformationMode.SmoothTransformation,
         )
+        x = max(0, (scaled.width() - side) // 2)
+        y = max(0, (scaled.height() - side) // 2)
+        scaled = scaled.copy(x, y, side, side)
         scaled.setDevicePixelRatio(ratio)
         if len(self._cover_cache) > 16:
             self._cover_cache.clear()
         self._cover_cache[cache_key] = scaled
         return scaled
 
-    def _cover_for(self, albummid: str, size: int) -> QPixmap | None:
-        """优先用曲库给的专辑封面；没有就用系统媒体接口给的（任何播放器通用）。"""
-        if albummid:
-            pixmap = self._covers.get(albummid)
+    def _cover_for(self, key: str, size: int) -> QPixmap | None:
+        """优先用曲库 / B 站封面；没有就用系统媒体接口给的缩略图。"""
+        if key:
+            pixmap = self._covers.get(key)
             if pixmap is not None:
-                return self._scale_cover(pixmap, ("album", albummid), size)
+                return self._scale_cover(pixmap, ("album", key), size)
         return self._thumbnail_for(size)
 
     def _thumbnail_for(self, size: int) -> QPixmap | None:
@@ -2183,15 +2199,15 @@ class LyricWindow(QWidget):
             return None
         return self._scale_cover(self._thumb_pixmap, ("thumb", key), size)
 
-    def _cover_color(self, albummid: str):
+    def _cover_color(self, key: str):
         """取封面主色调，用于「环境光」突起样式。"""
-        key = albummid or (self._thumb_key or "")
-        if not key:
+        tint_key = key or (self._thumb_key or "")
+        if not tint_key:
             return None
-        cached = self._cover_tints.get(key)
+        cached = self._cover_tints.get(tint_key)
         if cached is not None:
             return cached
-        pixmap = self._covers.get(albummid) if albummid else self._thumb_pixmap
+        pixmap = self._covers.get(key) if key else self._thumb_pixmap
         if pixmap is None:
             return None
         try:
@@ -2205,7 +2221,7 @@ class LyricWindow(QWidget):
         except Exception:
             return None
         color = color.lighter(130)
-        self._cover_tints[key] = color
+        self._cover_tints[tint_key] = color
         return color
 
     def _draw_line(self, painter, slot, text, font_spec, max_width, color, opacity, scale) -> None:

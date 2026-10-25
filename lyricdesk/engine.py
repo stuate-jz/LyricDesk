@@ -47,6 +47,18 @@ class Engine(QObject):
         return self._lyrics
 
     @property
+    def bili_cover(self) -> str:
+        """只在当前确实跟随 B 站时返回视频封面，避免串到音乐播放器。"""
+        snapshot = self.snapshot()
+        if (
+            snapshot is not None
+            and (snapshot.source or "").lower() == "bilibili"
+            and self._bili is not None
+        ):
+            return self._bili.cover_url
+        return ""
+
+    @property
     def status_text(self) -> str:
         if not SMTC_AVAILABLE:
             return "系统媒体接口不可用"

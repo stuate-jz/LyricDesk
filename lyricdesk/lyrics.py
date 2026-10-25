@@ -92,6 +92,7 @@ class Lyrics:
     artist: str
     albummid: str = ""
     album: str = ""
+    cover_url: str = ""
 
     def index_at(self, position: float) -> int:
         """返回 position 时刻应高亮的行号；无歌词时返回 -1。"""

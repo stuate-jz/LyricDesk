@@ -122,9 +122,11 @@ READ_JS = r"""
 
 @dataclass
 class BiliState:
-    """页面里读到的状态（标题 / 字幕地址 / 播放进度）。"""
+    """页面里读到的状态（标题 / 字幕地址 / 封面 / 播放进度）。"""
 
     title: str = ""
+    bvid: str = ""
+    cover_url: str = ""
     subtitle_url: str = ""
     duration: float = 0.0
     position: float = 0.0
@@ -206,6 +208,10 @@ def parse_state(raw: str | None) -> BiliState | None:
     if title.lower() in ("undefined", "null", "about:blank"):
         title = ""
     title = clean_title(title) or title
+    bvid = str(view.get("bvid") or view_data.get("bvid") or "").strip()
+    pic = str(view.get("pic") or view_data.get("pic") or "").strip()
+    if pic.startswith("//"):
+        pic = "https:" + pic
 
     subtitle_url = ""
     subtitles = _dig(player, "subtitle", "subtitles") or []
@@ -221,6 +227,8 @@ def parse_state(raw: str | None) -> BiliState | None:
 
     return BiliState(
         title=title,
+        bvid=bvid,
+        cover_url=pic,
         subtitle_url=subtitle_url,
         duration=(
             _num(view.get("duration"))
@@ -396,6 +404,12 @@ class BiliBridge:
         if state is None or not state.active:
             return None
         return state.snapshot()
+
+    @property
+    def cover_url(self) -> str:
+        with self._lock:
+            state = self._state
+        return state.cover_url if state is not None and state.active else ""
 
     # ---------- 线程体 ----------
 
@@ -604,6 +618,7 @@ class BiliBridge:
                         artist="",
                         albummid="",
                         album="",
+                        cover_url=state.cover_url,
                     )
                 else:
                     self._lyrics = None

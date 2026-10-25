@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import threading
+from urllib.parse import urlparse
 
 import requests
 from PySide6.QtCore import QObject, Signal
@@ -26,15 +28,28 @@ def cover_url(albummid: str, size: int = 500) -> str:
     return f"https://y.qq.com/music/photo_new/T002R{size}x{size}M000{albummid}.jpg"
 
 
-def _cache_path(albummid: str):
-    safe = "".join(ch for ch in albummid if ch.isalnum() or ch in "-_")
+def _is_http(key: str) -> bool:
+    return key.lower().startswith(("http://", "https://"))
+
+
+def _cache_path(key: str):
+    if _is_http(key):
+        safe = hashlib.md5(key.encode("utf-8")).hexdigest()[:16]
+    else:
+        safe = "".join(ch for ch in key if ch.isalnum() or ch in "-_")
     return cover_dir() / f"{safe}.jpg"
 
 
-def load_cover_bytes(albummid: str) -> bytes | None:
-    if not albummid:
+def _headers_for(url: str) -> dict[str, str]:
+    host = urlparse(url).hostname or ""
+    referer = "https://www.bilibili.com/" if "hdslb.com" in host else "https://y.qq.com/"
+    return {"User-Agent": UA, "Referer": referer}
+
+
+def load_cover_bytes(key: str) -> bytes | None:
+    if not key:
         return None
-    path = _cache_path(albummid)
+    path = _cache_path(key)
     if path.exists():
         try:
             data = path.read_bytes()
@@ -43,7 +58,8 @@ def load_cover_bytes(albummid: str) -> bytes | None:
         except OSError:
             pass
     try:
-        response = requests.get(cover_url(albummid), headers=HEADERS, timeout=8.0)
+        url = key if _is_http(key) else cover_url(key)
+        response = requests.get(url, headers=_headers_for(url), timeout=8.0)
         if response.status_code == 200 and len(response.content) > 2048:
             try:
                 path.write_bytes(response.content)
