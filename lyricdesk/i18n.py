@@ -192,6 +192,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "update.autostart": "开机时自动启动桌面歌词",
         "update.autostart.hint": "写进当前用户的注册表启动项，不需要管理员权限",
         "update.section.update": "更新",
+        "update.pending.title": "发现新版本 {version}",
+        "update.pending.body": "你现在是 v{current}。",
+        "update.pending.install": "立即更新",
+        "update.pending.open": "打开下载页",
         "update.current_source": "当前更新源：{source}",
         "update.releases_link": "发布页（更新动态 / 更新日志）：",
         "update.homepage": "项目主页：",
@@ -208,6 +212,7 @@ STRINGS: dict[str, dict[str, str]] = {
         # ---------- 右键菜单（本批不翻译：英文表里故意不放，tr 会退回中文） ----------
         "menu.settings": "设置…",
         "menu.check_update": "检查更新…",
+        "menu.update.pending": "● 发现新版本 v{version}",
     },
     "en": {
         # ---------- shell ----------
@@ -397,6 +402,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "update.autostart": "Launch desktop lyrics at startup",
         "update.autostart.hint": "Writes to the current user's Run key; no admin rights needed",
         "update.section.update": "Update",
+        "update.pending.title": "Version {version} is available",
+        "update.pending.body": "You are running v{current}.",
+        "update.pending.install": "Update now",
+        "update.pending.open": "Open download page",
         "update.current_source": "Update source: {source}",
         "update.releases_link": "Release page (changelog & news): ",
         "update.homepage": "Homepage: ",
@@ -411,6 +420,8 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "btn.open_settings_dir": "Open settings folder",
         "btn.open_cache_dir": "Open lyrics cache folder",
+        "menu.check_update": "Check for updates…",
+        "menu.update.pending": "● Version {version} available",
     },
 }
 

@@ -165,6 +165,11 @@ class Settings:
     update_source: str = ""
     # 上次静默自查更新的时间戳（秒），24 小时内不重复查
     update_last_check: float = 0.0
+    # 已发现但尚未安装的新版本；持久化后重启也不会丢提示
+    update_pending_version: str = ""
+    update_pending_notes: str = ""
+    update_pending_url: str = ""
+    update_pending_installer: str = ""
 
     # ---------- 持久化 ----------
 
@@ -182,6 +187,10 @@ class Settings:
         "settings_version",
         "update_source",
         "update_last_check",
+        "update_pending_version",
+        "update_pending_notes",
+        "update_pending_url",
+        "update_pending_installer",
         "preferred_player",
     )
 

@@ -18,6 +18,7 @@ from PySide6.QtGui import (
     QFont,
     QFontDatabase,
     QFontMetricsF,
+    QIcon,
     QImage,
     QKeySequence,
     QLinearGradient,
@@ -59,6 +60,7 @@ from .smtc import friendly_player_name
 from .update import (
     DEFAULT_SOURCE as UPDATE_DEFAULT_SOURCE,
     FAILED_MARKER,
+    UpdateInfo,
     bundled_source,
     check as check_update,
     download as download_update,
@@ -246,6 +248,8 @@ class LyricWindow(QWidget):
         self._hotkey_prev = False
         self._update_busy = False
         self._update_silent = False
+        self._update_pending: UpdateInfo | None = None
+        self._load_pending_update()
         self._spin_angle = 0.0
         self._last_tick = time.monotonic()
 
@@ -2474,7 +2478,7 @@ class LyricWindow(QWidget):
         self.populate_menu(menu)
         return menu
 
-    def open_settings(self) -> None:
+    def open_settings(self, page: str | None = None) -> None:
         """打开设置窗口（同一时间只留一个，重复点就把它拿到最前面）。"""
         dialog = getattr(self, "_settings_dialog", None)
         if dialog is not None:
@@ -2484,6 +2488,8 @@ class LyricWindow(QWidget):
                 dialog.show()
                 dialog.raise_()
                 dialog.activateWindow()
+                if page:
+                    dialog.goto_page(page)
                 return
             except RuntimeError:
                 # 底层的 C++ 对象已经没了（窗口被销毁），当成没打开过
@@ -2504,6 +2510,8 @@ class LyricWindow(QWidget):
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+        if page:
+            dialog.goto_page(page)
 
     def _on_settings_closed(self, _result: int = 0) -> None:
         # 关掉之后要把引用清掉，否则下次再点会去操作已释放的窗口
@@ -2772,7 +2780,17 @@ class LyricWindow(QWidget):
         settings_action.setShortcut(QKeySequence("Ctrl+,"))
         settings_action.triggered.connect(self.open_settings)
         menu.addSeparator()
-        menu.addAction("检查更新…", self._check_update)
+        pending = self._pending_version()
+        if pending:
+            update_action = menu.addAction(
+                tr("menu.update.pending", "● 发现新版本 v{version}").format(
+                    version=pending
+                )
+            )
+            update_action.setIcon(self._dot_icon())
+            update_action.triggered.connect(lambda: self.open_settings(page="update"))
+        else:
+            menu.addAction(tr("menu.check_update", "检查更新…"), self._check_update)
         version_item = menu.addAction(f"桌面歌词  v{__version__}")
         version_item.setEnabled(False)
         menu.addSeparator()
@@ -3297,6 +3315,72 @@ class LyricWindow(QWidget):
         self.settingsChanged.emit()
         return bool(self.settings.update_source)
 
+    def _load_pending_update(self) -> None:
+        version = str(getattr(self.settings, "update_pending_version", "") or "").strip()
+        if not version:
+            return
+        if not is_newer(version, __version__):
+            self._clear_pending()
+            return
+        self._update_pending = UpdateInfo(
+            ok=True,
+            latest=version,
+            notes=str(getattr(self.settings, "update_pending_notes", "") or ""),
+            url=str(getattr(self.settings, "update_pending_url", "") or ""),
+            installer=str(
+                getattr(self.settings, "update_pending_installer", "") or ""
+            ),
+        )
+
+    def _pending_version(self) -> str:
+        pending = getattr(self, "_update_pending", None)
+        if pending is None:
+            return ""
+        version = str(pending.latest or "").strip()
+        return version if version and is_newer(version, __version__) else ""
+
+    def _store_pending(self, info) -> None:
+        if info is None or not info.ok or not is_newer(info.latest, __version__):
+            self._clear_pending()
+            return
+        notes = (info.notes or "").strip()
+        if len(notes) > 900:
+            notes = notes[:900] + "…"
+        self._update_pending = UpdateInfo(
+            ok=True,
+            latest=info.latest,
+            notes=notes,
+            url=info.url or "",
+            source=info.source or "",
+            installer=info.installer or "",
+        )
+        self.settings.update_pending_version = info.latest
+        self.settings.update_pending_notes = notes
+        self.settings.update_pending_url = info.url or ""
+        self.settings.update_pending_installer = info.installer or ""
+        self.settings.save()
+        self.settingsChanged.emit()
+
+    def _clear_pending(self) -> None:
+        self._update_pending = None
+        self.settings.update_pending_version = ""
+        self.settings.update_pending_notes = ""
+        self.settings.update_pending_url = ""
+        self.settings.update_pending_installer = ""
+        self.settings.save()
+        self.settingsChanged.emit()
+
+    def _dot_icon(self) -> QIcon:
+        pixmap = QPixmap(12, 12)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(self.settings.colors["glow"]))
+        painter.drawEllipse(QPointF(6, 6), 3, 3)
+        painter.end()
+        return QIcon(pixmap)
+
     def _check_update(self) -> None:
         if getattr(self, "_update_busy", False):
             return
@@ -3348,11 +3432,7 @@ class LyricWindow(QWidget):
         if self._update_silent:
             self._update_silent = False
             if info.ok and is_newer(info.latest, __version__):
-                self.requestNotify.emit(
-                    "发现新版本",
-                    f"桌面歌词 v{info.latest} 已经发布（你当前是 v{__version__}）。\n"
-                    "右键托盘里的音符图标 → 检查更新…，可以打开下载页。",
-                )
+                self._store_pending(info)
             return
 
         if not info.ok:
@@ -3384,37 +3464,8 @@ class LyricWindow(QWidget):
             box.exec()
             return
 
-        notes = (info.notes or "").strip()
-        if len(notes) > 900:
-            notes = notes[:900] + "…"
-        detail = f"你现在是 v{__version__}，最新版是 {info.latest}。"
-        if notes:
-            detail += f"\n\n更新内容：\n{notes}"
-        box = self._update_box(
-            QMessageBox.Icon.Information,
-            "发现新版本",
-            f"有新版本可用：{info.latest}",
-            detail,
-        )
-        update_button = None
-        if info.installer:
-            update_button = box.addButton(
-                "立即更新", QMessageBox.ButtonRole.AcceptRole
-            )
-        open_button = None
-        if info.url.lower().startswith("http"):
-            open_button = box.addButton("打开下载页", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("稍后再说", QMessageBox.ButtonRole.RejectRole)
-        box.exec()
-        clicked = box.clickedButton()
-        if update_button is not None and clicked is update_button:
-            self._start_self_update(info)
-            return
-        if open_button is not None and clicked is open_button:
-            from PySide6.QtGui import QDesktopServices
-            from PySide6.QtCore import QUrl
-
-            QDesktopServices.openUrl(QUrl(info.url))
+        self._store_pending(info)
+        self.open_settings(page="update")
 
     # ------------------------------------------------------------------
     # 一键更新：下载安装程序 → 关闭自己 → 静默安装 → 重新打开
@@ -3589,6 +3640,7 @@ class LyricWindow(QWidget):
             "正在安装更新",
             f"桌面歌词即将关闭并安装 v{info.latest}，装好后会自动重新打开。",
         )
+        self._clear_pending()
         QTimer.singleShot(1200, self.requestQuit.emit)
 
     def _write_update_script(self, setup: Path, exe: Path | None) -> Path | None:

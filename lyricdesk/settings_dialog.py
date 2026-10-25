@@ -1725,6 +1725,31 @@ class SettingsDialog(QDialog):
         )
 
         self._section(layout, "update.section.update", "更新")
+        pending = self._card(layout)
+        self._pending_card = pending.parentWidget()
+        self._pending_title = QLabel()
+        self._pending_title.setObjectName("section")
+        pending.addWidget(self._pending_title)
+        self._pending_body = QLabel()
+        self._pending_body.setObjectName("hint")
+        self._pending_body.setWordWrap(True)
+        self._pending_body.setMaximumHeight(94)
+        pending.addWidget(self._pending_body)
+        pending_buttons = QHBoxLayout()
+        self._pending_install = QPushButton(tr("update.pending.install", "立即更新"))
+        self._pending_install.clicked.connect(self._install_pending)
+        self._pending_open = QPushButton(tr("update.pending.open", "打开下载页"))
+        self._pending_open.clicked.connect(self._open_pending)
+        for button in (self._pending_install, self._pending_open):
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            pending_buttons.addWidget(button)
+        pending_buttons.addStretch(1)
+        pending.addLayout(pending_buttons)
+        self._bind_text(
+            self._pending_install, "update.pending.install", "立即更新"
+        )
+        self._bind_text(self._pending_open, "update.pending.open", "打开下载页")
+
         self._source_label = QLabel()
         self._source_label.setObjectName("value")
         self._source_label.setWordWrap(True)
@@ -1767,6 +1792,29 @@ class SettingsDialog(QDialog):
         )
 
         layout.addStretch(1)
+
+    def _install_pending(self) -> None:
+        info = getattr(self.window, "_update_pending", None)
+        if info is not None:
+            self.window._start_self_update(info)
+
+    def _open_pending(self) -> None:
+        info = getattr(self.window, "_update_pending", None)
+        url = str(getattr(info, "url", "") or "")
+        if url.lower().startswith(("http://", "https://")):
+            QDesktopServices.openUrl(QUrl(url))
+
+    def goto_page(self, name: str) -> None:
+        mapping = {
+            "general": 0,
+            "lyrics": 1,
+            "player": 2,
+            "window": 3,
+            "update": 4,
+        }
+        index = mapping.get(str(name or "").strip().lower())
+        if index is not None:
+            self.nav.setCurrentRow(index)
 
     def _set_language(self, value: str) -> None:
         self.window.settings.language = value
@@ -1903,6 +1951,36 @@ class SettingsDialog(QDialog):
         self._about.setText(
             tr("about.text", ABOUT_DEFAULT).format(version=__version__)
         )
+        pending_version = self.window._pending_version()
+        pending_info = getattr(self.window, "_update_pending", None)
+        self._pending_card.setVisible(bool(pending_version))
+        if pending_version and pending_info is not None:
+            self._pending_title.setText(
+                tr("update.pending.title", "发现新版本 {version}").format(
+                    version=pending_version
+                )
+            )
+            body = tr("update.pending.body", "你现在是 v{current}。").format(
+                current=__version__
+            )
+            notes = str(pending_info.notes or "").strip()
+            if notes:
+                body += "\n" + notes
+            self._pending_body.setText(body)
+            self._pending_install.setVisible(
+                bool(str(pending_info.installer or "").strip())
+            )
+            self._pending_open.setVisible(
+                str(pending_info.url or "").lower().startswith(("http://", "https://"))
+            )
+        nav_item = self.nav.item(4)
+        if nav_item is not None:
+            label = tr("nav.update", "更新与关于")
+            nav_item.setText(f"{label} ●" if pending_version else label)
+            palette = palette_for(self._style_mode or "dark", settings.theme)
+            nav_item.setForeground(
+                QColor(palette["accent"] if pending_version else palette["text"])
+            )
         self._refresh_fonts(force=dirty)
         self._refresh_players(force=dirty)
 
