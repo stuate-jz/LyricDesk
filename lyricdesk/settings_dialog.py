@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 import sys
 
-from PySide6.QtCore import QPointF, QSize, Qt, QTimer, QUrl
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -1017,23 +1017,6 @@ class SettingsDialog(QDialog):
         pixmap.setDevicePixelRatio(2.0)
         return QIcon(pixmap)
 
-    def _nav_dot_icon(self, color: QColor | None = None) -> QIcon:
-        settings = self.window.settings
-        mode = resolve_dialog_theme(
-            getattr(settings, "dialog_theme", "auto"), settings.theme
-        )
-        color = color or QColor(palette_for(mode, settings.theme)["accent"])
-        pixmap = QPixmap(36, 36)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
-        painter.drawEllipse(QPointF(18, 18), 3, 3)
-        painter.end()
-        pixmap.setDevicePixelRatio(2.0)
-        return QIcon(pixmap)
-
     def _page(self, name_key: str, name_default: str) -> QVBoxLayout:
         """新建一个分类页，返回可以往里塞控件的竖直布局。
 
@@ -1351,12 +1334,6 @@ class SettingsDialog(QDialog):
                 layout,
                 (key, text, lambda _c=False, k=item.key: self.window._download_font(k)),
             )
-        self._hint(
-            layout,
-            "lyrics.font.hint",
-            "带「（内置）」的是随程序打包的字体，装上就能用，不需要联网。",
-        )
-
         self._section(layout, "lyrics.section.layout", "排版")
         self._combo(
             layout,
@@ -1398,11 +1375,6 @@ class SettingsDialog(QDialog):
             minimum=LETTER_SPACING_MIN, maximum=LETTER_SPACING_MAX, step=0.5,
             default=self._defaults.letter_spacing,
             unit="px", decimals=1, coalesce_ms=60,
-        )
-        self._hint(
-            layout,
-            "general.letter_spacing.hint",
-            "正数拉开字距、负数收紧；窗口宽度会自动适应最长的一行。",
         )
         self._slider(
             layout,
@@ -1451,15 +1423,6 @@ class SettingsDialog(QDialog):
             minimum=-90.0, maximum=90.0, step=1.0, default=0.0,
             unit="°", signed=True,
         )
-        self._hint(
-            layout,
-            "general.text3d.hint",
-            "上下倾斜：正值「上窄下宽」、负值「下窄上宽」。\n"
-            "左右倾斜：正值「左窄右宽」、负值「右窄左宽」。\n"
-            "两个方向可以同时生效；整体旋转正值顺时针、负值逆时针。\n"
-            "双击任意一项的标题可以恢复它的默认值。",
-        )
-
         self._section(layout, "lyrics.section.sync", "歌词同步（本歌偏移）")
         self._offset_label = QLabel()
         self._offset_label.setWordWrap(True)
@@ -1700,12 +1663,6 @@ class SettingsDialog(QDialog):
         self._player_combo = QComboBox()
         self._player_combo.currentIndexChanged.connect(self._on_player_picked)
         layout.addWidget(self._player_combo)
-        self._hint(
-            layout,
-            "window.follow_music.hint",
-            "多个音乐软件同时开着时，可以指定跟随哪一个；默认自动选正在播放的那个。",
-        )
-
         layout.addSpacing(6)
         self._buttons(
             layout,
@@ -1821,12 +1778,6 @@ class SettingsDialog(QDialog):
             ("btn.check_update", "检查更新…", self.window._check_update),
             ("btn.set_source", "设置更新源…", self.window._ask_update_source),
         )
-        self._hint(
-            layout,
-            "update.hint",
-            "更新源已内置；以后仓库搬家了再用「设置更新源…」改。",
-        )
-
         self._section(layout, "update.section.about", "关于")
         self._about = QLabel()
         self._about.setWordWrap(True)
@@ -1916,11 +1867,8 @@ class SettingsDialog(QDialog):
         if nav is not None:
             for index in range(nav.count()):
                 item = nav.item(index)
-                indent = self.NAV[index][3]
                 glyph = item.data(Qt.ItemDataRole.UserRole)
-                if indent:
-                    item.setIcon(self._nav_dot_icon(accent))
-                elif glyph:
+                if glyph:
                     item.setIcon(self._nav_icon(str(glyph), accent))
         self.update()
 

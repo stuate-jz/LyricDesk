@@ -64,13 +64,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "general.tilt_v": "上下倾斜",
         "general.tilt_h": "左右倾斜",
         "general.tilt_rotate": "整体旋转",
-        "general.text3d.hint": (
-            "上下倾斜：正值「上窄下宽」、负值「下窄上宽」。\n"
-            "左右倾斜：正值「左窄右宽」、负值「右窄左宽」。\n"
-            "两个方向可以同时生效。\n"
-            "整体旋转：正值顺时针、负值逆时针，0 为不旋转。\n"
-            "双击任意一项的标题可以恢复它的默认值。"
-        ),
         "general.section.size": "尺寸",
         "general.cover_size": "封面大小",
         "general.width": "歌词宽度（歌词实际能显示多宽）",
@@ -80,7 +73,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "general.font_size": "歌词字号",
         "general.lyric_lines": "歌词列表行数",
         "general.letter_spacing": "歌词字间距",
-        "general.letter_spacing.hint": "正数拉开字距、负数收紧；窗口宽度会自动适应最长的一行。",
         "general.line_spacing": "歌词行间距",
         "general.size.hint": (
             "播放器宽度只影响唱片面板（分离面板里那半边），选「自动」就跟着封面大小走。\n"
@@ -95,7 +87,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "btn.import_font": "导入字体文件…",
         "btn.open_font_folder": "打开字体文件夹",
         "btn.pick_font": "从系统字体中选择…",
-        "lyrics.font.hint": "带「（内置）」的是随程序打包的字体，装上就能用，不需要联网。",
         "font.tag.recommended": "（推荐）",
         "font.tag.bundled": "（内置）",
         "font.tag.current": "（当前）",
@@ -173,9 +164,6 @@ STRINGS: dict[str, dict[str, str]] = {
             "如果勾选时 B 站已经开着，会自动重启一次以读取字幕。"
         ),
         "window.follow_music": "跟随音乐",
-        "window.follow_music.hint": (
-            "多个音乐软件同时开着时，可以指定跟随哪一个；默认自动选正在播放的那个。"
-        ),
         "btn.default_position": "回到默认位置",
         "btn.minimize_tray": "最小化到托盘",
         "window.tray.hint": "「最小化到托盘」只是把歌词收起来，程序仍在后台运行。",
@@ -211,7 +199,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "update.homepage": "项目主页：",
         "btn.check_update": "检查更新…",
         "btn.set_source": "设置更新源…",
-        "update.hint": "更新源已内置；以后仓库搬家了再用「设置更新源…」改。",
         "update.section.about": "关于",
         "about.text": (
             "桌面歌词  v{version}\n"
@@ -271,13 +258,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "general.tilt_v": "Vertical tilt",
         "general.tilt_h": "Horizontal tilt",
         "general.tilt_rotate": "Rotation",
-        "general.text3d.hint": (
-            "Vertical tilt: positive = narrower on top, negative = narrower at the bottom.\n"
-            "Horizontal tilt: positive = narrower on the left, negative = narrower on the right.\n"
-            "Both directions can be active at once.\n"
-            "Rotation: positive = clockwise, negative = counter-clockwise, 0 = no rotation.\n"
-            "Double-click a title to restore its default value."
-        ),
         "general.section.size": "Size",
         "general.cover_size": "Cover size",
         "general.width": "Lyric width (usable text width)",
@@ -290,10 +270,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "general.lyric_lines": "Lyric list lines",
         "general.line_spacing": "Line spacing",
         "general.letter_spacing": "Letter spacing",
-        "general.letter_spacing.hint": (
-            "Positive spreads letters out, negative tightens them; "
-            "the window width adapts to the longest line."
-        ),
         "general.size.hint": (
             "Player width only affects the disc panel (the other half of split mode), "
             "and \"Auto\" follows the cover size.\n"
@@ -310,7 +286,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "btn.import_font": "Import font file…",
         "btn.open_font_folder": "Open font folder",
         "btn.pick_font": "Choose from system fonts…",
-        "lyrics.font.hint": "Fonts marked (built-in) ship with the app — no download needed.",
         "font.tag.recommended": " (recommended)",
         "font.tag.bundled": " (built-in)",
         "font.tag.current": " (current)",
@@ -396,10 +371,6 @@ STRINGS: dict[str, dict[str, str]] = {
             "running when enabled, it is restarted once for subtitle access."
         ),
         "window.follow_music": "Follow player",
-        "window.follow_music.hint": (
-            "When several music apps are running you can choose one; "
-            "the currently playing app is used by default."
-        ),
         "btn.default_position": "Move to default position",
         "btn.minimize_tray": "Minimize to tray",
         "window.tray.hint": "Minimizing to tray only hides the lyrics; the app keeps running.",
@@ -435,7 +406,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "update.homepage": "Homepage: ",
         "btn.check_update": "Check for updates…",
         "btn.set_source": "Set update source…",
-        "update.hint": "An update source is built in; change it only if the repo moves.",
         "update.section.about": "About",
         "about.text": (
             "Desktop Lyrics  v{version}\n"
