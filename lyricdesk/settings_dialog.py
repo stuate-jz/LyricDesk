@@ -646,7 +646,7 @@ class SliderRow(QWidget):
         if special_min:
             # 最小刻度显示成一句话（比如播放器宽度的「自动」）
             self.spin.setSpecialValueText(special_min)
-        self.spin.setFixedWidth(100)
+        self.spin.setFixedWidth(120)
         self.spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         row = QHBoxLayout(self)
@@ -1497,21 +1497,31 @@ class SettingsDialog(QDialog):
         self._offset_label = QLabel()
         self._offset_label.setWordWrap(True)
         layout.addWidget(self._offset_label)
+        offset_row = QWidget()
+        offset_layout = QHBoxLayout(offset_row)
+        offset_layout.setContentsMargins(0, 0, 0, 0)
+        offset_layout.setSpacing(10)
+        offset_caption = QLabel(tr("lyrics.offset", "偏移"))
+        offset_caption.setFixedWidth(96)
+        self._bind_text(offset_caption, "lyrics.offset", "偏移")
+        self._offset_spin = _ValueSpin(signed=True)
+        self._offset_spin.setRange(-3000, 3000)
+        self._offset_spin.setSingleStep(50)
+        self._offset_spin.setSuffix(" ms")
+        self._offset_spin.lineEdit().setPlaceholderText(
+            tr("lyrics.offset.placeholder", "正数 = 歌词延后")
+        )
+        self._offset_spin.setToolTip(
+            tr("lyrics.offset.placeholder", "正数 = 歌词延后")
+        )
+        self._offset_spin.valueChanged.connect(self._set_numeric_offset)
+        offset_layout.addWidget(offset_caption)
+        offset_layout.addWidget(self._offset_spin, 1)
+        layout.addWidget(offset_row)
         self._buttons(
             layout,
-            ("btn.earlier.01", "提前 0.1 秒", lambda: self.window._nudge_offset(-100)),
             ("btn.earlier.05", "提前 0.5 秒", lambda: self.window._nudge_offset(-500)),
-            ("btn.earlier.1", "提前 1 秒", lambda: self.window._nudge_offset(-1000)),
-        )
-        self._buttons(
-            layout,
-            ("btn.later.01", "延后 0.1 秒", lambda: self.window._nudge_offset(100)),
             ("btn.later.05", "延后 0.5 秒", lambda: self.window._nudge_offset(500)),
-            ("btn.later.1", "延后 1 秒", lambda: self.window._nudge_offset(1000)),
-        )
-        self._buttons(
-            layout,
-            ("btn.custom_offset", "自定义偏移…", self.window._ask_offset),
             ("btn.reset_song", "重置本歌", lambda: self.window._set_offset(0)),
             ("btn.default_offset", "所有歌曲的默认偏移…", self.window._ask_default_offset),
         )
@@ -1523,6 +1533,11 @@ class SettingsDialog(QDialog):
         )
 
         layout.addStretch(1)
+
+    def _set_numeric_offset(self, value: float) -> None:
+        if self._silent:
+            return
+        self.window._set_offset(int(value))
 
     def _set_song_info(self, value: bool) -> None:
         if bool(self.window.settings.show_song_info) != bool(value):
@@ -1954,6 +1969,9 @@ class SettingsDialog(QDialog):
         self._click_warn.setVisible(clicking)
         self._click_exit.setVisible(clicking)
         self._warn_card.setVisible(clicking)
+        self._silent = True
+        self._offset_spin.setValue(float(self.window._offset_ms()))
+        self._silent = False
         self._offset_label.setText(self._offset_text())
         source = self.window._update_source()
         self._source_label.setText(
@@ -2014,17 +2032,17 @@ class SettingsDialog(QDialog):
     def _offset_text(self) -> str:
         key = self.window._song_key()
         current = self.window._offset_ms()
-        default = int(self.window.settings.offset_ms)
         if not key:
-            return tr("sync.none", "当前没有正在播放的歌。默认偏移 {default:+d} ms。").format(
-                default=default
+            return tr(
+                "sync.none",
+                "当前没有正在播放的歌。当前默认偏移 {current:+d} ms。",
+            ).format(
+                current=current
             )
-        parts = key.split("|")
-        title = parts[1] if len(parts) > 1 else "本歌"
         return tr(
             "sync.now",
-            "正在播放：{title}（本歌偏移 {current:+d} ms，默认 {default:+d} ms）",
-        ).format(title=title, current=current, default=default)
+            "当前本歌偏移：{current:+d} ms",
+        ).format(current=current)
 
     def _refresh_fonts(self, force: bool = False) -> None:
         """字体列表：内置 / 推荐 / 我导入的 / 系统里的都列出来。"""
