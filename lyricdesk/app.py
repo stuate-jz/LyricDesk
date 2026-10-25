@@ -116,6 +116,8 @@ def main() -> int:
     engine.notice.connect(notify)
 
     def toggle_visibility() -> None:
+        if not settings.show_lyrics and not settings.show_player:
+            return
         windows = active_windows()
         if not windows:
             return
@@ -208,18 +210,28 @@ def main() -> int:
         panel_windows.clear()
         if main_window is not None:
             main_window.recalculate()
-            main_window.show()
-            main_window.keep_on_screen()
-            main_window.raise_()
 
     def sync_mode_windows() -> None:
-        want_split = settings.mode == "split"
+        want_split = settings.show_lyrics and settings.show_player
         if want_split and not panel_windows:
             if main_window is not None:
                 main_window.hide()
             enter_split()
         elif not want_split and panel_windows:
             exit_split()
+
+        if main_window is None:
+            return
+        if panel_windows:
+            main_window.hide()
+            return
+        if settings.show_lyrics or settings.show_player:
+            main_window.recalculate()
+            main_window.show()
+            main_window.keep_on_screen()
+            main_window.raise_()
+        else:
+            main_window.hide()
 
     _sync_queued = False
     # 鼠标穿透这种真正的窗口标志改了以后，两扇面板都要重新套一遍。
@@ -273,11 +285,8 @@ def main() -> int:
 
     tray.activated.connect(on_tray_activated)
 
-    # 首次装配：按保存的模式决定显示哪（几）扇窗口
+    # 首次装配：两个显示开关决定桌面窗口；都关时只留在托盘
     sync_mode_windows()
-    if not panel_windows and main_window is not None:
-        main_window.show()
-        main_window.keep_on_screen()
 
     rebuild_tray_menu()
     tray.setContextMenu(tray_menu)

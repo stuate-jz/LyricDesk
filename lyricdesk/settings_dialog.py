@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 import sys
 
-from PySide6.QtCore import QSize, Qt, QTimer, QUrl
+from PySide6.QtCore import QPointF, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -762,13 +762,13 @@ class _TitleBar(QWidget):
 class SettingsDialog(QDialog):
     """程序设置窗口（非模态，改动即时生效）。"""
 
-    # 左侧分类：(Fluent 图标字形, key, 中文原文)
+    # 左侧分类：(Fluent 图标字形, key, 中文原文, 缩进层)
     NAV = (
-        ("\uE7F4", "nav.general", "界面"),
-        ("\uE8D6", "nav.lyrics", "歌词"),
-        ("\uE768", "nav.player", "播放"),
-        ("\uE8A7", "nav.window", "窗口与交互"),
-        ("\uE946", "nav.update", "更新与关于"),
+        ("\uE7F4", "nav.general", "界面", 0),
+        ("\uE8D6", "nav.lyrics", "歌词", 1),
+        ("\uE768", "nav.player", "播放", 1),
+        ("\uE8A7", "nav.window", "窗口与交互", 0),
+        ("\uE946", "nav.update", "更新与关于", 0),
     )
 
     def __init__(self, window, parent=None) -> None:
@@ -787,8 +787,9 @@ class SettingsDialog(QDialog):
         self._slider_rows: list[SliderRow] = []
         # 去重用：同一次提交可能连着来好几个 settingsChanged，合并成一帧刷一次
         self._refresh_pending = False
-        # 只在特定界面模式下才有意义的控件：[(控件, 允许的模式), ...]
-        self._mode_bound: list[tuple[QWidget, tuple[str, ...]]] = []
+        # 只在「显示歌词 / 显示播放器」开启时才有意义的控件
+        self._show_bound: list[tuple[QWidget, str]] = []
+        self._page_widgets: dict[str, QWidget] = {}
         # 设置窗口自己是不是常驻置顶：默认**不**置顶，免得占着别的软件
         self._always_on_top = False
         self._style_mode = ""
@@ -943,8 +944,8 @@ class SettingsDialog(QDialog):
         self._page_window()
         self._page_update()
 
-        for glyph, key, default in self.NAV:
-            item = QListWidgetItem(tr(key, default))
+        for glyph, key, default, indent in self.NAV:
+            item = QListWidgetItem(("　" if indent else "") + tr(key, default))
             item.setData(Qt.ItemDataRole.UserRole, glyph)
             self.nav.addItem(item)
         self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
@@ -1016,6 +1017,23 @@ class SettingsDialog(QDialog):
         pixmap.setDevicePixelRatio(2.0)
         return QIcon(pixmap)
 
+    def _nav_dot_icon(self, color: QColor | None = None) -> QIcon:
+        settings = self.window.settings
+        mode = resolve_dialog_theme(
+            getattr(settings, "dialog_theme", "auto"), settings.theme
+        )
+        color = color or QColor(palette_for(mode, settings.theme)["accent"])
+        pixmap = QPixmap(36, 36)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawEllipse(QPointF(18, 18), 3, 3)
+        painter.end()
+        pixmap.setDevicePixelRatio(2.0)
+        return QIcon(pixmap)
+
     def _page(self, name_key: str, name_default: str) -> QVBoxLayout:
         """新建一个分类页，返回可以往里塞控件的竖直布局。
 
@@ -1023,6 +1041,7 @@ class SettingsDialog(QDialog):
         """
         inner = QWidget()
         inner.setObjectName("page")
+        self._page_widgets[name_key] = inner
         layout = QVBoxLayout(inner)
         layout.setContentsMargins(6, 4, 8, 4)
         layout.setSpacing(10)
@@ -1218,9 +1237,9 @@ class SettingsDialog(QDialog):
         box.setChecked(bool(value))
         self._silent = False
 
-    def _bind_mode(self, widget: QWidget, *modes: str) -> QWidget:
-        """这个控件只在列出的界面模式下有意义，别的模式置灰。"""
-        self._mode_bound.append((widget, tuple(modes)))
+    def _bind_show(self, widget: QWidget, kind: str) -> QWidget:
+        """歌词 / 播放器关闭时，对应控件整页置灰。"""
+        self._show_bound.append((widget, kind))
         return widget
 
     # ==================================================================
@@ -1230,6 +1249,24 @@ class SettingsDialog(QDialog):
     def _page_general(self) -> None:
         settings = self.window.settings
         layout = self._page("nav.general", "界面")
+
+        self._section(layout, "general.section.show", "显示")
+        self._check(
+            layout,
+            "general.show_lyrics",
+            "显示歌词",
+            getter=lambda: settings.show_lyrics,
+            apply=lambda value: self.window._set_show(lyrics=bool(value)),
+        )
+        self._check(
+            layout,
+            "general.show_player",
+            "显示播放器",
+            getter=lambda: settings.show_player,
+            apply=lambda value: self.window._set_show(player=bool(value)),
+            hint_key="general.show.hint",
+            hint="两个都不勾时桌面上什么都不显示，程序仍在托盘里运行。",
+        )
 
         self._section(layout, "general.section.appearance", "外观")
         self._combo(
@@ -1243,32 +1280,6 @@ class SettingsDialog(QDialog):
         )
         self._combo(
             layout,
-            "general.mode",
-            "界面模式",
-            [
-                ("general.mode.depth3d", "立体卡片（封面 + 歌词列表）", "depth3d"),
-                ("general.mode.lyrics", "纯歌词面板（只剩歌词）", "lyrics"),
-                ("general.mode.album", "唱片播放器（无歌词）", "album"),
-                ("general.mode.split", "分离面板（唱片 + 歌词，各自可移动）", "split"),
-            ],
-            lambda: settings.mode,
-            self.window._set_mode,
-        )
-        style_combo = self._combo(
-            layout,
-            "general.album_style",
-            "专辑样式",
-            [
-                ("general.album_style.classic", "经典（方块 + 菱形）", "classic"),
-                ("general.album_style.vinyl", "黑胶唱片（带唱臂）", "vinyl"),
-                ("general.album_style.cover_vinyl", "封面 + 唱片", "cover_vinyl"),
-            ],
-            lambda: settings.depth_album_style,
-            self.window._set_depth_style,
-        )
-        self._bind_mode(style_combo.parentWidget() or style_combo, "depth3d")
-        self._combo(
-            layout,
             "general.dialog_theme",
             "设置窗口外观",
             [
@@ -1278,118 +1289,6 @@ class SettingsDialog(QDialog):
             ],
             lambda: getattr(settings, "dialog_theme", "auto"),
             self._set_dialog_theme,
-        )
-
-        self._section(layout, "general.section.text3d", "文字立体（倾斜 / 旋转）")
-        self._slider(
-            layout,
-            "general.tilt_v",
-            "上下倾斜",
-            getter=lambda: settings.text_depth_v,
-            apply=lambda v: self.window._set_depth(v=v),
-            minimum=-0.80, maximum=0.80, step=0.01, default=0.0,
-            decimals=2, signed=True,
-        )
-        self._slider(
-            layout,
-            "general.tilt_h",
-            "左右倾斜",
-            getter=lambda: settings.text_depth_h,
-            apply=lambda v: self.window._set_depth(h=v),
-            minimum=-0.80, maximum=0.80, step=0.01, default=0.32,
-            decimals=2, signed=True,
-        )
-        self._slider(
-            layout,
-            "general.tilt_rotate",
-            "整体旋转",
-            getter=lambda: settings.text_tilt,
-            apply=self.window._set_spin,
-            minimum=-90.0, maximum=90.0, step=1.0, default=0.0,
-            unit="°", signed=True,
-        )
-        self._hint(
-            layout,
-            "general.text3d.hint",
-            "上下倾斜：正值「上窄下宽」、负值「下窄上宽」。\n"
-            "左右倾斜：正值「左窄右宽」、负值「右窄左宽」。\n"
-            "两个方向可以同时生效；立体卡片只用正值（原来的方向）。\n"
-            "整体旋转：正值顺时针、负值逆时针，0 为不旋转。\n"
-            "双击任意一项的标题可以恢复它的默认值。",
-        )
-
-        self._section(layout, "general.section.size", "尺寸")
-        self._slider(
-            layout,
-            "general.cover_size",
-            "封面大小",
-            getter=lambda: settings.cover_size,
-            apply=lambda v: self.window._set_cover(int(round(v))),
-            minimum=40, maximum=320, step=2, default=self._defaults.cover_size,
-            unit="px", coalesce_ms=60,
-        )
-        player_width_row = self._slider(
-            layout,
-            "general.player_width",
-            "播放器宽度",
-            getter=lambda: settings.player_width,
-            apply=lambda v: self.window._set_player_width(int(round(v))),
-            minimum=0, maximum=PLAYER_WIDTH_MAX, step=10,
-            default=self._defaults.player_width,
-            unit="px", coalesce_ms=60,
-            special_min_key="general.player_width.auto",
-            special_min="自动",
-        )
-        self._bind_mode(player_width_row, "album", "split")
-        self._slider(
-            layout,
-            "general.font_size",
-            "歌词字号",
-            getter=lambda: settings.font_size,
-            apply=lambda v: self.window._set_font_size(int(round(v))),
-            minimum=12, maximum=200, step=1, default=self._defaults.font_size,
-            unit="px", coalesce_ms=60,
-        )
-        letter_row = self._slider(
-            layout,
-            "general.letter_spacing",
-            "歌词字间距",
-            getter=lambda: settings.letter_spacing,
-            apply=lambda v: self.window._set_letter_spacing(float(v)),
-            minimum=LETTER_SPACING_MIN, maximum=LETTER_SPACING_MAX, step=0.5,
-            default=self._defaults.letter_spacing,
-            unit="px", decimals=1, coalesce_ms=60,
-        )
-        self._bind_mode(letter_row, "lyrics", "depth3d", "split")
-        self._hint(
-            layout,
-            "general.letter_spacing.hint",
-            "正数拉开字距、负数收紧；窗口宽度会自动适应最长的一行。",
-        )
-        lines_row = self._slider(
-            layout,
-            "general.lyric_lines",
-            "歌词列表行数",
-            getter=lambda: settings.lyric_lines,
-            apply=lambda v: self.window._set_lines(int(round(v))),
-            minimum=1, maximum=15, step=1, default=self._defaults.lyric_lines,
-            unit_key="unit.lines", unit="行", coalesce_ms=60,
-        )
-        self._bind_mode(lines_row, "depth3d", "lyrics", "split")
-        spacing_row = self._slider(
-            layout,
-            "general.line_spacing",
-            "歌词行间距",
-            getter=lambda: settings.line_spacing,
-            apply=self.window._set_spacing,
-            minimum=0.50, maximum=3.00, step=0.05, default=self._defaults.line_spacing,
-            unit_key="unit.multiplier", unit="倍", decimals=2, coalesce_ms=60,
-        )
-        self._bind_mode(spacing_row, "depth3d", "lyrics", "split")
-        self._hint(
-            layout,
-            "general.size.hint",
-            "歌词列表行数 / 行间距只在立体卡片、纯歌词面板、分离面板下有意义。",
         )
 
         self._section(layout, "general.section.overall", "整体")
@@ -1480,17 +1379,85 @@ class SettingsDialog(QDialog):
             hint_key="lyrics.show_info.hint",
             hint="只有独立的纯歌词面板显示它；分离面板里的歌词列不显示",
         )
-        self._bind_mode(info_box, "lyrics")
-
-        self._section(layout, "lyrics.section.size", "歌词尺寸")
+        self._bind_show(info_box, "lyrics")
+        self._slider(
+            layout,
+            "general.font_size",
+            "歌词字号",
+            getter=lambda: settings.font_size,
+            apply=lambda v: self.window._set_font_size(int(round(v))),
+            minimum=12, maximum=200, step=1, default=self._defaults.font_size,
+            unit="px", coalesce_ms=60,
+        )
+        self._slider(
+            layout,
+            "general.letter_spacing",
+            "歌词字间距",
+            getter=lambda: settings.letter_spacing,
+            apply=lambda v: self.window._set_letter_spacing(float(v)),
+            minimum=LETTER_SPACING_MIN, maximum=LETTER_SPACING_MAX, step=0.5,
+            default=self._defaults.letter_spacing,
+            unit="px", decimals=1, coalesce_ms=60,
+        )
         self._hint(
             layout,
-            "lyrics.size.hint",
-            "「歌词字号」和「歌唱行间距」是滑动条，在左边「界面」分类的「尺寸」里。",
+            "general.letter_spacing.hint",
+            "正数拉开字距、负数收紧；窗口宽度会自动适应最长的一行。",
         )
-        self._buttons(
+        self._slider(
             layout,
-            ("btn.goto_general", "去「界面」调字号 / 行间距", lambda: self.nav.setCurrentRow(0)),
+            "general.lyric_lines",
+            "歌词列表行数",
+            getter=lambda: settings.lyric_lines,
+            apply=lambda v: self.window._set_lines(int(round(v))),
+            minimum=1, maximum=15, step=1, default=self._defaults.lyric_lines,
+            unit_key="unit.lines", unit="行", coalesce_ms=60,
+        )
+        self._slider(
+            layout,
+            "general.line_spacing",
+            "歌词行间距",
+            getter=lambda: settings.line_spacing,
+            apply=self.window._set_spacing,
+            minimum=0.50, maximum=3.00, step=0.05, default=self._defaults.line_spacing,
+            unit_key="unit.multiplier", unit="倍", decimals=2, coalesce_ms=60,
+        )
+
+        self._section(layout, "general.section.text3d", "文字立体（倾斜 / 旋转）")
+        self._slider(
+            layout,
+            "general.tilt_v",
+            "上下倾斜",
+            getter=lambda: settings.text_depth_v,
+            apply=lambda v: self.window._set_depth(v=v),
+            minimum=-0.80, maximum=0.80, step=0.01, default=0.0,
+            decimals=2, signed=True,
+        )
+        self._slider(
+            layout,
+            "general.tilt_h",
+            "左右倾斜",
+            getter=lambda: settings.text_depth_h,
+            apply=lambda v: self.window._set_depth(h=v),
+            minimum=-0.80, maximum=0.80, step=0.01, default=0.32,
+            decimals=2, signed=True,
+        )
+        self._slider(
+            layout,
+            "general.tilt_rotate",
+            "整体旋转",
+            getter=lambda: settings.text_tilt,
+            apply=self.window._set_spin,
+            minimum=-90.0, maximum=90.0, step=1.0, default=0.0,
+            unit="°", signed=True,
+        )
+        self._hint(
+            layout,
+            "general.text3d.hint",
+            "上下倾斜：正值「上窄下宽」、负值「下窄上宽」。\n"
+            "左右倾斜：正值「左窄右宽」、负值「右窄左宽」。\n"
+            "两个方向可以同时生效；整体旋转正值顺时针、负值逆时针。\n"
+            "双击任意一项的标题可以恢复它的默认值。",
         )
 
         self._section(layout, "lyrics.section.sync", "歌词同步（本歌偏移）")
@@ -1551,16 +1518,6 @@ class SettingsDialog(QDialog):
         settings = self.window.settings
         layout = self._page("nav.player", "播放")
 
-        self._section(layout, "player.section.follow", "跟随哪个播放器")
-        self._player_combo = QComboBox()
-        self._player_combo.currentIndexChanged.connect(self._on_player_picked)
-        layout.addWidget(self._player_combo)
-        self._hint(
-            layout,
-            "player.follow.hint",
-            "多个音乐软件同时开着时，可以指定跟随哪一个；默认自动选正在播放的那个。",
-        )
-
         self._section(layout, "player.section.album", "唱片播放器面板")
         shape_combo = self._combo(
             layout,
@@ -1568,14 +1525,19 @@ class SettingsDialog(QDialog):
             "唱片样式",
             [
                 ("player.album_shape.disc", "圆形唱片", "disc"),
-                ("player.album_shape.square", "方形封面 + 唱片", "square"),
+                ("player.album_shape.square", "封面 + 唱片", "square"),
+                ("player.album_shape.vinyl", "黑胶（带唱臂）", "vinyl"),
+                ("player.album_shape.classic", "经典（方块 + 菱形）", "classic"),
             ],
             lambda: settings.album_shape,
             self.window._set_album_shape,
         )
-        self._bind_mode(shape_combo.parentWidget() or shape_combo, "album", "split")
+        self._bind_show(shape_combo.parentWidget() or shape_combo, "player")
+        self._section(layout, "player.section.song", "显示内容")
         for key, default_text, field, flipper in (
             ("player.show_cover", "显示封面", "show_cover", "_toggle_cover"),
+            ("player.show_title", "显示歌名与作者", "show_title", "_toggle_title"),
+            ("player.show_wave", "显示音波", "show_wave", "_toggle_wave"),
             ("player.show_progress", "显示进度条", "show_progress", "_toggle_progress"),
             ("player.show_controls", "显示播放控制", "show_controls", "_toggle_controls"),
         ):
@@ -1586,8 +1548,32 @@ class SettingsDialog(QDialog):
                 getter=lambda f=field: getattr(settings, f),
                 apply=lambda value, f=field, m=flipper: self._flip(f, m, value),
             )
-            self._bind_mode(box, "album", "split")
-        self._hint(layout, "player.hint", "这几项只在唱片播放器 / 分离面板的唱片那半边生效。")
+            self._bind_show(box, "player")
+
+        self._section(layout, "player.section.size", "尺寸")
+        cover_row = self._slider(
+            layout,
+            "general.cover_size",
+            "封面大小",
+            getter=lambda: settings.cover_size,
+            apply=lambda v: self.window._set_cover(int(round(v))),
+            minimum=40, maximum=320, step=2, default=self._defaults.cover_size,
+            unit="px", coalesce_ms=60,
+        )
+        self._bind_show(cover_row, "player")
+        width_row = self._slider(
+            layout,
+            "general.player_width",
+            "播放器宽度",
+            getter=lambda: settings.player_width,
+            apply=lambda v: self.window._set_player_width(int(round(v))),
+            minimum=0, maximum=PLAYER_WIDTH_MAX, step=10,
+            default=self._defaults.player_width,
+            unit="px", coalesce_ms=60,
+            special_min_key="general.player_width.auto",
+            special_min="自动",
+        )
+        self._bind_show(width_row, "player")
 
         layout.addStretch(1)
 
@@ -1685,6 +1671,16 @@ class SettingsDialog(QDialog):
                 "B 站没运行时会记住设置但不主动启动；B 站已运行时会自动重启一次，"
                 "之后每次由你打开 B 站都会自动切换到可读取字幕的模式。"
             ),
+        )
+
+        self._section(layout, "window.follow_music", "跟随音乐")
+        self._player_combo = QComboBox()
+        self._player_combo.currentIndexChanged.connect(self._on_player_picked)
+        layout.addWidget(self._player_combo)
+        self._hint(
+            layout,
+            "window.follow_music.hint",
+            "多个音乐软件同时开着时，可以指定跟随哪一个；默认自动选正在播放的那个。",
         )
 
         layout.addSpacing(6)
@@ -1871,10 +1867,10 @@ class SettingsDialog(QDialog):
         self.setWindowTitle(tr("app.title", "设置 · 桌面歌词"))
         if getattr(self, "_brand_title", None) is not None:
             self._brand_title.setText(tr("dialog.title", "设置"))
-        for index, (_glyph, key, default) in enumerate(self.NAV):
+        for index, (_glyph, key, default, indent) in enumerate(self.NAV):
             item = self.nav.item(index)
             if item is not None:
-                item.setText(tr(key, default))
+                item.setText(("　" if indent else "") + tr(key, default))
         for refresh in self._i18n_refresh:
             try:
                 refresh()
@@ -1897,8 +1893,11 @@ class SettingsDialog(QDialog):
         if nav is not None:
             for index in range(nav.count()):
                 item = nav.item(index)
+                indent = self.NAV[index][3]
                 glyph = item.data(Qt.ItemDataRole.UserRole)
-                if glyph:
+                if indent:
+                    item.setIcon(self._nav_dot_icon(accent))
+                elif glyph:
                     item.setIcon(self._nav_icon(str(glyph), accent))
         self.update()
 
@@ -1960,9 +1959,12 @@ class SettingsDialog(QDialog):
             self._silent = False
 
         settings = self.window.settings
-        mode = settings.mode
-        for widget, modes in self._mode_bound:
-            widget.setEnabled(mode in modes)
+        self._page_widgets["nav.lyrics"].setEnabled(bool(settings.show_lyrics))
+        self._page_widgets["nav.player"].setEnabled(bool(settings.show_player))
+        for widget, kind in self._show_bound:
+            widget.setEnabled(
+                bool(settings.show_lyrics if kind == "lyrics" else settings.show_player)
+            )
 
         self._click_warn.setText(tr("window.click_warn", CLICK_WARN_DEFAULT))
         clicking = bool(settings.click_through)
@@ -2011,13 +2013,27 @@ class SettingsDialog(QDialog):
             self._pending_open.setVisible(
                 str(pending_info.url or "").lower().startswith(("http://", "https://"))
             )
-        nav_item = self.nav.item(4)
-        if nav_item is not None:
-            label = tr("nav.update", "更新与关于")
-            nav_item.setText(f"{label} ●" if pending_version else label)
-            palette = palette_for(self._style_mode or "dark", settings.theme)
-            nav_item.setForeground(
-                QColor(palette["accent"] if pending_version else palette["text"])
+        palette = palette_for(self._style_mode or "dark", settings.theme)
+        nav_states = (
+            (1, bool(settings.show_lyrics), False),
+            (2, bool(settings.show_player), False),
+            (4, False, bool(pending_version)),
+        )
+        for index, enabled, highlighted in nav_states:
+            item = self.nav.item(index)
+            if item is None:
+                continue
+            _glyph, key, default, indent = self.NAV[index]
+            label = ("　" if indent else "") + tr(key, default)
+            if index == 4 and highlighted:
+                label += " ●"
+            item.setText(label)
+            item.setForeground(
+                QColor(
+                    palette["accent"]
+                    if enabled or highlighted
+                    else palette["text_dim"]
+                )
             )
         self._refresh_fonts(force=dirty)
         self._refresh_players(force=dirty)
@@ -2169,6 +2185,8 @@ class SettingsDialog(QDialog):
         if box.exec() != QMessageBox.StandardButton.Yes:
             return
         self.window.settings.reset()
+        self.window.settings.show_lyrics = True
+        self.window.settings.show_player = False
         # 位置、模式、窗口标志都可能变了，一次性全部重算
         self.window._commit(resize=True, flags=True, background=True)
         set_language(getattr(self.window.settings, "language", ""))

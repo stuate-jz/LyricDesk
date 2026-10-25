@@ -45,6 +45,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "nav.window": "窗口与交互",
         "nav.update": "更新与关于",
         # ---------- 界面 ----------
+        "general.section.show": "显示",
+        "general.show_lyrics": "显示歌词",
+        "general.show_player": "显示播放器",
+        "general.show.hint": "两个都不勾时桌面上什么都不显示，程序仍在托盘里运行。",
         "general.section.appearance": "外观",
         "general.theme": "主题",
         "theme.aurora": "极光",
@@ -52,15 +56,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "theme.sunset": "落日",
         "theme.jade": "青竹",
         "theme.ink": "素白",
-        "general.mode": "界面模式",
-        "general.mode.depth3d": "立体卡片（封面 + 歌词列表）",
-        "general.mode.lyrics": "纯歌词面板（只剩歌词）",
-        "general.mode.album": "唱片播放器（无歌词）",
-        "general.mode.split": "分离面板（唱片 + 歌词，各自可移动）",
-        "general.album_style": "专辑样式",
-        "general.album_style.classic": "经典（方块 + 菱形）",
-        "general.album_style.vinyl": "黑胶唱片（带唱臂）",
-        "general.album_style.cover_vinyl": "封面 + 唱片",
         "general.dialog_theme": "设置窗口外观",
         "general.dialog_theme.auto": "跟随歌词主题",
         "general.dialog_theme.dark": "深色",
@@ -72,7 +67,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "general.text3d.hint": (
             "上下倾斜：正值「上窄下宽」、负值「下窄上宽」。\n"
             "左右倾斜：正值「左窄右宽」、负值「右窄左宽」。\n"
-            "两个方向可以同时生效；立体卡片只用正值（原来的方向）。\n"
+            "两个方向可以同时生效。\n"
             "整体旋转：正值顺时针、负值逆时针，0 为不旋转。\n"
             "双击任意一项的标题可以恢复它的默认值。"
         ),
@@ -141,10 +136,15 @@ STRINGS: dict[str, dict[str, str]] = {
         "player.auto": "自动（正在播放的那个）",
         "player.playing": "（播放中）",
         "player.section.album": "唱片播放器面板",
+        "player.section.song": "显示内容",
         "player.album_shape": "唱片样式",
         "player.album_shape.disc": "圆形唱片",
-        "player.album_shape.square": "方形封面 + 唱片",
+        "player.album_shape.square": "封面 + 唱片",
+        "player.album_shape.vinyl": "黑胶（带唱臂）",
+        "player.album_shape.classic": "经典（方块 + 菱形）",
         "player.show_cover": "显示封面",
+        "player.show_title": "显示歌名与作者",
+        "player.show_wave": "显示音波",
         "player.show_progress": "显示进度条",
         "player.show_controls": "显示播放控制",
         "player.hint": "这几项只在唱片播放器 / 分离面板的唱片那半边生效。",
@@ -168,6 +168,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "window.bili_mode.hint": (
             "不会主动打开 B 站；B 站没运行时会记住设置，之后由你打开时自动切换；"
             "如果勾选时 B 站已经开着，会自动重启一次以读取字幕。"
+        ),
+        "window.follow_music": "跟随音乐",
+        "window.follow_music.hint": (
+            "多个音乐软件同时开着时，可以指定跟随哪一个；默认自动选正在播放的那个。"
         ),
         "btn.default_position": "回到默认位置",
         "btn.minimize_tray": "最小化到托盘",
@@ -242,6 +246,13 @@ STRINGS: dict[str, dict[str, str]] = {
         "nav.window": "Window & input",
         "nav.update": "Update & about",
         # ---------- interface ----------
+        "general.section.show": "Show",
+        "general.show_lyrics": "Show lyrics",
+        "general.show_player": "Show player",
+        "general.show.hint": (
+            "When neither is checked, nothing is shown on the desktop; "
+            "the app keeps running in the tray."
+        ),
         "general.section.appearance": "Appearance",
         "general.theme": "Theme",
         "theme.aurora": "Aurora",
@@ -249,15 +260,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "theme.sunset": "Sunset",
         "theme.jade": "Jade",
         "theme.ink": "Ink",
-        "general.mode": "Interface mode",
-        "general.mode.depth3d": "3D card (cover + lyrics list)",
-        "general.mode.lyrics": "Lyrics only",
-        "general.mode.album": "Album player (no lyrics)",
-        "general.mode.split": "Split panels (disc + lyrics, moveable)",
-        "general.album_style": "Cover style",
-        "general.album_style.classic": "Classic (square + diamond)",
-        "general.album_style.vinyl": "Vinyl (with tonearm)",
-        "general.album_style.cover_vinyl": "Cover + disc",
         "general.dialog_theme": "Settings window look",
         "general.dialog_theme.auto": "Match lyric theme",
         "general.dialog_theme.dark": "Dark",
@@ -269,7 +271,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "general.text3d.hint": (
             "Vertical tilt: positive = narrower on top, negative = narrower at the bottom.\n"
             "Horizontal tilt: positive = narrower on the left, negative = narrower on the right.\n"
-            "Both directions can be active at once; the 3D card only uses positive values.\n"
+            "Both directions can be active at once.\n"
             "Rotation: positive = clockwise, negative = counter-clockwise, 0 = no rotation.\n"
             "Double-click a title to restore its default value."
         ),
@@ -353,10 +355,15 @@ STRINGS: dict[str, dict[str, str]] = {
         "player.auto": "Auto (the one playing)",
         "player.playing": " (playing)",
         "player.section.album": "Album player panel",
+        "player.section.song": "Visible content",
         "player.album_shape": "Disc style",
         "player.album_shape.disc": "Round disc",
         "player.album_shape.square": "Square cover + disc",
+        "player.album_shape.vinyl": "Vinyl (with tonearm)",
+        "player.album_shape.classic": "Classic (square + diamond)",
         "player.show_cover": "Show cover",
+        "player.show_title": "Show title and artist",
+        "player.show_wave": "Show waveform",
         "player.show_progress": "Show progress bar",
         "player.show_controls": "Show playback controls",
         "player.hint": "These only apply to album player mode / the disc half of split mode.",
@@ -381,6 +388,11 @@ STRINGS: dict[str, dict[str, str]] = {
             "Never opens Bilibili automatically. The setting is remembered while "
             "Bilibili is closed and applies when you open it. If Bilibili is already "
             "running when enabled, it is restarted once for subtitle access."
+        ),
+        "window.follow_music": "Follow player",
+        "window.follow_music.hint": (
+            "When several music apps are running you can choose one; "
+            "the currently playing app is used by default."
         ),
         "btn.default_position": "Move to default position",
         "btn.minimize_tray": "Minimize to tray",

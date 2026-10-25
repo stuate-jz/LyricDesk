@@ -103,7 +103,11 @@ class Settings:
     """所有可调参数。保存为 JSON。"""
 
     theme: str = "aurora"
-    mode: str = "lyrics"
+    # 1.6.8 起桌面显示由下面两个开关派生，mode 只用于老配置迁移
+    show_lyrics: bool = True
+    show_player: bool = False
+    show_title: bool = True
+    show_wave: bool = True
     font_family: str = "Microsoft YaHei UI"
     font_size: int = 38
     opacity: float = 0.90
@@ -114,6 +118,7 @@ class Settings:
     show_controls: bool = True
     lyric_lines: int = 5
     album_shape: str = "disc"
+    # 1.6.8 起合并进 album_shape，字段仅为老配置反序列化保留
     depth_album_style: str = "classic"
     # 分离面板模式下的两套位置（-1 表示用默认位置：右上一个、右上下方一个）
     player_pos: list = field(default_factory=lambda: [-1, -1])
@@ -159,7 +164,7 @@ class Settings:
     song_offsets: dict = field(default_factory=dict)
     # 设置文件的格式版本：2 起偏移才是「一歌一记」。
     # 老文件没有这个字段，用来判断要不要把遗留的全局偏移清掉。
-    settings_version: int = 3
+    settings_version: int = 4
     preferred_player: str = ""
     # 检查更新的来源：owner/repo、gitee:owner/repo、http(s) 链接或本地 json 路径
     update_source: str = ""
@@ -232,8 +237,19 @@ class Settings:
             version = 2
         if version < 3:
             obj.width = max(WIDTH_MIN, int(raw.get("width", obj.width)) - LEGACY_WIDTH_SHIFT)
-        # 迁移完之后写回当前格式号，否则每次启动都会再减一次
-        obj.settings_version = 3
+        # 版本 4：界面模式拆成两个显示开关，旧立体卡片样式并入 album_shape
+        if version < 4:
+            mode = str(raw.get("mode", "lyrics"))
+            obj.show_lyrics = mode in ("lyrics", "split", "depth3d", "compact")
+            obj.show_player = mode in ("album", "split", "depth3d", "player")
+            if mode == "depth3d":
+                obj.album_shape = {
+                    "classic": "classic",
+                    "vinyl": "vinyl",
+                    "cover_vinyl": "square",
+                }.get(str(raw.get("depth_album_style", "classic")), "classic")
+        # 迁移完之后写回当前格式号，否则每次启动都会再迁移一次
+        obj.settings_version = 4
         obj.clamp()
         return obj
 
@@ -250,6 +266,10 @@ class Settings:
     def clamp(self) -> None:
         # 这些范围要和「设置」窗口里的滑动条一一对应（见 settings_dialog.py），
         # 两边不一致就会出现「拖到头了但值没变」的怪现象。
+        self.show_lyrics = bool(self.show_lyrics)
+        self.show_player = bool(self.show_player)
+        self.show_title = bool(self.show_title)
+        self.show_wave = bool(self.show_wave)
         self.font_size = max(12, min(200, int(self.font_size)))
         self.width = max(WIDTH_MIN, min(WIDTH_MAX, int(self.width)))
         self.letter_spacing = max(
@@ -283,21 +303,6 @@ class Settings:
         self.cover_size = max(40, min(320, int(self.cover_size)))
         if self.theme not in THEMES:
             self.theme = "aurora"
-        if self.mode not in (
-            "player",
-            "compact",
-            "depth3d",
-            "album",
-            "lyrics",
-            "split",
-        ):
-            self.mode = "player"
-        # 「播放器（封面+歌词）」已从界面模式里移除，旧的设置自动迁到立体卡片
-        if self.mode == "player":
-            self.mode = "depth3d"
-        # 旧版把「纯歌词面板」存成 compact，统一改名成 lyrics
-        if self.mode == "compact":
-            self.mode = "lyrics"
         self.lyric_lines = max(1, min(15, int(self.lyric_lines)))
         for name in ("player_pos", "lyrics_pos"):
             value = getattr(self, name)
@@ -314,10 +319,8 @@ class Settings:
             self.lyric_align = "right"
         if self.raise_style not in ("frost", "ambient", "outline"):
             self.raise_style = "frost"
-        if self.album_shape not in ("disc", "square"):
+        if self.album_shape not in ("disc", "square", "vinyl", "classic"):
             self.album_shape = "disc"
-        if self.depth_album_style not in ("classic", "vinyl", "cover_vinyl"):
-            self.depth_album_style = "classic"
         self.update_source = str(self.update_source or "").strip()
 
     def reset(self) -> None:

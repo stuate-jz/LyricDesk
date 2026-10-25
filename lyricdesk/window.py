@@ -126,7 +126,7 @@ WEIGHT_MEDIUM = QFont.Weight.Medium
 WEIGHT_TITLE = QFont.Weight.DemiBold
 
 # 这些界面都是直接浮在壁纸上的，不画背景板
-_NO_BOARD_MODES = ("depth3d", "album", "lyrics")
+_NO_BOARD_MODES = ("album", "lyrics")
 
 # 分离面板模式下会有多扇窗口同时轮询全局热键，
 # 用共享状态保证一次按键只触发一次切换。
@@ -403,8 +403,8 @@ class LyricWindow(QWidget):
         if auto != int(settings.width):
             settings.width = auto
 
-        # 这几个是各模式分支各自算出来的排版尺寸。绘制分支与 settings.mode 可能瞬间不一致
-        # （模式刚改、还没重算就来了一次重绘），缺任何一个都会让 paintEvent 抛 AttributeError，
+        # 这几个是各模式分支各自算出来的排版尺寸。显示开关刚改、还没重算时
+        # 就可能来一次重绘；缺任何一个都会让 paintEvent 抛 AttributeError，
         # 所以这里先无条件给安全初值，再由下面的分支覆盖。
         self._list_slot = 0.0
         self._list_count = 0
@@ -424,39 +424,38 @@ class LyricWindow(QWidget):
         # 歌词 / 立体卡片用 settings.width（歌词实际能画多宽），
         # 唱片面板用 settings.player_width（0 = 按封面自动算）。
         window_w = float(settings.width)
-        if mode == "depth3d":
-            fm_list = self._metrics["list"]
-            self._list_slot = fm_list.height() * 1.52 * settings.line_spacing
-            self._list_count = max(1, int(settings.lyric_lines))
-            list_h = self._list_slot * self._list_count
-            album_h = float(settings.cover_size) * 1.4143
-            content_h = PAD * 2 + max(list_h, album_h)
-            self._overscan, self._overscan_v = self._tilt_overscan(
-                float(settings.width), list_h
-            )
-        elif mode == "album":
+        if mode == "album":
             fm_title = self._metrics["title"]
             fm_artist = self._metrics["artist"]
             fm_time = self._metrics["time"]
             # 唱片按封面尺寸放大，但别放太猛 —— 分离面板里默认就小巧一点
             # （上限放到 420，不然封面滑到 185 以上就看不出一丁点变化了）
             self._disc_size = max(44.0, min(420.0, float(settings.cover_size) * 1.30))
-            self._wave_h = max(18.0, fm_title.height() * 1.5 * settings.line_spacing)
-            self._album_title_h = fm_title.height()
-            self._album_artist_h = fm_artist.height()
+            self._wave_h = (
+                max(18.0, fm_title.height() * 1.5 * settings.line_spacing)
+                if settings.show_wave
+                else 0.0
+            )
+            self._album_title_h = fm_title.height() if settings.show_title else 0.0
+            self._album_artist_h = fm_artist.height() if settings.show_title else 0.0
             self._album_bar_h = 6.0
             self._album_label_h = fm_time.height()
+            standalone_controls_h = (
+                max(24.0, float(settings.font_size) * 0.82) * 0.62 + 8
+                if settings.show_controls and not settings.show_title
+                else 0.0
+            )
             text_h = (
                 self._album_title_h
                 + self._album_title_h * 0.18
                 + self._album_artist_h
                 + self._album_title_h * 0.40
+                + standalone_controls_h
                 + self._wave_h
                 + self._album_title_h * 0.42
-                + self._album_bar_h
-                + 8
-                + self._album_label_h
             )
+            if settings.show_progress:
+                text_h += self._album_bar_h + 8 + self._album_label_h
             self._album_text_h = text_h
             art_h = self._disc_size if settings.show_cover else 0.0
             content_h = PAD * 2 + max(art_h, text_h)
@@ -488,22 +487,6 @@ class LyricWindow(QWidget):
                 float(settings.width),
                 self._list_slot * self._list_count + self._head_block,
             )
-        elif mode == "player":
-            # 遗留的 player 模式（已不在菜单里），按播放器卡片算尺寸
-            fm_title = self._metrics["title"]
-            fm_artist = self._metrics["artist"]
-            fm_time = self._metrics["time"]
-
-            text_h = fm_title.height() * 1.24 + fm_artist.height()
-            text_h += fm_title.height() * 0.55 + fm_lyric.height()
-            if settings.show_next:
-                text_h += fm_next.height() * NEXT_GAP * settings.line_spacing + fm_next.height()
-
-            cover_h = settings.cover_size if settings.show_cover else 0
-            self._main_h = max(text_h, float(cover_h))
-            content_h = PAD * 2 + self._main_h
-            if settings.show_progress:
-                content_h += 14.0 + 10.0 + 7.0 + fm_time.height()
         else:
             # 兜底：按歌词面板的尺寸
             fm_list = self._metrics["list"]
@@ -594,11 +577,7 @@ class LyricWindow(QWidget):
         if widest <= 0:
             return int(self.settings.width)
 
-        extra = 0.0
-        if mode == "depth3d":
-            # 立体卡片左边还有封面块
-            extra = float(self.settings.cover_size) * 1.4143 + TEXT_GAP
-        value = int(widest + extra + 48)
+        value = int(widest + 48)
 
         screen = self.screen() or QApplication.primaryScreen()
         if screen is not None:
@@ -609,12 +588,19 @@ class LyricWindow(QWidget):
         return value
 
     def _effective_mode(self) -> str:
-        """面板角色优先于全局界面模式。"""
+        """面板角色优先；主窗口由两个显示开关派生。"""
         if self.role == "player":
             return "album"
         if self.role == "lyrics":
             return "lyrics"
-        return self.settings.mode
+        settings = self.settings
+        if settings.show_lyrics and settings.show_player:
+            return "split"
+        if settings.show_lyrics:
+            return "lyrics"
+        if settings.show_player:
+            return "album"
+        return "none"
 
     def _apply_initial_position(self) -> None:
         settings = self.settings
@@ -743,9 +729,13 @@ class LyricWindow(QWidget):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         # 整体透明度：下面的绘制都用相乘方式，所以这里设一次就能影响全部
         painter.setOpacity(max(0.05, min(1.0, float(self.settings.ui_opacity))))
+        mode = self._effective_mode()
+        if mode == "none":
+            painter.end()
+            return
 
-        # 立体卡片 / 唱片 / 纯歌词面板都不要背景板，直接浮在壁纸上
-        if self.settings.background and self._effective_mode() not in _NO_BOARD_MODES:
+        # 唱片 / 纯歌词面板都不要背景板，直接浮在壁纸上
+        if self.settings.background and mode not in _NO_BOARD_MODES:
             painter.drawPixmap(0, 0, self._background())
 
         over_x = self._overscan
@@ -768,17 +758,10 @@ class LyricWindow(QWidget):
             if albummid and albummid not in self._covers:
                 self._cover_loader.request(albummid)
 
-        mode = self._effective_mode()
-        if mode == "depth3d":
-            self._paint_depth3d(painter, card, snapshot, lyrics)
-        elif mode == "album":
+        if mode == "album":
             self._paint_album(painter, card, snapshot, lyrics)
         elif mode == "lyrics":
             self._paint_lyrics_panel(painter, card, snapshot, lyrics)
-        elif mode == "player":
-            self._paint_player(painter, card, snapshot, lyrics)
-        else:
-            self._paint_compact(painter, card, snapshot, lyrics)
         painter.end()
 
     def _background(self) -> QPixmap:
@@ -856,61 +839,6 @@ class LyricWindow(QWidget):
         self._bg_pixmap = pixmap
         return pixmap
 
-    # ==================================================================
-    # 立体卡片模式
-    # ==================================================================
-
-    def _paint_depth3d(self, painter, card, snapshot, lyrics) -> None:
-        settings = self.settings
-        colors = settings.colors
-        now = time.monotonic()
-
-        cover = float(settings.cover_size)
-        style = getattr(settings, "depth_album_style", "classic")
-        if style == "vinyl":
-            block = cover * 1.46
-        elif style == "cover_vinyl":
-            block = cover * 1.64
-        else:
-            block = cover * 1.41421
-
-        center_x = card.left() + PAD + block / 2.0
-        center_y = card.center().y()
-
-        albummid = getattr(lyrics, "albummid", "") if lyrics is not None else ""
-        self._draw_album_3d(
-            painter, center_x, center_y, cover, block, colors, albummid, snapshot, now
-        )
-
-        text_left = card.left() + PAD + block + TEXT_GAP
-        self._draw_lyric_list(
-            painter, text_left, card.right() - PAD, center_y, snapshot, lyrics, colors, now
-        )
-
-    def _draw_album_3d(
-        self, painter, cx, cy, cover, block, colors, albummid, snapshot, now
-    ) -> None:
-        """立体卡片左侧的封面区，样式可在右键菜单里切换。"""
-        style = getattr(self.settings, "depth_album_style", "classic")
-
-        if style == "vinyl":
-            radius = block / 2.0
-            box = QRectF(cx - radius, cy - radius, block, block)
-            art = self._cover_for(albummid, int(radius * 1.24))
-            self._draw_vinyl(painter, box, art, snapshot, colors)
-            self._draw_tonearm(painter, box, colors)
-            return
-
-        if style == "cover_vinyl":
-            side = block / self.SQUARE_BLOCK_RATIO
-            art = self._cover_for(albummid, int(side))
-            self._draw_album_square(
-                painter, cx - block / 2.0, cy, side, art, snapshot, colors
-            )
-            return
-
-        self._draw_depth_classic(painter, cx, cy, cover, colors, albummid)
-
     def _draw_tonearm(self, painter, box, colors) -> None:
         """黑胶唱臂：从唱片右上方伸下来，唱针落在唱片上。"""
         radius = box.width() / 2.0
@@ -982,9 +910,11 @@ class LyricWindow(QWidget):
         )
         painter.restore()
 
-    def _draw_depth_classic(self, painter, cx, cy, cover, colors, albummid) -> None:
-        """经典样式：正面方块 + 后方旋转 45° 的淡化方块（只露四个小三角）。"""
-        reach = cover * 0.70711
+    def _draw_classic_art(self, painter, box, art, colors) -> None:
+        """经典唱片样式：方块封面 + 后方菱形只露四个小三角。"""
+        cx, cy = box.center().x(), box.center().y()
+        cover = max(8.0, box.width() / 1.41421 * 0.72)
+        reach = box.width() / 2.0
         half = cover / 2.0
         base = half * 0.41421
 
@@ -997,7 +927,7 @@ class LyricWindow(QWidget):
 
         style = self.settings.raise_style
         accent = QColor(colors["glow"])
-        ambient = self._cover_color(albummid) or accent
+        ambient = accent
         ko = max(0.0, min(1.5, float(self.settings.raise_opacity)))
 
         def scaled(color: QColor) -> QColor:
@@ -1080,7 +1010,7 @@ class LyricWindow(QWidget):
 
         clip = QPainterPath()
         clip.addRoundedRect(square, radius, radius)
-        scaled = self._cover_for(albummid, int(cover))
+        scaled = art
 
         painter.save()
         painter.setClipPath(clip)
@@ -1234,11 +1164,6 @@ class LyricWindow(QWidget):
         tilt = float(self.settings.text_tilt)
         depth_v = float(self.settings.text_depth_v)
         depth_h = float(self.settings.text_depth_h)
-        if self._effective_mode() == "depth3d":
-            # 立体卡片只用正的景深（原来的方向就够用了），
-            # 反向倾斜只对纯歌词 / 分离面板的歌词生效
-            depth_v = abs(depth_v)
-            depth_h = abs(depth_h)
         if abs(tilt) < 0.01 and abs(depth_v) < 0.001 and abs(depth_h) < 0.001:
             return None
 
@@ -1388,20 +1313,30 @@ class LyricWindow(QWidget):
         block_w = 0.0
         if settings.show_cover:
             box = QRectF(left, cy - disc / 2.0, disc, disc)
-            if settings.album_shape == "square":
+            shape = (
+                settings.album_shape
+                if settings.album_shape in ("disc", "square", "vinyl", "classic")
+                else "disc"
+            )
+            if shape == "square":
                 side = disc * 0.82
                 block_w = side * self.SQUARE_BLOCK_RATIO
-                art_size = int(side)
-            else:
-                block_w = disc
-                art_size = int(disc * 0.62)
-
-            cover = self._cover_for(albummid, art_size)
-            if settings.album_shape == "square":
+                cover = self._cover_for(albummid, int(side))
                 self._draw_album_square(
                     painter, box.left(), cy, side, cover, snapshot, colors
                 )
+            elif shape == "classic":
+                block_w = disc
+                art = self._cover_for(albummid, int(disc / 1.41421 * 0.72))
+                self._draw_classic_art(painter, box, art, colors)
+            elif shape == "vinyl":
+                block_w = disc
+                cover = self._cover_for(albummid, int(disc * 0.62))
+                self._draw_vinyl(painter, box, cover, snapshot, colors)
+                self._draw_tonearm(painter, box, colors)
             else:
+                block_w = disc
+                cover = self._cover_for(albummid, int(disc * 0.62))
                 self._draw_vinyl(painter, box, cover, snapshot, colors)
 
         text_left = left if block_w <= 0.0 else left + block_w + TEXT_GAP
@@ -1415,41 +1350,45 @@ class LyricWindow(QWidget):
 
         # ---- 控制按钮（在标题行右侧）----
         reserved = 0.0
+        control_size = max(24.0, float(settings.font_size) * 0.82)
         if settings.show_controls:
-            size = max(24.0, float(settings.font_size) * 0.82)
-            controls_w = self._controls_width(size)
+            controls_w = self._controls_width(control_size)
             reserved = controls_w + 14
             self._draw_controls(
-                painter, right - controls_w, y, size,
+                painter, right - controls_w, y, control_size,
                 snapshot, colors,
                 row_height=self._album_title_h,
             )
 
-        title_text = snapshot.track.title if snapshot and snapshot.track else "未在播放"
-        self._draw_elided(
-            painter, title_text, text_left, max(40.0, text_w - reserved), y,
-            fm_title, self._fonts["title"], QColor(colors["base"]), 1.0,
-        )
-        y += self._album_title_h + self._album_title_h * 0.18
+        if settings.show_title:
+            title_text = snapshot.track.title if snapshot and snapshot.track else "未在播放"
+            self._draw_elided(
+                painter, title_text, text_left, max(40.0, text_w - reserved), y,
+                fm_title, self._fonts["title"], QColor(colors["base"]), 1.0,
+            )
+            y += self._album_title_h + self._album_title_h * 0.18
 
-        if snapshot is not None and snapshot.track is not None:
-            parts = [p for p in (snapshot.track.artist, snapshot.track.album) if p]
-            artist_text = "  ·  ".join(parts) if parts else "未知艺术家"
-        else:
-            artist_text = "打开任意播放器播放歌曲即可显示"
-        self._draw_elided(
-            painter, artist_text, text_left, text_w, y,
-            fm_artist,
-            self._fonts["artist"],
-            QColor(colors["base"]) if self._no_card else QColor(colors["dim"]),
-            0.88 if self._no_card else 0.95,
-        )
-        y += self._album_artist_h + self._album_title_h * 0.40
+            if snapshot is not None and snapshot.track is not None:
+                parts = [p for p in (snapshot.track.artist, snapshot.track.album) if p]
+                artist_text = "  ·  ".join(parts) if parts else "未知艺术家"
+            else:
+                artist_text = "打开任意播放器播放歌曲即可显示"
+            self._draw_elided(
+                painter, artist_text, text_left, text_w, y,
+                fm_artist,
+                self._fonts["artist"],
+                QColor(colors["base"]) if self._no_card else QColor(colors["dim"]),
+                0.88 if self._no_card else 0.95,
+            )
+            y += self._album_artist_h + self._album_title_h * 0.40
+        elif settings.show_controls:
+            y += control_size * 0.62 + 8
 
         # ---- 音频跳动波形 ----
-        wave_rect = QRectF(text_left, y, text_w, self._wave_h)
-        self._draw_wave(painter, wave_rect, colors, snapshot, now)
-        y += self._wave_h + self._album_title_h * 0.42
+        if settings.show_wave:
+            wave_rect = QRectF(text_left, y, text_w, self._wave_h)
+            self._draw_wave(painter, wave_rect, colors, snapshot, now)
+            y += self._wave_h + self._album_title_h * 0.42
 
         # ---- 进度条 + 时间 ----
         if settings.show_progress:
@@ -2309,7 +2248,7 @@ class LyricWindow(QWidget):
     # ==================================================================
 
     def _controls_active(self) -> bool:
-        return self._effective_mode() in ("player", "album")
+        return self._effective_mode() == "album"
 
     @property
     def _no_card(self) -> bool:
@@ -2552,18 +2491,18 @@ class LyricWindow(QWidget):
         """把菜单项填进给定菜单（复用同一个菜单对象，避免反复创建销毁）。"""
         menu.clear()
         settings = self.settings
-        mode = self._effective_mode()
-        mode_menu = menu.addMenu("界面模式")
-        for label, value in (
-            ("唱片播放器（无歌词）", "album"),
-            ("纯歌词面板", "lyrics"),
-            ("立体卡片（封面+歌词列表）", "depth3d"),
-            ("分离面板（唱片 + 歌词，各自可移动）", "split"),
-        ):
-            action = mode_menu.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(settings.mode == value)
-            action.triggered.connect(lambda _c, v=value: self._set_mode(v))
+        self._toggle(
+            menu,
+            "显示歌词",
+            settings.show_lyrics,
+            lambda: self._set_show(lyrics=not settings.show_lyrics),
+        )
+        self._toggle(
+            menu,
+            "显示播放器",
+            settings.show_player,
+            lambda: self._set_show(player=not settings.show_player),
+        )
 
         # 跟随哪个播放器（只在检测到多个时才有必要显示）
         players: list[dict] = []
@@ -2574,7 +2513,7 @@ class LyricWindow(QWidget):
             except Exception:
                 players = []
         if players:
-            player_menu = menu.addMenu("跟随播放器")
+            player_menu = menu.addMenu("跟随音乐")
             auto_action = player_menu.addAction("自动（正在播放的那个）")
             auto_action.setCheckable(True)
             auto_action.setChecked(not settings.preferred_player)
@@ -2592,7 +2531,7 @@ class LyricWindow(QWidget):
                 action.setChecked(settings.preferred_player == app_id)
                 action.triggered.connect(lambda _c, a=app_id: self._set_player(a))
 
-        if mode in ("depth3d", "lyrics"):
+        if settings.show_lyrics:
             lines_menu = menu.addMenu("歌词列表行数")
             for value in (1, 3, 5, 7, 9, 11):
                 action = lines_menu.addAction(f"{value} 行")
@@ -2601,7 +2540,7 @@ class LyricWindow(QWidget):
                 action.triggered.connect(lambda _c, v=value: self._set_lines(v))
 
         # 只有独立的纯歌词面板才需要这个开关（分离面板里的歌词列不带头部）
-        if mode == "lyrics" and self.role != "lyrics":
+        if self._effective_mode() == "lyrics" and self.role != "lyrics":
             self._toggle(
                 menu,
                 "显示歌名歌手和热度",
@@ -2609,21 +2548,18 @@ class LyricWindow(QWidget):
                 self._toggle_song_info,
             )
 
-        if mode == "depth3d":
-            depth_style_menu = menu.addMenu("专辑样式")
+        if settings.show_player:
+            depth_style_menu = menu.addMenu("唱片样式")
             for label, value in (
                 ("经典（方块 + 菱形）", "classic"),
-                ("黑胶唱片（带唱臂）", "vinyl"),
-                ("封面 + 唱片", "cover_vinyl"),
+                ("黑胶（带唱臂）", "vinyl"),
+                ("封面 + 唱片", "square"),
+                ("圆形唱片", "disc"),
             ):
                 action = depth_style_menu.addAction(label)
                 action.setCheckable(True)
-                action.setChecked(
-                    getattr(settings, "depth_album_style", "classic") == value
-                )
-                action.triggered.connect(
-                    lambda _c, v=value: self._set_depth_style(v)
-                )
+                action.setChecked(settings.album_shape == value)
+                action.triggered.connect(lambda _c, v=value: self._set_album_shape(v))
 
         font_menu = menu.addMenu("歌词字体")
         families = set(QFontDatabase.families())
@@ -2807,26 +2743,24 @@ class LyricWindow(QWidget):
 
     # ------------------------------------------------------------------
 
-    def _set_mode(self, value: str) -> None:
-        self.settings.mode = value
+    def _set_show(
+        self,
+        *,
+        lyrics: bool | None = None,
+        player: bool | None = None,
+    ) -> None:
+        """只改显示开关，绝不顺手改播放器里别的显示选项。"""
+        settings = self.settings
+        if lyrics is not None:
+            settings.show_lyrics = bool(lyrics)
+        if player is not None:
+            settings.show_player = bool(player)
         self._display_idx = -1
         self._scroll_ready = False
-        if value in ("depth3d", "lyrics"):
-            self.settings.show_progress = False
-            self.settings.show_controls = False
-            self.settings.show_next = False
-        elif value in ("player", "album"):
-            self.settings.show_progress = True
-            self.settings.show_controls = True
-            self.settings.show_next = True
         self._commit(resize=True)
 
     def _set_album_shape(self, value: str) -> None:
         self.settings.album_shape = value
-        self._commit(resize=True)
-
-    def _set_depth_style(self, value: str) -> None:
-        self.settings.depth_album_style = value
         self._commit(resize=True)
 
     def _set_player(self, app_id: str) -> None:
@@ -3109,6 +3043,14 @@ class LyricWindow(QWidget):
     def _toggle_controls(self) -> None:
         self.settings.show_controls = not self.settings.show_controls
         self._commit()
+
+    def _toggle_title(self) -> None:
+        self.settings.show_title = not self.settings.show_title
+        self._commit(resize=True)
+
+    def _toggle_wave(self) -> None:
+        self.settings.show_wave = not self.settings.show_wave
+        self._commit(resize=True)
 
     def _toggle_prev(self) -> None:
         self.settings.show_prev = not self.settings.show_prev
