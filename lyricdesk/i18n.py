@@ -126,6 +126,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "btn.custom_offset": "自定义偏移…",
         "btn.reset_song": "重置本歌",
         "btn.default_offset": "所有歌曲的默认偏移…",
+        "btn.offset.confirm": "确认",
+        "btn.offset.revert": "还原",
+        "sync.preview": "当前本歌偏移：{saved:+d} ms → {preview:+d} ms（未确认）",
         "lyrics.sync.hint": (
             "偏移按「播放器 + 歌名 + 歌手 + 时长」分别记：调好一首不会影响别的歌，"
             "同名不同版本也不会串。"
@@ -342,6 +345,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "btn.custom_offset": "Custom offset…",
         "btn.reset_song": "Reset this song",
         "btn.default_offset": "Default offset for all songs…",
+        "btn.offset.confirm": "Apply",
+        "btn.offset.revert": "Revert",
+        "sync.preview": "Offset for this song: {saved:+d} ms → {preview:+d} ms (unapplied)",
         "lyrics.sync.hint": (
             "Offsets are stored per “player + title + artist + duration”, so fixing one song "
             "never affects another — and two versions of the same title stay separate."

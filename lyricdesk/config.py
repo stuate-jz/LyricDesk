@@ -102,6 +102,10 @@ DIALOG_THEMES = ("auto", "dark", "light")
 class Settings:
     """所有可调参数。保存为 JSON。"""
 
+    # 歌词偏移的「未确认」预览值：None = 没有预览。
+    # 故意不写成 dataclass 字段 —— 它不能被存进 settings.json。
+    offset_preview: ClassVar[int | None] = None
+
     theme: str = "aurora"
     # 1.6.8 起桌面显示由下面两个开关派生，mode 只用于老配置迁移
     show_lyrics: bool = True

@@ -1485,13 +1485,17 @@ class SettingsDialog(QDialog):
         offset_layout.addWidget(offset_caption)
         offset_layout.addWidget(self._offset_spin, 1)
         layout.addWidget(offset_row)
-        self._buttons(
+        offset_buttons = self._buttons(
             layout,
-            ("btn.earlier.05", "提前 0.5 秒", lambda: self.window._nudge_offset(-500)),
-            ("btn.later.05", "延后 0.5 秒", lambda: self.window._nudge_offset(500)),
-            ("btn.reset_song", "重置本歌", lambda: self.window._set_offset(0)),
+            ("btn.offset.confirm", "确认", self.window._commit_offset),
+            ("btn.offset.revert", "还原", self.window._cancel_offset),
+            ("btn.earlier.05", "提前 0.5 秒", lambda: self._nudge_preview(-500)),
+            ("btn.later.05", "延后 0.5 秒", lambda: self._nudge_preview(500)),
+            ("btn.reset_song", "重置本歌", self._reset_song_offset),
             ("btn.default_offset", "所有歌曲的默认偏移…", self.window._ask_default_offset),
         )
+        self._offset_confirm = offset_buttons.itemAt(0).widget()
+        self._offset_revert = offset_buttons.itemAt(1).widget()
         self._hint(
             layout,
             "lyrics.sync.hint",
@@ -1504,7 +1508,26 @@ class SettingsDialog(QDialog):
     def _set_numeric_offset(self, value: float) -> None:
         if self._silent:
             return
-        self.window._set_offset(int(value))
+        self.window._preview_offset(int(value))
+        self._refresh_offset_state()
+
+    def _nudge_preview(self, delta: int) -> None:
+        value = max(-3000, min(3000, self.window._offset_ms() + delta))
+        self.window._preview_offset(value)
+        self._refresh_offset_state()
+
+    def _reset_song_offset(self) -> None:
+        self.window.settings.offset_preview = None
+        self.window._set_offset(0)
+
+    def _refresh_offset_state(self) -> None:
+        self._silent = True
+        self._offset_spin.setValue(float(self.window._offset_ms()))
+        self._silent = False
+        pending = getattr(self.window.settings, "offset_preview", None) is not None
+        self._offset_confirm.setEnabled(pending)
+        self._offset_revert.setEnabled(pending)
+        self._offset_label.setText(self._offset_text())
 
     def _set_song_info(self, value: bool) -> None:
         if bool(self.window.settings.show_song_info) != bool(value):
@@ -1971,10 +1994,7 @@ class SettingsDialog(QDialog):
         self._click_warn.setVisible(clicking)
         self._click_exit.setVisible(clicking)
         self._warn_card.setVisible(clicking)
-        self._silent = True
-        self._offset_spin.setValue(float(self.window._offset_ms()))
-        self._silent = False
-        self._offset_label.setText(self._offset_text())
+        self._refresh_offset_state()
         source = self.window._update_source()
         self._source_label.setText(
             tr("update.current_source", "当前更新源：{source}").format(source=source)
@@ -2048,6 +2068,13 @@ class SettingsDialog(QDialog):
     def _offset_text(self) -> str:
         key = self.window._song_key()
         current = self.window._offset_ms()
+        preview = getattr(self.window.settings, "offset_preview", None)
+        saved = self.window.settings.offset_for(key)
+        if preview is not None:
+            return tr(
+                "sync.preview",
+                "当前本歌偏移：{saved:+d} ms → {preview:+d} ms（未确认）",
+            ).format(saved=saved, preview=current)
         if not key:
             return tr(
                 "sync.none",
@@ -2184,6 +2211,7 @@ class SettingsDialog(QDialog):
         box.setDefaultButton(QMessageBox.StandardButton.No)
         if box.exec() != QMessageBox.StandardButton.Yes:
             return
+        self.window.settings.offset_preview = None
         self.window.settings.reset()
         self.window.settings.show_lyrics = True
         self.window.settings.show_player = False

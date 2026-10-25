@@ -271,6 +271,7 @@ class LyricWindow(QWidget):
         # 自动宽度：记录上一次算宽度用的歌词对象 / 缓存
         self._auto_lyrics_ref = None
         self._auto_width_cache = None
+        self._offset_sig = None
 
         self._hit_prev = QRectF()
         self._hit_play = QRectF()
@@ -709,6 +710,17 @@ class LyricWindow(QWidget):
             self._auto_lyrics_ref = lyrics
             self._apply_new_width(QRect(self.geometry()), self.settings.lyric_align)
         snapshot = self.engine.snapshot()
+        track = snapshot.track if snapshot is not None else None
+        sig = (
+            (track.title, track.artist, round(float(track.duration or 0)))
+            if track is not None
+            else None
+        )
+        if sig != self._offset_sig:
+            self._offset_sig = sig
+            if getattr(self.settings, "offset_preview", None) is not None:
+                self.settings.offset_preview = None
+                self.settingsChanged.emit()
         playing = bool(snapshot and snapshot.is_playing)
         if playing:
             # 唱片转速：约 26°/秒，看起来像在转但不晕
@@ -2309,7 +2321,10 @@ class LyricWindow(QWidget):
         return f"{player}|{title}|{artist}|{seconds}"
 
     def _offset_ms(self) -> int:
-        """当前这首歌实际使用的偏移。"""
+        """当前这首歌实际使用的偏移（有未确认预览时优先用预览值）。"""
+        preview = getattr(self.settings, "offset_preview", None)
+        if preview is not None:
+            return int(preview)
         return self.settings.offset_for(self._song_key())
 
     def _hit_test(self, pos) -> str:
@@ -2471,6 +2486,8 @@ class LyricWindow(QWidget):
     def _on_settings_closed(self, _result: int = 0) -> None:
         # 关掉之后要把引用清掉，否则下次再点会去操作已释放的窗口
         self._settings_dialog = None
+        self.settings.offset_preview = None
+        self.update()
         # 设置窗口关了，歌词窗恢复原来的置顶状态
         set_all_topmost_suspended(False)
 
@@ -2997,8 +3014,30 @@ class LyricWindow(QWidget):
 
     def _set_offset(self, value: int) -> None:
         # 按歌记：这首歌调好的偏移不会影响下一首
+        self.settings.offset_preview = None
         self.settings.set_offset_for(self._song_key(), value)
         self._commit()
+
+    def _preview_offset(self, value: int) -> None:
+        """只预览，不写入；歌词立刻跟着动，但 song_offsets 不动。"""
+        self.settings.offset_preview = max(-30000, min(30000, int(value)))
+        self.update()
+
+    def _commit_offset(self) -> None:
+        """确认：把预览值真正记到本歌头上。"""
+        value = getattr(self.settings, "offset_preview", None)
+        if value is None:
+            return
+        self.settings.offset_preview = None
+        self._set_offset(int(value))
+
+    def _cancel_offset(self) -> None:
+        """还原：丢掉预览，回到已保存的偏移。"""
+        if getattr(self.settings, "offset_preview", None) is None:
+            return
+        self.settings.offset_preview = None
+        self.update()
+        self.settingsChanged.emit()
 
     def _nudge_offset(self, delta: int) -> None:
         self._set_offset(self._offset_ms() + delta)
@@ -3045,6 +3084,7 @@ class LyricWindow(QWidget):
             100,
         )
         if ok:
+            self.settings.offset_preview = None
             self.settings.offset_ms = int(value)
             self._commit()
 
