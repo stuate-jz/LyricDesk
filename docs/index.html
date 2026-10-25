@@ -11,7 +11,7 @@
 <meta property="og:type" content="website">
 <meta property="og:title" content="桌面歌词 LyricDesk · 下载">
 <meta property="og:description" content="悬浮在桌面上的歌词组件：不挑播放器，带歌词跳动动画，不改壁纸。">
-<meta property="og:image" content="https://stuate-jz.github.io/LyricDesk/screenshots/3d.png">
+<meta property="og:image" content="https://stuate-jz.github.io/LyricDesk/screenshots/show.png">
 <style>
   :root{
     --c1:#38bdf8; --c2:#a78bfa; --c3:#f0abfc;
@@ -171,8 +171,8 @@
           <span>纯透明悬浮窗，只是浮在桌面上的一层，随时拖动、随时隐藏。</span></div>
         <div class="feat"><div class="ico">&#127908;</div><b>歌词跟着节奏动</b>
           <span>当前句渐变高亮、逐字填充，切换时带回弹动画。</span></div>
-        <div class="feat"><div class="ico">&#128251;</div><b>四种界面</b>
-          <span>立体卡片 / 纯歌词面板 / 唱片播放器 / 分离面板，唱片和歌词还能各放各的。</span></div>
+        <div class="feat"><div class="ico">&#128251;</div><b>歌词 / 播放器独立开关</b>
+          <span>可只显示歌词、只显示播放器，或两扇透明面板同时显示、各自摆放。</span></div>
         <div class="feat"><div class="ico">&#127912;</div><b>能调的地方都给你了</b>
           <span>字号、行数、行间距、封面大小、整体不透明度、五种配色、文字内倾角度。</span></div>
         <div class="feat"><div class="ico">&#128266;</div><b>字体随便换</b>
@@ -232,9 +232,9 @@
    下面的 FALLBACK 只在直接双击本地打开（file:// 读不到 json）或 fetch 失败时兜底，
    所以要跟当前版本保持一致：version / date / notes 跟 packaging/update.json 同步。 */
 const FALLBACK = {
-  version: "1.6.7",
-  date: "2026-10-19",
-  notes: "· 新增：B 站客户端字幕（配合「启动B站歌词模式」脚本，可选开启）\n· 新增：歌词字间距（-2~+12px），窗口宽度自动适应最长一行\n· 变更：「歌词宽度」滑块取消，改为自动宽度；加字间距不再让字变小\n· 修复：设置窗口不出现在任务栏（现在有图标、可最小化还原）\n· 变更：「歌唱行间距」改名为「歌词行间距」\n· 新增：设置界面品牌区、分类图标、白色对勾\n· 优化：设置窗口改成无边框（圆角 + 自绘顶栏，可拖动可缩放）\n· 修复：勾选「置顶显示」会闪一下（改用 Windows 原生置顶）\n· 优化：倾斜改为真 3D 透视，不再「调大就放大」\n· 优化：默认改为纯歌词面板、不置顶、落位右上\n· 修复：视频标题噪声导致歌词匹配不到",
+  version: "1.6.8",
+  date: "2026-10-25",
+  notes: "· 新增：「显示歌词」「显示播放器」两个独立开关，可单开、双开或全部隐藏到托盘\n· 变更：去掉立体卡片和界面模式；唱片样式合并为圆形 / 封面+唱片 / 黑胶 / 经典四种\n· 新增：B 站普通视频播放时显示视频封面\n· 新增：发现新版本后改为菜单小点和设置页常驻提示，不再弹新版对话框\n· 新增：设置窗口右上角可最小化到任务栏\n· 新增：歌词偏移支持直接输入毫秒数字\n· 优化：设置项按歌词 / 播放重新归位，关闭对应面板时整页置灰\n· 修复：切换显示播放器时不会改动已有的进度条和控制按钮设置",
   url: "https://gitee.com/pursue-studies/LyricDesk/releases",
   page_url: "https://gitee.com/pursue-studies/LyricDesk/releases",
   size_mb: 45,
