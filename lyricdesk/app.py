@@ -180,10 +180,44 @@ def main() -> int:
     # ---------- 分离面板的进出场 ----------
 
     def enter_split() -> None:
+        screen = (
+            main_window.screen()
+            if main_window is not None and main_window.screen() is not None
+            else QApplication.primaryScreen()
+        )
+        area = screen.availableGeometry()
+        auto_player = bool(settings.player_pos[0] < 0)
+
+        # 用户手动摆过 lyrics_pos 也会被这次切换覆盖——这是故意的：
+        # 勾选的一瞬间，「当前歌词在哪儿」比历史坐标更可信。
+        before = None
+        if main_window is not None:
+            before = (main_window.x(), main_window.y())
+            settings.lyrics_pos = [before[0], before[1]]
+            settings.x, settings.y = before[0], before[1]
+
         player = LyricWindow(settings, engine, role="player")
         wire(player)
         player.show()
         player.keep_on_screen()
+
+        if before is not None and auto_player:
+            lx, ly = before
+            left_x = lx - player.width() - 24
+            if left_x >= area.x() + 20:
+                player.move(left_x, ly)
+            else:
+                below_y = ly + (main_window.height() if main_window else 0) + 24
+                if below_y + player.height() <= area.bottom() - 20:
+                    player.move(lx, below_y)
+                else:
+                    player.move(
+                        lx,
+                        max(area.y() + 20, ly - player.height() - 24),
+                    )
+            player.keep_on_screen()
+            player._remember_position()
+
         player.raise_()
         lyrics = LyricWindow(
             settings,
@@ -198,6 +232,13 @@ def main() -> int:
         settings.save()
 
     def exit_split() -> None:
+        # 取消分离时，把歌词面板最后的位置交还给单窗口。
+        lyrics_panels = [
+            win for win in panel_windows if getattr(win, "role", "") == "lyrics"
+        ]
+        if lyrics_panels:
+            settings.x, settings.y = lyrics_panels[0].x(), lyrics_panels[0].y()
+
         for win in panel_windows:
             # 设置窗口可能挂在某个面板上；面板要销毁了，先把它转交出去，
             # 不然用户开着的设置窗口会指向已释放的窗口
@@ -210,6 +251,7 @@ def main() -> int:
         panel_windows.clear()
         if main_window is not None:
             main_window.recalculate()
+            main_window.move(settings.x, settings.y)
 
     def sync_mode_windows() -> None:
         want_split = settings.show_lyrics and settings.show_player
