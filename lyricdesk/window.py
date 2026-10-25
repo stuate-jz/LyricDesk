@@ -3177,8 +3177,8 @@ class LyricWindow(QWidget):
     def _toggle_bili_mode(self) -> None:
         """B 站客户端字幕开关。
 
-        打开时自动准备 B 站：端口在就什么都不做；B 站没跑就带端口启动；
-        B 站正在跑（不带端口）→ 问一次再重启（会中断当前播放）。
+        端口在就什么都不做；B 站没跑时只启用设置，不主动打开；
+        B 站正在跑（不带端口）时自动重启到字幕模式。
         """
         if self.settings.bili_mode:
             self.settings.bili_mode = False
@@ -3192,7 +3192,7 @@ class LyricWindow(QWidget):
         self._commit()
 
     def ensure_bili_ready(self) -> bool:
-        """确保 B 站以「能读字幕」的方式开着；需要重启时先问用户。"""
+        """准备 B 站字幕模式，但不会替用户打开没有运行的 B 站。"""
         from PySide6.QtWidgets import QMessageBox
 
         from . import bili_launcher
@@ -3213,58 +3213,19 @@ class LyricWindow(QWidget):
             return False
 
         if bili_launcher.is_running(exe):
-            box = self._update_box(
-                QMessageBox.Icon.Question,
-                "B 站字幕",
-                "读取字幕需要重启 B 站",
-                "当前正在播放的视频会中断。重启后会自动用「可读取字幕」的方式打开 B 站，要继续吗？",
-            )
-            go = box.addButton("继续", QMessageBox.ButtonRole.AcceptRole)
-            box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
-            box.exec()
-            if box.clickedButton() is not go:
-                return False
             bili_launcher.restart_with_debug(exe)
         else:
-            bili_launcher.launch_with_debug(exe)
+            # 用户没主动打开 B 站时不要替用户启动。后台守护会在下次检测到
+            # 用户打开 B 站时自动切到可读取字幕的模式。
+            return True
 
         ready = bili_launcher.wait_ready(8.0)
         if not ready:
             self.requestNotify.emit(
                 "B 站字幕",
-                "调试端口还没就绪。等 B 站完全打开后，点设置里的「重启 B 站并读取字幕」。",
+                "B 站已重启，但字幕调试端口还没就绪；程序会在后台继续尝试。",
             )
         return ready
-
-    def _ask_restart_bili(self) -> None:
-        """设置里/启动时的「重启 B 站并读取字幕」：问一句，然后重启并等端口。"""
-        from PySide6.QtWidgets import QMessageBox
-
-        from . import bili_launcher
-
-        if bili_launcher.debug_ready():
-            self.requestNotify.emit("B 站字幕", "B 站已经是「歌词模式」，可以直接看字幕。")
-            return
-        exe = bili_launcher.find_exe()
-        if exe is None:
-            self.requestNotify.emit("B 站字幕", "没找到 B 站客户端，先安装「哔哩哔哩」电脑版。")
-            return
-        box = self._update_box(
-            QMessageBox.Icon.Question,
-            "B 站字幕",
-            "重启 B 站以读取字幕？",
-            "当前正在播放的视频会中断；重启后会自动用「可读取字幕」的方式打开。",
-        )
-        go = box.addButton("重启 B 站", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("暂不", QMessageBox.ButtonRole.RejectRole)
-        box.exec()
-        if box.clickedButton() is not go:
-            return
-        bili_launcher.restart_with_debug(exe)
-        if bili_launcher.wait_ready(8.0):
-            self.requestNotify.emit("B 站字幕", "B 站已重启，字幕模式就绪。")
-        else:
-            self.requestNotify.emit("B 站字幕", "端口还没就绪，等 B 站完全打开后再试一次。")
 
     def _reset_position(self) -> None:
         if self.role == "player":

@@ -1642,15 +1642,14 @@ class SettingsDialog(QDialog):
         self._check(
             layout,
             "window.bili_mode",
-            "B 站客户端字幕（需要先用启动脚本打开 B 站）",
+            "B 站客户端字幕（不会主动打开 B 站）",
             getter=lambda: settings.bili_mode,
             apply=lambda value: self._flip("bili_mode", "_toggle_bili_mode", value),
             hint_key="window.bili_mode.hint",
-            hint="只在你双击过「启动B站歌词模式」时生效；普通听歌不受影响。",
-        )
-        self._buttons(
-            layout,
-            ("btn.restart_bili", "重启 B 站并读取字幕", self.window._ask_restart_bili),
+            hint=(
+                "B 站没运行时会记住设置但不主动启动；B 站已运行时会自动重启一次，"
+                "之后每次由你打开 B 站都会自动切换到可读取字幕的模式。"
+            ),
         )
 
         layout.addSpacing(6)

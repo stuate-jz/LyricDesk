@@ -13,10 +13,13 @@ r"""B 站客户端字幕桥（通过 Chrome DevTools Protocol）。
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
@@ -26,6 +29,19 @@ from .titles import clean_title
 
 DEBUG_PORT = 9225
 DEBUG_URL = f"http://127.0.0.1:{DEBUG_PORT}/json"
+NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
+TARGET_RECHECK_SECONDS = 2.0
+MAX_READ_MISSES = 2
+
+# WBI 签名用的乱序表（B 站 web 端通用）
+_WBI_TAB = (
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
+    33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
+    61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11,
+    36, 20, 34, 44, 52,
+)
+_WBI_CACHE: tuple[float, str] | None = None
+_MUSIC_NOTE_EDGE = re.compile(r"^\s*[\u2669-\u266C]+\s*|\s*[\u2669-\u266C]+\s*$")
 
 # 页面里注入的 JS：包一层 fetch / XHR，把播放器接口的返回存到 window.__LD
 INJECT_JS = r"""
@@ -230,7 +246,7 @@ def to_lines(payload) -> list[LyricLine]:
     for item in body:
         if not isinstance(item, dict):
             continue
-        text = str(item.get("content") or "").strip()
+        text = _MUSIC_NOTE_EDGE.sub("", str(item.get("content") or "")).strip()
         if not text:
             continue
         start = _num(item.get("from"))
@@ -267,6 +283,57 @@ def _find_page(timeout: float = 0.8) -> dict | None:
     return fallback
 
 
+def _wbi_mixin_from_raw(raw: str) -> str:
+    """把 nav 返回的两段 key 拼成 WBI mixin，并缓存 10 分钟。"""
+    global _WBI_CACHE
+    if len(raw) < 64:
+        return ""
+    try:
+        mixin = "".join(raw[index] for index in _WBI_TAB)[:32]
+    except IndexError:
+        return ""
+    _WBI_CACHE = (time.time() + 600, mixin)
+    return mixin
+
+
+def _wbi_mixin(timeout: float = 6.0) -> str:
+    """用 Python 请求 nav 取 WBI mixin（页面请求失败时的兜底）。"""
+    global _WBI_CACHE
+    now = time.time()
+    if _WBI_CACHE is not None and _WBI_CACHE[0] > now:
+        return _WBI_CACHE[1]
+    try:
+        response = requests.get(NAV_URL, timeout=timeout)
+        wbi = (response.json().get("data") or {}).get("wbi_img") or {}
+        img = str(wbi.get("img_url") or "").rsplit("/", 1)[-1].split(".")[0]
+        sub = str(wbi.get("sub_url") or "").rsplit("/", 1)[-1].split(".")[0]
+        return _wbi_mixin_from_raw(img + sub)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def signed_player_url(page_url: str, raw_wbi_key: str = "") -> str:
+    """给播放器页地址里的 aid/cid 生成带 WBI 签名的 /x/player/wbi/v2 地址。
+
+    B 站客户端有时不会自己请求 player/v2（尤其是切换视频后复用同一个页面），
+    拿到字幕轨就全靠这里主动去要。
+    """
+    query = parse_qs(urlparse(page_url or "").query)
+    aid = (query.get("aid") or [""])[0]
+    cid = (query.get("cid") or [""])[0]
+    if not aid or not cid:
+        return ""
+    mixin = _wbi_mixin_from_raw(raw_wbi_key) if raw_wbi_key else _wbi_mixin()
+    if not mixin:
+        return ""
+    params = sorted({"aid": aid, "cid": cid, "wts": int(time.time())}.items())
+    text = urlencode(
+        {key: "".join(ch for ch in str(value) if ch not in "!'()*") for key, value in params}
+    )
+    w_rid = hashlib.md5((text + mixin).encode()).hexdigest()
+    return f"https://api.bilibili.com/x/player/wbi/v2?{text}&w_rid={w_rid}"
+
+
 def available(timeout: float = 0.25) -> bool:
     """调试端口有没有响应、并且开着 B 站页面。"""
     return _find_page(timeout) is not None
@@ -283,6 +350,7 @@ class BiliBridge:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._ws = None
+        self._ws_url = ""
         self._next_id = 0
 
     # ---------- 对外 ----------
@@ -343,13 +411,48 @@ class BiliBridge:
                 self._connect(str(target["webSocketDebuggerUrl"]))
                 self._install()
                 backoff = 1.0
+                read_misses = 0
+                next_target_check = time.monotonic() + TARGET_RECHECK_SECONDS
                 while not self._stop.is_set():
-                    state = parse_state(self._evaluate(READ_JS))
+                    if self._ws is None:
+                        break
+                    if time.monotonic() >= next_target_check:
+                        next_target_check = time.monotonic() + TARGET_RECHECK_SECONDS
+                        newer = _find_page(0.35)
+                        if (
+                            newer is not None
+                            and str(newer.get("webSocketDebuggerUrl") or "")
+                            != self._ws_url
+                        ):
+                            # B 站首页和播放页是两个 target。用户点进视频后必须
+                            # 从旧的首页连接切到 player.html，否则永远读不到 song。
+                            break
+                    raw = self._evaluate(READ_JS)
+                    state = parse_state(raw)
                     if state is None:
-                        self._stop.wait(1.0)
+                        read_misses += 1
+                        if read_misses >= MAX_READ_MISSES or self._ws is None:
+                            break
+                        self._stop.wait(0.4)
                         continue
+                    read_misses = 0
+                    if not state.subtitle_url and state.active:
+                        # 页面没自己请求过 player/v2 → 我们带 WBI 签名去要一份
+                        player = self._fetch_player()
+                        if player:
+                            try:
+                                data = json.loads(raw) if raw else {}
+                            except (TypeError, ValueError):
+                                data = {}
+                            data["player"] = player
+                            state = parse_state(json.dumps(data)) or state
                     self._update(state)
                     self._stop.wait(0.8)
+                # 连接失效 / B 站重启 / target 从首页切到播放页 → 外层重连。
+                self._close()
+                self._clear()
+                if not self._stop.is_set():
+                    self._stop.wait(0.4)
             except Exception:  # noqa: BLE001
                 self._close()
                 self._clear()
@@ -367,10 +470,12 @@ class BiliBridge:
             suppress_origin=True,
             enable_multithread=True,
         )
+        self._ws_url = url
         self._next_id = 0
 
     def _close(self) -> None:
         ws, self._ws = self._ws, None
+        self._ws_url = ""
         if ws is not None:
             try:
                 ws.close()
@@ -415,15 +520,65 @@ class BiliBridge:
         )
 
     def _evaluate(self, expression: str) -> str | None:
+        value = self._evaluate_raw(expression)
+        return value if isinstance(value, str) else None
+
+    def _evaluate_raw(self, expression: str, timeout: float = 4.0, await_promise: bool = False):
         msg = self._call(
             "Runtime.evaluate",
-            {"expression": expression, "returnByValue": True, "awaitPromise": False},
+            {
+                "expression": expression,
+                "returnByValue": True,
+                "awaitPromise": await_promise,
+            },
+            timeout=timeout,
         )
         if not msg:
             return None
         result = _dig(msg, "result", "result")
-        value = result.get("value") if isinstance(result, dict) else None
-        return value if isinstance(value, str) else None
+        return result.get("value") if isinstance(result, dict) else None
+
+    def _fetch_player(self) -> dict | None:
+        """主动要一份 /x/player/wbi/v2（带 WBI 签名，页面里带登录态发）。"""
+        href = self._evaluate("location.href")
+        # 优先让 B 站页面自己请求 nav。单文件打包版里 requests 的证书 / 代理
+        # 环境偶尔与系统 Python 不同，页面内请求则完全复用客户端现有网络环境。
+        raw_key = self._page_wbi_key()
+        url = signed_player_url(href or "", raw_key)
+        if not url:
+            return None
+        expression = (
+            "fetch("
+            + json.dumps(url)
+            + ", {credentials:'include'})"
+            ".then(function(r){return r.json()}).catch(function(){return null})"
+        )
+        data = self._evaluate_raw(expression, timeout=10.0, await_promise=True)
+        if isinstance(data, dict) and data.get("code") == 0:
+            return data
+        return None
+
+    def _page_wbi_key(self) -> str:
+        expression = r"""
+        (async function () {
+          try {
+            const response = await fetch(
+              'https://api.bilibili.com/x/web-interface/nav',
+              {credentials: 'include'}
+            );
+            const data = await response.json();
+            const wbi = (data && data.data && data.data.wbi_img) || {};
+            const name = function (url) {
+              return String(url || '').split('/').pop().split('.')[0];
+            };
+            return name(wbi.img_url) + name(wbi.sub_url);
+          } catch (error) {
+            return '';
+          }
+        })()
+        """
+        value = self._evaluate_raw(expression, timeout=10.0, await_promise=True)
+        return value if isinstance(value, str) and len(value) >= 64 else ""
 
     def _update(self, state: BiliState) -> None:
         if not state.subtitle_url:
@@ -456,6 +611,16 @@ class BiliBridge:
     def _download(self, url: str) -> list[LyricLine]:
         if url.startswith("//"):
             url = "https:" + url
+        expression = (
+            "fetch("
+            + json.dumps(url)
+            + ", {credentials:'include'})"
+            ".then(function(r){return r.json()}).catch(function(){return null})"
+        )
+        payload = self._evaluate_raw(expression, timeout=10.0, await_promise=True)
+        lines = to_lines(payload)
+        if lines:
+            return lines
         try:
             resp = requests.get(url, timeout=6.0)
             if resp.status_code != 200:

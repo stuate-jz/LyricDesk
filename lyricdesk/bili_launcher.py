@@ -167,6 +167,32 @@ def wait_ready(timeout: float = 6.0) -> bool:
     return False
 
 
+def prepare_existing_for_debug(
+    timeout: float = 10.0,
+    should_continue=None,
+) -> tuple[bool, str]:
+    """桌面歌词启动时，把已经在跑的普通 B 站自动切换成字幕模式。
+
+    - 已经是字幕模式 → 不动；
+    - B 站没在跑 → 不主动打开，留给 BiliWatcher 在用户下次打开时接管；
+    - B 站正在跑但没端口 → 自动带端口重启。
+
+    返回值：(是否已就绪, 状态)。状态用于程序给出准确提示。
+    """
+    if debug_ready():
+        return True, "ready"
+    exe = find_exe()
+    if exe is None:
+        return False, "not_found"
+    if not is_running(exe):
+        return True, "not_running"
+    if should_continue is not None and not should_continue():
+        return False, "cancelled"
+    if not restart_with_debug(exe):
+        return False, "restart_failed"
+    return wait_ready(timeout), "restarted"
+
+
 class BiliWatcher:
     """开关打开时的后台守护：B 站被「普通方式」打开就自动带端口重启一次。
 
@@ -194,6 +220,12 @@ class BiliWatcher:
         self._stop.set()
 
     def _run(self) -> None:
+        # 先立刻记一次基线，避免用户在程序启动后 2 秒内打开 B 站时
+        # 被误判成「启动前就已经开着」，从而漏掉自动切换。
+        try:
+            self._tick()
+        except Exception:  # noqa: BLE001
+            pass
         while not self._stop.wait(self._interval):
             try:
                 self._tick()

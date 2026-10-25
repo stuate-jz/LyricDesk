@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import queue
 import subprocess
 import sys
+import threading
 
 from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QLinearGradient, QPainter, QPixmap
@@ -329,22 +331,56 @@ def main() -> int:
         )
 
     QTimer.singleShot(2500, first_run_hint)
-    # B 站字幕开着、但 B 站没带调试端口（例如用户自己重开过 B 站）：提示一次怎么恢复
-    def bili_port_hint() -> None:
+    # B 站字幕开着、并且 B 站已经在普通模式运行：启动桌面歌词时自动重启一次。
+    # 这段不依赖窗口可见，所以最小化到托盘 / 开机后台启动也会执行。
+    bili_launch_result: queue.Queue[tuple[bool, str]] = queue.Queue(maxsize=1)
+
+    def prepare_bili_on_launch() -> None:
         if not settings.bili_mode:
             return
         from . import bili_launcher
 
-        if bili_launcher.debug_ready():
-            return
-        exe = bili_launcher.find_exe()
-        if exe is not None and bili_launcher.is_running(exe):
-            # 直接问一句，点「重启 B 站」就自动搞定
-            windows = active_windows()
-            if windows:
-                windows[0]._ask_restart_bili()
+        def worker() -> None:
+            try:
+                result = bili_launcher.prepare_existing_for_debug(
+                    should_continue=lambda: settings.bili_mode
+                )
+            except Exception:  # noqa: BLE001
+                result = (False, "error")
+            bili_launch_result.put(result)
 
-    QTimer.singleShot(6000, bili_port_hint)
+        threading.Thread(
+            target=worker,
+            name="bili-launch-prepare",
+            daemon=True,
+        ).start()
+
+        def poll_result() -> None:
+            try:
+                ready, status = bili_launch_result.get_nowait()
+            except queue.Empty:
+                QTimer.singleShot(250, poll_result)
+                return
+            if not settings.bili_mode or status in ("ready", "not_running", "cancelled"):
+                return
+            if status == "not_found":
+                notify("B 站字幕", "没有找到哔哩哔哩客户端，暂时无法读取 B 站字幕。")
+            elif status == "restarted" and ready:
+                notify("B 站字幕", "B 站已自动切换到可读取字幕的模式。")
+            elif status == "restarted":
+                notify(
+                    "B 站字幕",
+                    "B 站已重启，但字幕调试端口还没就绪，请稍后重新打开 B 站。",
+                )
+            else:
+                notify(
+                    "B 站字幕",
+                    "B 站字幕模式准备失败；关闭后再勾选一次设置即可自动重试。",
+                )
+
+        QTimer.singleShot(200, poll_result)
+
+    QTimer.singleShot(900, prepare_bili_on_launch)
     # 配好更新源之后，启动时静默自查一次（24 小时内只查一次）
     QTimer.singleShot(8000, main_window.auto_check_update)
 
