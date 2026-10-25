@@ -253,10 +253,12 @@ QFrame#root {
     border-radius: 12px;
 }
 QWidget#topbar { background: transparent; }
-QPushButton#closebtn {
+QPushButton#closebtn, QPushButton#minbtn {
     border: none; border-radius: 6px; background: transparent; padding: 0;
     color: %TEXT_DIM%;
 }
+QPushButton#minbtn:hover { background: %ACCENT_SOFT%; color: %TEXT%; }
+QPushButton#minbtn:pressed { background: %LINE%; color: %TEXT%; }
 QPushButton#closebtn:hover { background: #e5484d; color: #ffffff; }
 QPushButton#closebtn:pressed { background: #c93c40; color: #ffffff; }
 QLabel { color: %TEXT%; }
@@ -357,10 +359,12 @@ QFrame#root {
     border-radius: 12px;
 }
 QWidget#topbar { background: transparent; }
-QPushButton#closebtn {
+QPushButton#closebtn, QPushButton#minbtn {
     border: none; border-radius: 6px; background: transparent; padding: 0;
     color: %TEXT_DIM%;
 }
+QPushButton#minbtn:hover { background: %ACCENT_SOFT%; color: %TEXT%; }
+QPushButton#minbtn:pressed { background: %LINE%; color: %TEXT%; }
 QPushButton#closebtn:hover { background: #e5484d; color: #ffffff; }
 QPushButton#closebtn:pressed { background: #c93c40; color: #ffffff; }
 QLabel { color: %TEXT%; }
@@ -873,8 +877,24 @@ class SettingsDialog(QDialog):
         icon_family = getattr(self.window, "_icon_family", "") or ""
         if icon_family and icon_family != "Segoe UI Symbol":
             close_glyph, close_size = "\uE8BB", 16
+            min_glyph = "\uE921"
         else:
             close_glyph, close_size = "✕", 18
+            min_glyph = "—"
+        self._min_btn = QPushButton(min_glyph)
+        min_font = QFont(icon_family)
+        min_font.setPixelSize(16)
+        self._min_btn.setFont(min_font)
+        self._min_btn.setObjectName("minbtn")
+        self._min_btn.setFixedSize(30, 30)
+        self._min_btn.setToolTip(tr("btn.minimize", "最小化到任务栏"))
+        self._bind_text(
+            self._min_btn, "btn.minimize", "最小化到任务栏", "setToolTip"
+        )
+        self._min_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._min_btn.clicked.connect(self.showMinimized)
+        rows.addWidget(self._min_btn)
+
         self._close_btn = QPushButton(close_glyph)
         close_font = QFont(icon_family)
         close_font.setPixelSize(close_size)
