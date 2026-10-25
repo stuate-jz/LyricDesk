@@ -928,10 +928,10 @@ class LyricWindow(QWidget):
         )
         painter.restore()
 
-    def _draw_classic_art(self, painter, box, art, colors) -> None:
+    def _draw_classic_art(self, painter, box, art, colors, key: str = "") -> None:
         """经典唱片样式：方块封面 + 后方菱形只露四个小三角。"""
         cx, cy = box.center().x(), box.center().y()
-        cover = max(8.0, box.width() / 1.41421 * 0.72)
+        cover = max(8.0, box.width() / 1.41421)
         reach = box.width() / 2.0
         half = cover / 2.0
         base = half * 0.41421
@@ -945,7 +945,7 @@ class LyricWindow(QWidget):
 
         style = self.settings.raise_style
         accent = QColor(colors["glow"])
-        ambient = accent
+        ambient = self._cover_color(key) or accent
         ko = max(0.0, min(1.5, float(self.settings.raise_opacity)))
 
         def scaled(color: QColor) -> QColor:
@@ -1344,9 +1344,13 @@ class LyricWindow(QWidget):
                     painter, box.left(), cy, side, cover, snapshot, colors
                 )
             elif shape == "classic":
-                block_w = disc
-                art = self._cover_for(cover_key, int(disc / 1.41421 * 0.72))
-                self._draw_classic_art(painter, box, art, colors)
+                block = float(settings.cover_size) * 1.41421
+                block = min(block, max(44.0, card.height() - 8.0))
+                box = QRectF(left, cy - block / 2.0, block, block)
+                block_w = block
+                art_size = min(float(settings.cover_size), block / 1.41421)
+                art = self._cover_for(cover_key, int(art_size))
+                self._draw_classic_art(painter, box, art, colors, cover_key)
             elif shape == "vinyl":
                 block_w = disc
                 cover = self._cover_for(cover_key, int(disc * 0.62))
