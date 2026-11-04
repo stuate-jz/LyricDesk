@@ -262,34 +262,44 @@ def main() -> int:
         panel_windows.clear()
         return outgoing
 
+    _mode_switch_busy = False
+
     def sync_mode_windows() -> None:
+        nonlocal _mode_switch_busy
+        if _mode_switch_busy:
+            return
+        _mode_switch_busy = True
         # 硬约束：进入 / 退出分离时，旧窗口必须等接替窗口显示后才隐藏，
         # 任何一次切换都不能出现“屏幕上一个窗口都没有”的中间帧。
-        want_split = settings.show_lyrics and settings.show_player
-        if want_split:
-            if not panel_windows:
-                enter_split()
+        # 本函数由 schedule_sync 的一次单发回调调用，内部不 processEvents()。
+        try:
+            want_split = settings.show_lyrics and settings.show_player
+            if want_split:
+                if not panel_windows:
+                    enter_split()
+                else:
+                    for win in panel_windows:
+                        show_at_slot(win)
+                if main_window is not None:
+                    main_window.hide()
+                return
+
+            outgoing: list[LyricWindow] = []
+            if panel_windows:
+                outgoing = exit_split()
+
+            if main_window is None:
+                for win in outgoing:
+                    win.hide()
+                return
+            if settings.show_lyrics or settings.show_player:
+                show_at_slot(main_window)
             else:
-                for win in panel_windows:
-                    show_at_slot(win)
-            if main_window is not None:
                 main_window.hide()
-            return
-
-        outgoing: list[LyricWindow] = []
-        if panel_windows:
-            outgoing = exit_split()
-
-        if main_window is None:
             for win in outgoing:
                 win.hide()
-            return
-        if settings.show_lyrics or settings.show_player:
-            show_at_slot(main_window)
-        else:
-            main_window.hide()
-        for win in outgoing:
-            win.hide()
+        finally:
+            _mode_switch_busy = False
 
     _sync_queued = False
     # 鼠标穿透这种真正的窗口标志改了以后，两扇面板都要重新套一遍。
