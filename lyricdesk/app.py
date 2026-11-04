@@ -96,7 +96,10 @@ def main() -> int:
     # 普通模式只有一扇主窗口；「分离面板」模式下主窗口让位给
     # 唱片面板 + 歌词面板两扇独立窗口，都可以各自拖动。
     main_window: LyricWindow | None = LyricWindow(settings, engine)
+    # 分离面板常驻复用：反复切换时不再反复创建透明 HWND / 首帧。
+    panel_cache: dict[str, LyricWindow] = {}
     panel_windows: list[LyricWindow] = []
+    panels_transferred = False
 
     def active_windows() -> list[LyricWindow]:
         if panel_windows:
@@ -161,6 +164,12 @@ def main() -> int:
     def on_quit() -> None:
         settings.save()
         engine.stop()
+        for win in list(panel_cache.values()):
+            win.hide()
+            win.setParent(None)
+            win.deleteLater()
+        panel_cache.clear()
+        panel_windows.clear()
         tray.hide()
         app.quit()
 
@@ -179,7 +188,18 @@ def main() -> int:
 
     # ---------- 分离面板的进出场 ----------
 
+    def cached_panel(role: str, anchor_y: int | None = None) -> tuple[LyricWindow, bool]:
+        """返回 (窗口, 是否新建)。缓存复用时不重复连接信号。"""
+        existing = panel_cache.get(role)
+        if existing is not None:
+            return existing, False
+        window = LyricWindow(settings, engine, role=role, anchor_y=anchor_y)
+        wire(window)
+        panel_cache[role] = window
+        return window, True
+
     def enter_split() -> None:
+        nonlocal panels_transferred
         screen = (
             main_window.screen()
             if main_window is not None and main_window.screen() is not None
@@ -192,8 +212,7 @@ def main() -> int:
             settings.lyrics_pos = [before[0], before[1]]
         auto_player = bool(settings.player_pos[0] < 0)
 
-        player = LyricWindow(settings, engine, role="player")
-        wire(player)
+        player, _new_player = cached_panel("player")
         player.show()
         player.keep_on_screen()
 
@@ -215,28 +234,25 @@ def main() -> int:
             player._remember_position()
 
         player.raise_()
-        lyrics = LyricWindow(
-            settings,
-            engine,
-            role="lyrics",
-            anchor_y=player.y() + player.height() + 24,
+        lyrics, _new_lyrics = cached_panel(
+            "lyrics", anchor_y=player.y() + player.height() + 24
         )
-        wire(lyrics)
         lyrics.show()
         lyrics.keep_on_screen()
-        panel_windows.extend([player, lyrics])
+        panel_windows[:] = [player, lyrics]
         settings.save()
 
     def exit_split() -> None:
+        nonlocal panels_transferred
         for win in panel_windows:
             # 设置窗口可能挂在某个面板上；面板要销毁了，先把它转交出去，
             # 不然用户开着的设置窗口会指向已释放的窗口
-            transfer = getattr(win, "transfer_settings_dialog", None)
-            if transfer is not None and main_window is not None:
-                transfer(main_window)
+            if not panels_transferred:
+                transfer = getattr(win, "transfer_settings_dialog", None)
+                if transfer is not None and main_window is not None:
+                    transfer(main_window)
             win.hide()
-            win.setParent(None)
-            win.deleteLater()
+        panels_transferred = True
         panel_windows.clear()
         if main_window is not None:
             main_window.recalculate()
