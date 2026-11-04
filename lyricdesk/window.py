@@ -964,6 +964,15 @@ class LyricWindow(QWidget):
         if _PROFILE_ENABLED:
             self._profile_paint_start = time.perf_counter()
         painter = QPainter(self)
+        # 透明窗口的 backing store 不保证自动清屏；首帧或局部刷新若直接叠加，
+        # 未绘制区域可能露出未初始化的黑色。先用 Source 模式铺满全透明。
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_Source
+        )
+        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_SourceOver
+        )
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
