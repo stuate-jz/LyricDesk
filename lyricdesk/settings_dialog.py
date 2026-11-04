@@ -1659,6 +1659,21 @@ class SettingsDialog(QDialog):
             ),
         )
 
+        self._check(
+            layout,
+            "window.netease_mode",
+            "网易云歌词（需重启一次网易云）",
+            getter=lambda: settings.netease_mode,
+            apply=lambda value: self._flip(
+                "netease_mode", "_toggle_netease_mode", value
+            ),
+            hint_key="window.netease_mode.hint",
+            hint=(
+                "通过网易云客户端播放条读取歌名、歌手、进度和封面。"
+                "首次启用需要确认重启一次网易云。"
+            ),
+        )
+
         self._section(layout, "window.follow_music", "跟随音乐")
         self._player_combo = QComboBox()
         self._player_combo.currentIndexChanged.connect(self._on_player_picked)

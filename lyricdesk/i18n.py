@@ -163,6 +163,11 @@ STRINGS: dict[str, dict[str, str]] = {
             "不会主动打开 B 站；B 站没运行时会记住设置，之后由你打开时自动切换；"
             "如果勾选时 B 站已经开着，会自动重启一次以读取字幕。"
         ),
+        "window.netease_mode": "网易云歌词（需重启一次网易云）",
+        "window.netease_mode.hint": (
+            "通过网易云客户端播放条读取歌名、歌手、进度和封面。"
+            "首次启用需要确认重启一次网易云。"
+        ),
         "window.follow_music": "跟随音乐",
         "btn.default_position": "回到默认位置",
         "btn.minimize_tray": "最小化到托盘",
@@ -369,6 +374,11 @@ STRINGS: dict[str, dict[str, str]] = {
             "Never opens Bilibili automatically. The setting is remembered while "
             "Bilibili is closed and applies when you open it. If Bilibili is already "
             "running when enabled, it is restarted once for subtitle access."
+        ),
+        "window.netease_mode": "NetEase lyrics (restart NetEase once)",
+        "window.netease_mode.hint": (
+            "Reads the title, artist, progress and cover from the NetEase player bar. "
+            "Enabling it requires one confirmed NetEase restart."
         ),
         "window.follow_music": "Follow player",
         "btn.default_position": "Move to default position",
