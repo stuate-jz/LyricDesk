@@ -129,9 +129,7 @@ def main() -> int:
             if visible:
                 win.hide()
             else:
-                win.show()
-                win.raise_()
-                win.keep_on_screen()
+                show_at_slot(win)
 
     tray_menu = QMenu()
 
@@ -188,6 +186,15 @@ def main() -> int:
 
     # ---------- 分离面板的进出场 ----------
 
+    def show_at_slot(win: LyricWindow) -> None:
+        """尺寸、位置、贴边都在显示前定好，避免出现首帧后再跳动。"""
+        win.recalculate()
+        win.apply_slot_position()
+        win.keep_on_screen()
+        win._remember_position()
+        win.show()
+        win.raise_()
+
     def cached_panel(role: str, anchor_y: int | None = None) -> tuple[LyricWindow, bool]:
         """返回 (窗口, 是否新建)。缓存复用时不重复连接信号。"""
         existing = panel_cache.get(role)
@@ -213,10 +220,9 @@ def main() -> int:
         auto_player = bool(settings.player_pos[0] < 0)
 
         player, _new_player = cached_panel("player")
-        player.show()
-        player.keep_on_screen()
 
         if before is not None and auto_player:
+            player.recalculate()
             lx, ly = before
             left_x = lx - player.width() - 24
             if left_x >= area.x() + 20:
@@ -233,12 +239,11 @@ def main() -> int:
             player.keep_on_screen()
             player._remember_position()
 
-        player.raise_()
+        show_at_slot(player)
         lyrics, _new_lyrics = cached_panel(
             "lyrics", anchor_y=player.y() + player.height() + 24
         )
-        lyrics.show()
-        lyrics.keep_on_screen()
+        show_at_slot(lyrics)
         panel_windows[:] = [player, lyrics]
         settings.save()
 
@@ -260,24 +265,23 @@ def main() -> int:
 
     def sync_mode_windows() -> None:
         want_split = settings.show_lyrics and settings.show_player
-        if want_split and not panel_windows:
+        if want_split:
             if main_window is not None:
                 main_window.hide()
-            enter_split()
-        elif not want_split and panel_windows:
+            if not panel_windows:
+                enter_split()
+            else:
+                for win in panel_windows:
+                    show_at_slot(win)
+            return
+
+        if panel_windows:
             exit_split()
 
         if main_window is None:
             return
-        if panel_windows:
-            main_window.hide()
-            return
         if settings.show_lyrics or settings.show_player:
-            main_window.recalculate()
-            main_window.apply_slot_position()
-            main_window.show()
-            main_window.keep_on_screen()
-            main_window.raise_()
+            show_at_slot(main_window)
         else:
             main_window.hide()
 
@@ -303,11 +307,6 @@ def main() -> int:
                 _flag_state["click_through"] = settings.click_through
                 for win in active_windows():
                     win.apply_flags()
-            for win in active_windows():
-                # 字号 / 行数这类设置会让另一扇面板的尺寸也变，需要一起重算
-                win.recalculate()
-                win.keep_on_screen()
-                win.update()
             # 设置窗口开着的话要留在最前面：切模式新建的面板会盖在它上面
             hosts = list(active_windows())
             if main_window is not None and main_window not in hosts:
@@ -468,9 +467,7 @@ def main() -> int:
             return
         for win in windows:
             if not win.isVisible():
-                win.show()
-            win.raise_()
-            win.keep_on_screen()
+                show_at_slot(win)
         rebuild_tray_menu()
 
     music_timer = QTimer()
