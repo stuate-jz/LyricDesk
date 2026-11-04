@@ -10,7 +10,8 @@ from .config import Settings
 from .bili_client import BiliBridge
 from .bili_launcher import BiliWatcher
 from .lyrics import Lyrics, fetch, load_cached, provider_for_player, save_cached
-from .netease_client import NeteaseBridge
+from .netease_client import NeteaseBridge, configure as configure_netease
+from .netease_launcher import find_ready_port
 from .smtc import SMTC_AVAILABLE, SmtcReader, Snapshot
 
 
@@ -23,6 +24,8 @@ class Engine(QObject):
     def __init__(self, settings: Settings) -> None:
         super().__init__()
         self.settings = settings
+        if settings.netease_port:
+            configure_netease(settings.netease_port)
         self._reader = SmtcReader(preferred_player=settings.preferred_player)
         self._reader.start()
 
@@ -179,6 +182,12 @@ class Engine(QObject):
                 self.lyricsChanged.emit(None)
 
         if self.settings.netease_mode:
+            if not self.settings.netease_port:
+                ready_port = find_ready_port()
+                if ready_port:
+                    self.settings.netease_port = ready_port
+                    self.settings.save()
+                    configure_netease(ready_port)
             if self._netease is None:
                 self._netease = NeteaseBridge()
                 self._netease.start()

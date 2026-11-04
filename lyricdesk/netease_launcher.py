@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import time
 from pathlib import Path
 
-DEBUG_PORT = 9222
-DEBUG_FLAG = f"--remote-debugging-port={DEBUG_PORT}"
+DEBUG_PORT_MIN = 9222
+DEBUG_PORT_MAX = 9232
 
 
 def _exe_in(folder: Path) -> Path | None:
@@ -126,16 +127,49 @@ def is_running(exe: Path) -> bool:
     return exe.name.lower() in text
 
 
-def debug_ready() -> bool:
+def port_available(port: int) -> bool:
+    """本机端口当前是否可绑定（True = 空闲）。"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", int(port)))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def pick_port(preferred: int = 0) -> int:
+    """优先使用上次端口；否则从 9222 起找到第一个空闲端口。"""
+    if preferred and DEBUG_PORT_MIN <= int(preferred) <= DEBUG_PORT_MAX:
+        if port_available(int(preferred)):
+            return int(preferred)
+    for port in range(DEBUG_PORT_MIN, DEBUG_PORT_MAX + 1):
+        if port_available(port):
+            return port
+    return DEBUG_PORT_MIN
+
+
+def find_ready_port() -> int:
+    """扫描自动端口范围，返回已经有网易云页面的端口；没有返回 0。"""
     from .netease_client import available
 
-    return available(0.3)
+    for port in range(DEBUG_PORT_MIN, DEBUG_PORT_MAX + 1):
+        if available(0.12, port):
+            return port
+    return 0
 
 
-def launch_with_debug(exe: Path) -> bool:
+def debug_ready(port: int = 0) -> bool:
+    from .netease_client import available
+
+    return available(0.3, port or None)
+
+
+def launch_with_debug(exe: Path, port: int = DEBUG_PORT_MIN) -> bool:
     try:
         subprocess.Popen(
-            [str(exe), DEBUG_FLAG],
+            [str(exe), f"--remote-debugging-port={int(port)}"],
             cwd=str(exe.parent),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
@@ -144,7 +178,7 @@ def launch_with_debug(exe: Path) -> bool:
         return False
 
 
-def restart_with_debug(exe: Path) -> bool:
+def restart_with_debug(exe: Path, port: int = DEBUG_PORT_MIN) -> bool:
     try:
         subprocess.run(
             ["taskkill", "/F", "/IM", exe.name],
@@ -155,13 +189,13 @@ def restart_with_debug(exe: Path) -> bool:
     except Exception:  # noqa: BLE001
         pass
     time.sleep(0.9)
-    return launch_with_debug(exe)
+    return launch_with_debug(exe, port)
 
 
-def wait_ready(timeout: float = 10.0) -> bool:
+def wait_ready(timeout: float = 10.0, port: int = 0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if debug_ready():
+        if debug_ready(port):
             return True
         time.sleep(0.4)
     return False

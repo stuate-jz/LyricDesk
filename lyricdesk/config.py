@@ -144,6 +144,8 @@ class Settings:
     bili_mode: bool = False
     # 网易云客户端歌词：需要客户端以 9222 调试端口重启一次
     netease_mode: bool = False
+    # 0 = 自动从 9222 起找空闲端口；首次启用后写入实际端口
+    netease_port: int = 0
     tray_hint_shown: bool = False
     # 已不对外暴露（设置窗口里删掉了「显示上一首/下一首按钮」两个开关，
     # 统一由 show_controls 控制整条播放控制）。字段保留是为了老 settings.json
@@ -359,6 +361,12 @@ class Settings:
             self.raise_style = "frost"
         if self.album_shape not in ("disc", "square", "vinyl", "classic"):
             self.album_shape = "disc"
+        try:
+            self.netease_port = int(self.netease_port)
+        except (TypeError, ValueError):
+            self.netease_port = 0
+        if self.netease_port and not 9222 <= self.netease_port <= 9232:
+            self.netease_port = 0
         self.update_source = str(self.update_source or "").strip()
 
     def reset(self) -> None:

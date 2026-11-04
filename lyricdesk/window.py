@@ -3450,8 +3450,12 @@ class LyricWindow(QWidget):
         from PySide6.QtWidgets import QMessageBox
 
         from . import netease_launcher
+        from .netease_client import configure as configure_netease
 
-        if netease_launcher.debug_ready():
+        ready_port = netease_launcher.find_ready_port()
+        if ready_port:
+            self.settings.netease_port = ready_port
+            configure_netease(ready_port)
             return True
         exe = netease_launcher.find_exe()
         if exe is None:
@@ -3486,15 +3490,18 @@ class LyricWindow(QWidget):
         if box.clickedButton() is not yes:
             return False
 
+        port = netease_launcher.pick_port(self.settings.netease_port)
+        self.settings.netease_port = port
+        configure_netease(port)
         started = (
-            netease_launcher.restart_with_debug(exe)
+            netease_launcher.restart_with_debug(exe, port)
             if running
-            else netease_launcher.launch_with_debug(exe)
+            else netease_launcher.launch_with_debug(exe, port)
         )
         if not started:
             self.requestNotify.emit("网易云歌词", "网易云启动失败，请手动打开后再试。")
             return False
-        ready = netease_launcher.wait_ready(10.0)
+        ready = netease_launcher.wait_ready(10.0, port)
         if not ready:
             self.requestNotify.emit(
                 "网易云歌词",

@@ -19,9 +19,29 @@ import requests
 
 from .smtc import Snapshot, Track
 
-DEBUG_PORT = 9222
-DEBUG_URL = f"http://127.0.0.1:{DEBUG_PORT}/json/list"
+DEBUG_PORT_MIN = 9222
+DEBUG_PORT_MAX = 9232
+DEBUG_PORT = DEBUG_PORT_MIN
+_debug_port = DEBUG_PORT
+DEBUG_URL = f"http://127.0.0.1:{_debug_port}/json/list"
 TARGET_RECHECK_SECONDS = 2.0
+
+
+def configure(port: int | None) -> None:
+    """切换本进程读取/启动网易云时使用的调试端口。"""
+    global _debug_port, DEBUG_URL
+    try:
+        value = int(port or 0)
+    except (TypeError, ValueError):
+        value = 0
+    if not DEBUG_PORT_MIN <= value <= DEBUG_PORT_MAX:
+        value = DEBUG_PORT_MIN
+    _debug_port = value
+    DEBUG_URL = f"http://127.0.0.1:{value}/json/list"
+
+
+def current_port() -> int:
+    return _debug_port
 
 # 全部集中在这里：网易云改版时通常只需要调整这几个选择器。
 PLAYBAR_SELECTORS = (
@@ -301,9 +321,14 @@ def parse_window_title(title: str, previous_playing: bool = False) -> NeteaseSta
     )
 
 
-def _find_page(timeout: float = 0.4) -> dict | None:
+def _find_page(timeout: float = 0.4, port: int | None = None) -> dict | None:
+    url = (
+        f"http://127.0.0.1:{int(port)}/json/list"
+        if port is not None
+        else DEBUG_URL
+    )
     try:
-        response = requests.get(DEBUG_URL, timeout=timeout)
+        response = requests.get(url, timeout=timeout)
         if response.status_code != 200:
             return None
         targets = response.json()
@@ -316,7 +341,8 @@ def _find_page(timeout: float = 0.4) -> dict | None:
         if not isinstance(item, dict) or item.get("type") != "page":
             continue
         url = str(item.get("url") or "")
-        if "orpheus" not in url and "music.163.com" not in url:
+        # 只认网易云 CEF 页面；别的 Electron 程序即使占了同一个端口也不能误判。
+        if "orpheus" not in url.lower():
             continue
         if not item.get("webSocketDebuggerUrl"):
             continue
@@ -327,8 +353,8 @@ def _find_page(timeout: float = 0.4) -> dict | None:
     return fallback
 
 
-def available(timeout: float = 0.25) -> bool:
-    return _find_page(timeout) is not None
+def available(timeout: float = 0.25, port: int | None = None) -> bool:
+    return _find_page(timeout, port) is not None
 
 
 def running_window_title() -> str:
