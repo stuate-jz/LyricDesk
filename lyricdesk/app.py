@@ -437,6 +437,48 @@ def main() -> int:
         QTimer.singleShot(200, poll_result)
 
     QTimer.singleShot(900, prepare_bili_on_launch)
+
+    # 网易云开关开着、客户端也在运行，但调试端口没开：只在启动后提示一次。
+    netease_hint_result: queue.Queue[tuple[bool, bool]] = queue.Queue(maxsize=1)
+
+    def prepare_netease_hint() -> None:
+        if not settings.netease_mode:
+            return
+        from . import netease_launcher
+
+        def worker() -> None:
+            try:
+                exe = netease_launcher.find_exe()
+                running = bool(exe is not None and netease_launcher.is_running(exe))
+                ready = bool(netease_launcher.find_ready_port())
+            except Exception:  # noqa: BLE001
+                running = False
+                ready = False
+            netease_hint_result.put((running, ready))
+
+        threading.Thread(
+            target=worker,
+            name="netease-launch-hint",
+            daemon=True,
+        ).start()
+
+        def poll_result() -> None:
+            try:
+                running, ready = netease_hint_result.get_nowait()
+            except queue.Empty:
+                QTimer.singleShot(250, poll_result)
+                return
+            if settings.netease_mode and running and not ready:
+                notify(
+                    "网易云歌词",
+                    "网易云正在运行，但没有开歌词端口。\n"
+                    "右键菜单 →「网易云：未连接（需要重启网易云）」"
+                    "点一下就切过去。",
+                )
+
+        QTimer.singleShot(200, poll_result)
+
+    QTimer.singleShot(8600, prepare_netease_hint)
     # 配好更新源之后，启动时静默自查一次（24 小时内只查一次）
     QTimer.singleShot(8000, main_window.auto_check_update)
 
