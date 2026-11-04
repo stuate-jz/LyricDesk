@@ -388,6 +388,18 @@ class LyricWindow(QWidget):
     # 窗口标志 / 尺寸
     # ==================================================================
 
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._last_tick = time.monotonic()
+        if not self._timer.isActive():
+            self._timer.start()
+        self.update()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        # 收进托盘 / 被分离面板替换时彻底停掉动画轮询。
+        self._timer.stop()
+        super().hideEvent(event)
+
     def _apply_window_flags(self) -> None:
         flags = (
             Qt.WindowType.FramelessWindowHint
@@ -807,10 +819,106 @@ class LyricWindow(QWidget):
             # 唱片转速：约 26°/秒，看起来像在转但不晕
             self._spin_angle = (self._spin_angle + delta * 26.0) % 360.0
         animating = (time.monotonic() - self._anim_t0) < (ANIM_DURATION + 0.25)
-        interval = 16 if (playing or animating) else 180
+        continuous = self._needs_redraw(snapshot, animating)
+        interval = 33 if continuous else 180
         if self._timer.interval() != interval:
             self._timer.setInterval(interval)
-        self.update()
+        if continuous:
+            rect = self._current_line_rect_for_update(snapshot, animating)
+            if rect is not None:
+                self.update(rect)
+            else:
+                self.update()
+
+    def _needs_redraw(self, snapshot, animating: bool) -> bool:
+        """只在画面真的会变化时请求重绘；静止时仍保留低频轮询。"""
+        if not self.isVisible():
+            return False
+        mode = self._effective_mode()
+        if mode == "none" or snapshot is None:
+            return False
+        if mode == "album":
+            if not snapshot.is_playing:
+                return False
+            # 唱片光晕 / 音波 / 进度至少有一个在动；全关时保持静止。
+            return bool(
+                self.settings.show_cover
+                or self.settings.show_wave
+                or self.settings.show_progress
+            )
+        if animating:
+            return True
+        if not snapshot.is_playing:
+            return False
+        lyrics = self.engine.lyrics
+        if lyrics is None or not lyrics.lines or lyrics.source == "miss":
+            return False
+        if not getattr(snapshot, "position_known", True):
+            return False
+        position = snapshot.position + self._offset_ms() / 1000.0
+        index = lyrics.index_at(position)
+        if index < 0:
+            # 前奏倒计时由 180ms 的低频轮询刷新就够，不必每帧全窗重画。
+            return False
+        if index != self._display_idx:
+            return True
+        current = lyrics.lines[index]
+        return self._lyric_progress(snapshot, current) < 0.999
+
+    def _current_line_rect_for_update(self, snapshot, animating: bool):
+        """稳定卡拉 OK 填充时只刷新当前歌词所在区域。
+
+        换句、滚动、前奏和唱片模式仍走整窗刷新；这里只处理最容易验证的
+        「句号没变、没有滚动动画、只有当前行填充在前进」。
+        """
+        if (
+            animating
+            or self._effective_mode() != "lyrics"
+            or snapshot is None
+            or not snapshot.is_playing
+            or not getattr(snapshot, "position_known", True)
+        ):
+            return None
+        lyrics = self.engine.lyrics
+        if lyrics is None or not lyrics.lines or lyrics.source == "miss":
+            return None
+        position = snapshot.position + self._offset_ms() / 1000.0
+        index = lyrics.index_at(position)
+        if index < 0 or index != self._display_idx:
+            return None
+        if self._lyric_progress(snapshot, lyrics.lines[index]) >= 0.999:
+            return None
+
+        over_x = self._overscan
+        over_y = self._overscan_v
+        card = QRectF(
+            MARGIN + over_x,
+            MARGIN + over_y,
+            self.width() - (MARGIN + over_x) * 2,
+            self.height() - (MARGIN + over_y) * 2,
+        )
+        left = card.left() + PAD
+        right = card.right() - PAD
+        show_info = bool(
+            self._want_song_info()
+            and snapshot.track is not None
+        )
+        block = (
+            self._head_h + 6.0 + self._head_sub_h + self._head_gap
+            if show_info
+            else 0.0
+        )
+        center_y = card.center().y() + block / 2.0
+        line_rect = QRectF(
+            left - 16.0,
+            center_y - self._list_slot * 0.72,
+            max(1.0, right - left + 32.0),
+            self._list_slot * 1.44,
+        )
+        transform = self._list_transform(left, right, center_y)
+        if transform is not None:
+            line_rect = transform.mapRect(line_rect)
+        return line_rect.adjusted(-16.0, -16.0, 16.0, 16.0).toAlignedRect()
 
     # ==================================================================
     # 背景
@@ -1428,6 +1536,7 @@ class LyricWindow(QWidget):
                     fm, self._fonts["list"], QColor(colors["base"]),
                     opacity * (0.35 + 0.65 * fade),
                     alignment=self.settings.lyric_align,
+                    shadow=False,
                 )
 
     def _align_center_x(self, left, right, advance: float) -> float:
@@ -1549,7 +1658,8 @@ class LyricWindow(QWidget):
         bar_w = max(2.0, (rect.width() - gap * (count - 1)) / count)
         playing = bool(snapshot is not None and snapshot.is_playing)
         position = snapshot.position if snapshot is not None else 0.0
-        base = position * 2.4 if playing else now * 0.6
+        # 暂停时波形定格，避免为了一个装饰动画持续整窗重绘。
+        base = position * 2.4 if playing else position * 0.6
 
         gradient = QLinearGradient(rect.left(), 0.0, rect.right(), 0.0)
         gradient.setColorAt(0.0, QColor(colors["c1"]))
@@ -2255,7 +2365,7 @@ class LyricWindow(QWidget):
 
     def _draw_elided(
         self, painter, text, left, width, top, fm, font_spec,
-        color, opacity, alignment="left",
+        color, opacity, alignment="left", shadow: bool = True,
     ) -> None:
         if not text or width <= 4:
             return
@@ -2285,9 +2395,10 @@ class LyricWindow(QWidget):
         flag |= Qt.AlignmentFlag.AlignVCenter
 
         rect = QRectF(left, top, width, fm.height())
-        # 轻描边，保证在任意壁纸上都能看清
-        painter.setPen(QColor(0, 0, 0, 120))
-        painter.drawText(rect.translated(0.0, 1.3), int(flag), display)
+        # 当前句保留描边；远处歌词少画一遍文字，降低整窗绘制指令数。
+        if shadow:
+            painter.setPen(QColor(0, 0, 0, 120))
+            painter.drawText(rect.translated(0.0, 1.3), int(flag), display)
         painter.setPen(color)
         painter.drawText(rect, int(flag), display)
         painter.restore()
