@@ -17,6 +17,7 @@ from pathlib import Path
 
 import requests
 
+from .config import app_dir
 from .smtc import Snapshot, Track
 
 DEBUG_PORT_MIN = 9222
@@ -24,7 +25,10 @@ DEBUG_PORT_MAX = 9232
 DEBUG_PORT = DEBUG_PORT_MIN
 _debug_port = DEBUG_PORT
 DEBUG_URL = f"http://127.0.0.1:{_debug_port}/json/list"
-TARGET_RECHECK_SECONDS = 2.0
+TARGET_RECHECK_SECONDS = 8.0
+POLL_INTERVAL_SECONDS = 0.3
+STATS_INTERVAL_SECONDS = 60.0
+MAX_READ_TIMEOUTS = 2
 
 
 def configure(port: int | None) -> None:
@@ -425,6 +429,9 @@ class NeteaseBridge:
         self._ws = None
         self._ws_url = ""
         self._next_id = 0
+        self._connect_count = 0
+        self._reconnects = 0
+        self._last_stats = time.monotonic()
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -437,6 +444,23 @@ class NeteaseBridge:
     def stop(self) -> None:
         self._stop.set()
         self._close()
+        self._write_stats("stopped")
+
+    @property
+    def reconnects(self) -> int:
+        with self._lock:
+            return self._reconnects
+
+    def _write_stats(self, reason: str) -> None:
+        try:
+            line = (
+                f"[{time.strftime('%H:%M:%S')}] reason={reason} "
+                f"reconnects={self.reconnects} connected={int(self.connected)}"
+            )
+            with (app_dir() / "netease.log").open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+        except Exception:  # noqa: BLE001
+            pass
 
     def snapshot(self) -> Snapshot | None:
         with self._lock:
@@ -494,17 +518,28 @@ class NeteaseBridge:
                 backoff = 0.5
                 next_target_check = time.monotonic() + TARGET_RECHECK_SECONDS
                 misses = 0
+                read_timeouts = 0
                 while not self._stop.is_set():
+                    if time.monotonic() - self._last_stats >= STATS_INTERVAL_SECONDS:
+                        self._last_stats = time.monotonic()
+                        self._write_stats("running")
                     if time.monotonic() >= next_target_check:
                         next_target_check = time.monotonic() + TARGET_RECHECK_SECONDS
                         newer = _find_page(0.3)
-                        if (
-                            newer is None
-                            or str(newer.get("webSocketDebuggerUrl") or "")
-                            != self._ws_url
-                        ):
-                            break
+                        # None = 本次探测未知（客户端忙 / HTTP 超时），保持现有连接；
+                        # 只有明确拿到另一个 target URL 才重连。
+                        if newer is not None:
+                            newer_url = str(newer.get("webSocketDebuggerUrl") or "")
+                            if newer_url and newer_url != self._ws_url:
+                                break
                     raw = self._evaluate(READ_JS)
+                    if raw is None:
+                        read_timeouts += 1
+                        if read_timeouts >= MAX_READ_TIMEOUTS:
+                            break
+                        self._stop.wait(POLL_INTERVAL_SECONDS)
+                        continue
+                    read_timeouts = 0
                     state = parse_state(raw, self._playing_hint)
                     if state is None:
                         misses += 1
@@ -513,7 +548,7 @@ class NeteaseBridge:
                     else:
                         misses = 0
                         self._set_state(state)
-                    self._stop.wait(0.2)
+                    self._stop.wait(POLL_INTERVAL_SECONDS)
             except Exception:  # noqa: BLE001
                 self._stop.wait(backoff)
                 backoff = min(3.0, backoff * 1.5)
@@ -536,6 +571,10 @@ class NeteaseBridge:
         )
         self._ws_url = url
         self._next_id = 0
+        with self._lock:
+            self._connect_count += 1
+            if self._connect_count > 1:
+                self._reconnects += 1
 
     def _close(self) -> None:
         ws, self._ws = self._ws, None
