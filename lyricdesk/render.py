@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import math
 from collections import OrderedDict
+from dataclasses import dataclass
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -14,11 +15,14 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
+    QPixmap,
     QTransform,
 )
 
 _SPRITE_CACHE: "OrderedDict[tuple, TextSprite]" = OrderedDict()
 _CACHE_LIMIT = 256
+_LINE_CACHE: "OrderedDict[tuple, LineArt]" = OrderedDict()
+_LINE_CACHE_LIMIT = 160
 
 # 全局字间距（px）。歌词字体统一套这个值；图标 / 时间这类不走精灵的文字不受影响。
 _LETTER_SPACING = 0.0
@@ -32,6 +36,7 @@ def set_letter_spacing(px: float) -> None:
         return
     _LETTER_SPACING = value
     _SPRITE_CACHE.clear()
+    clear_line_cache()
 
 
 def letter_spacing() -> float:
@@ -41,11 +46,16 @@ def letter_spacing() -> float:
 class TextSprite:
     """一段文字的矢量轮廓，可缩放绘制而不失真。"""
 
-    __slots__ = ("text", "size", "path", "advance", "ascent", "descent", "height")
+    __slots__ = (
+        "text", "family", "size", "weight", "path",
+        "advance", "ascent", "descent", "height",
+    )
 
     def __init__(self, text: str, font: QFont) -> None:
         self.text = text
+        self.family = font.family()
         self.size = font.pixelSize()
+        self.weight = int(font.weight())
 
         metrics = QFontMetricsF(font)
         self.advance = metrics.horizontalAdvance(text) if text else 0.0
@@ -58,6 +68,24 @@ class TextSprite:
             # 路径以「文字中心」为原点，绘制时只需平移到目标中心即可
             path.addText(-self.advance / 2.0, 0.0, font, text)
         self.path = path
+
+
+@dataclass
+class LineArt:
+    """一行歌词的预渲染底字与高光位图。"""
+
+    base: QPixmap
+    highlight: QPixmap | None
+    advance: float
+    ascent: float
+    descent: float
+    offset_x: float
+    baseline_y: float
+    height: float
+
+
+def clear_line_cache() -> None:
+    _LINE_CACHE.clear()
 
 
 def _font(family: str, size: int, weight) -> QFont:
@@ -179,6 +207,148 @@ def _fill_path(painter: QPainter, sprite: TextSprite, paint) -> None:
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(paint)
     painter.drawPath(sprite.path)
+
+
+def _color_key(color: QColor | None) -> str:
+    return color.name(QColor.NameFormat.HexArgb) if color is not None else ""
+
+
+def make_line_art(
+    sprite: TextSprite,
+    base_color: QColor,
+    grad_colors: tuple[str, str, str] | None = None,
+    glow_color: QColor | None = None,
+    outline_width: float = 0.0,
+    outline_color: QColor | None = None,
+    shadow: bool = True,
+    dpr: float = 1.0,
+) -> LineArt:
+    """把一行文字烘成普通层 + 高光层，绘制时只贴图。"""
+    key = (
+        sprite.text,
+        sprite.family,
+        sprite.size,
+        sprite.weight,
+        round(sprite.advance, 2),
+        _color_key(base_color),
+        grad_colors,
+        _color_key(glow_color),
+        round(float(outline_width), 2),
+        _color_key(outline_color),
+        bool(shadow),
+        round(float(dpr), 2),
+    )
+    cached = _LINE_CACHE.get(key)
+    if cached is not None:
+        _LINE_CACHE.move_to_end(key)
+        return cached
+
+    dpr = max(1.0, float(dpr))
+    pad_x = max(4.0, sprite.advance * 0.08, float(outline_width) * 1.5 + 2.0)
+    logical_w = max(1.0, sprite.advance + pad_x * 2.0)
+    logical_h = max(1.0, (sprite.ascent + sprite.descent) * 1.9)
+    offset_x = pad_x + sprite.advance / 2.0
+    baseline_y = logical_h / 2.0 + (sprite.ascent - sprite.descent) / 2.0
+
+    physical_w = max(2, int(math.ceil(logical_w * dpr)))
+    physical_h = max(2, int(math.ceil(logical_h * dpr)))
+
+    def new_pixmap() -> QPixmap:
+        pixmap = QPixmap(physical_w, physical_h)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        pixmap.setDevicePixelRatio(dpr)
+        return pixmap
+
+    def begin(pixmap: QPixmap) -> QPainter:
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.translate(offset_x, baseline_y)
+        return painter
+
+    base = new_pixmap()
+    painter = begin(base)
+    if shadow:
+        painter.save()
+        painter.translate(0.0, max(1.0, sprite.size * 0.055))
+        _fill_path(painter, sprite, QColor(0, 0, 0, 115))
+        painter.restore()
+    if outline_width > 0 and outline_color is not None:
+        _stroke_path(painter, sprite, outline_color, outline_width)
+    _fill_path(painter, sprite, base_color)
+    painter.end()
+
+    highlight = None
+    if grad_colors is not None and glow_color is not None:
+        highlight = new_pixmap()
+        painter = begin(highlight)
+        glow_pen = QPen(
+            QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 70)
+        )
+        glow_pen.setWidthF(max(2.0, sprite.size * 0.13))
+        glow_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        glow_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(glow_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(sprite.path)
+        gradient = QLinearGradient(
+            -sprite.advance / 2.0, 0.0, sprite.advance / 2.0, 0.0
+        )
+        gradient.setColorAt(0.0, QColor(grad_colors[0]))
+        gradient.setColorAt(0.5, QColor(grad_colors[1]))
+        gradient.setColorAt(1.0, QColor(grad_colors[2]))
+        _fill_path(painter, sprite, gradient)
+        painter.end()
+
+    art = LineArt(
+        base=base,
+        highlight=highlight,
+        advance=sprite.advance,
+        ascent=sprite.ascent,
+        descent=sprite.descent,
+        offset_x=offset_x,
+        baseline_y=baseline_y,
+        height=logical_h,
+    )
+    _LINE_CACHE[key] = art
+    if len(_LINE_CACHE) > _LINE_CACHE_LIMIT:
+        _LINE_CACHE.popitem(last=False)
+    return art
+
+
+def draw_line_art(
+    painter: QPainter,
+    art: LineArt,
+    center_x: float,
+    baseline: float,
+    progress: float = 0.0,
+    scale: float = 1.0,
+    opacity: float = 1.0,
+) -> None:
+    painter.save()
+    painter.setOpacity(max(0.0, min(1.0, painter.opacity() * opacity)))
+    painter.translate(center_x, baseline)
+    if scale != 1.0:
+        painter.scale(scale, scale)
+    painter.drawPixmap(QPointF(-art.offset_x, -art.baseline_y), art.base)
+
+    progress = max(0.0, min(1.0, float(progress)))
+    if progress > 0.0 and art.highlight is not None:
+        painter.save()
+        painter.setClipRect(
+            QRectF(
+                -art.advance / 2.0,
+                -art.ascent * 1.25,
+                art.advance * progress,
+                art.height * 1.9,
+            )
+        )
+        painter.setOpacity(painter.opacity() * min(1.0, progress * 6.0))
+        painter.drawPixmap(
+            QPointF(-art.offset_x, -art.baseline_y), art.highlight
+        )
+        painter.restore()
+    painter.restore()
 
 
 def draw_sprite(

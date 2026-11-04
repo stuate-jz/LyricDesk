@@ -68,7 +68,6 @@ from .update import (
 from .win_util import set_native_topmost
 from .lyrics import normalize
 from .render import (
-    draw_karaoke,
     draw_sprite,
     ease_out_back,
     ease_out_cubic,
@@ -310,6 +309,7 @@ class LyricWindow(QWidget):
         self._auto_lyrics_ref = None
         self._auto_width_cache = None
         self._offset_sig = None
+        self._prefetched_line_key = None
 
         self._hit_prev = QRectF()
         self._hit_play = QRectF()
@@ -356,6 +356,7 @@ class LyricWindow(QWidget):
         self.setMouseTracking(True)
 
         self._timer = QTimer(self)
+        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
@@ -391,6 +392,7 @@ class LyricWindow(QWidget):
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         self._last_tick = time.monotonic()
+        self._prefetch_visible_lyric_art(self.engine.snapshot())
         if not self._timer.isActive():
             self._timer.start()
         self.update()
@@ -474,6 +476,7 @@ class LyricWindow(QWidget):
     def recalculate(self, initial: bool = False) -> None:
         # 字间距会影响每个字的 advance，必须在算字体 / 自动宽度之前设置
         render_mod.set_letter_spacing(float(self.settings.letter_spacing))
+        render_mod.clear_line_cache()
         self._fonts = self._build_fonts()
         # 保留 QFont 实例本身，避免度量对象引用到已被回收的字体
         self._qt_fonts = {key: _qt_font(*spec) for key, spec in self._fonts.items()}
@@ -590,6 +593,7 @@ class LyricWindow(QWidget):
         )
         self._bg_key = None
         self._cover_cache.clear()
+        self._prefetched_line_key = None
 
         if initial:
             self._apply_initial_position()
@@ -815,12 +819,13 @@ class LyricWindow(QWidget):
                 self.settings.offset_preview = None
                 self.settingsChanged.emit()
         playing = bool(snapshot and snapshot.is_playing)
+        self._prefetch_visible_lyric_art(snapshot)
         if playing:
             # 唱片转速：约 26°/秒，看起来像在转但不晕
             self._spin_angle = (self._spin_angle + delta * 26.0) % 360.0
         animating = (time.monotonic() - self._anim_t0) < (ANIM_DURATION + 0.25)
         continuous = self._needs_redraw(snapshot, animating)
-        interval = 33 if continuous else 180
+        interval = 30 if continuous else 180
         if self._timer.interval() != interval:
             self._timer.setInterval(interval)
         if continuous:
@@ -864,6 +869,85 @@ class LyricWindow(QWidget):
             return True
         current = lyrics.lines[index]
         return self._lyric_progress(snapshot, current) < 0.999
+
+    def _prefetch_visible_lyric_art(self, snapshot) -> None:
+        """在计时器线程里构建下一帧要贴的位图，避免首帧绘制超预算。"""
+        if self._effective_mode() != "lyrics" or snapshot is None:
+            return
+        lyrics = self.engine.lyrics
+        if lyrics is None or not lyrics.lines or lyrics.source == "miss":
+            return
+        if not getattr(snapshot, "position_known", True):
+            return
+        position = snapshot.position + self._offset_ms() / 1000.0
+        index = lyrics.index_at(position)
+        if index < 0:
+            return
+        key = (
+            id(lyrics),
+            index,
+            len(lyrics.lines),
+            int(self._list_count),
+            int(self.settings.width),
+            int(self.settings.font_size),
+            self.settings.font_family,
+            round(float(self.settings.letter_spacing), 2),
+            self.settings.theme,
+            round(self.devicePixelRatioF(), 2),
+        )
+        if key == self._prefetched_line_key:
+            return
+        self._prefetched_line_key = key
+
+        colors = self.settings.colors
+        count = max(1, int(self._list_count))
+        first = index - count // 2
+        last = first + count + 1
+        for line_index in range(first, last):
+            if line_index < 0 or line_index >= len(lyrics.lines):
+                continue
+            line = lyrics.lines[line_index]
+            if not line.text:
+                continue
+            if line_index == index:
+                family, size, weight = self._fonts["list_cur"]
+                fitted = fit_size(
+                    line.text, family, weight, size, int(self.settings.width)
+                )
+                sprite = make_sprite(line.text, family, fitted, weight)
+                render_mod.make_line_art(
+                    sprite,
+                    QColor(255, 255, 255, 120),
+                    (colors["c1"], colors["c2"], colors["c3"]),
+                    QColor(colors["glow"]),
+                    outline_width=max(2.0, fitted * 0.05),
+                    outline_color=QColor(0, 0, 0, 150),
+                    shadow=True,
+                    dpr=self.devicePixelRatioF(),
+                )
+            else:
+                family, size, weight = self._fonts["list"]
+                font = _qt_font(family, size, weight)
+                if render_mod.letter_spacing():
+                    font.setLetterSpacing(
+                        QFont.SpacingType.AbsoluteSpacing,
+                        render_mod.letter_spacing(),
+                    )
+                line_fm = QFontMetricsF(font)
+                display = line.text
+                if line_fm.horizontalAdvance(display) > int(self.settings.width):
+                    display = line_fm.elidedText(
+                        display,
+                        Qt.TextElideMode.ElideRight,
+                        int(self.settings.width),
+                    )
+                sprite = make_sprite(display, family, size, weight)
+                render_mod.make_line_art(
+                    sprite,
+                    QColor(colors["base"]),
+                    shadow=False,
+                    dpr=self.devicePixelRatioF(),
+                )
 
     def _current_line_rect_for_update(self, snapshot, animating: bool):
         """稳定卡拉 OK 填充时只刷新当前歌词所在区域。
@@ -1522,30 +1606,61 @@ class LyricWindow(QWidget):
                 )
                 pop = ease_out_back(anim, 1.6)
                 scale = 0.94 + 0.06 * pop
-                draw_karaoke(
-                    painter,
+                art = render_mod.make_line_art(
                     sprite,
-                    self._align_center_x(left, right, sprite.advance * scale),
-                    baseline,
                     QColor(255, 255, 255, 120),
                     (colors["c1"], colors["c2"], colors["c3"]),
-                    self._lyric_progress(snapshot, line),
                     QColor(colors["glow"]),
-                    scale=scale,
-                    opacity=0.6 + 0.4 * ease_out_cubic(min(1.0, anim * 1.6)),
                     outline_width=max(2.0, fitted * 0.05),
                     outline_color=QColor(0, 0, 0, 150),
+                    shadow=True,
+                    dpr=self.devicePixelRatioF(),
+                )
+                render_mod.draw_line_art(
+                    painter,
+                    art,
+                    self._align_center_x(left, right, sprite.advance * scale),
+                    baseline,
+                    progress=self._lyric_progress(snapshot, line),
+                    scale=scale,
+                    opacity=0.6 + 0.4 * ease_out_cubic(min(1.0, anim * 1.6)),
                 )
             else:
                 distance = abs(line_index - index)
                 opacity = max(0.10, 0.50 - 0.14 * distance)
                 fade = min(1.0, max(0.0, (y - (center_y - slot * (count / 2.0 + 1))) / slot))
-                self._draw_elided(
-                    painter, line.text, left, width, y - fm.height() / 2.0,
-                    fm, self._fonts["list"], QColor(colors["base"]),
-                    opacity * (0.35 + 0.65 * fade),
-                    alignment=self.settings.lyric_align,
+                family, size, weight = self._fonts["list"]
+                font = _qt_font(family, size, weight)
+                if render_mod.letter_spacing():
+                    font.setLetterSpacing(
+                        QFont.SpacingType.AbsoluteSpacing,
+                        render_mod.letter_spacing(),
+                    )
+                line_fm = QFontMetricsF(font)
+                display = line.text
+                if line_fm.horizontalAdvance(display) > width:
+                    display = line_fm.elidedText(
+                        display, Qt.TextElideMode.ElideRight, width
+                    )
+                sprite = make_sprite(display, family, size, weight)
+                top = y - fm.height() / 2.0
+                baseline = (
+                    top
+                    + (fm.height() - (sprite.ascent + sprite.descent)) / 2.0
+                    + sprite.ascent
+                )
+                art = render_mod.make_line_art(
+                    sprite,
+                    QColor(colors["base"]),
                     shadow=False,
+                    dpr=self.devicePixelRatioF(),
+                )
+                render_mod.draw_line_art(
+                    painter,
+                    art,
+                    self._align_center_x(left, right, sprite.advance),
+                    baseline,
+                    opacity=opacity * (0.35 + 0.65 * fade),
                 )
 
     def _align_center_x(self, left, right, advance: float) -> float:
@@ -1960,19 +2075,24 @@ class LyricWindow(QWidget):
                 + (fm_lyric.height() - (sprite.ascent + sprite.descent)) / 2.0
                 + sprite.ascent
             )
-            draw_karaoke(
-                painter,
+            art = render_mod.make_line_art(
                 sprite,
-                text_left + sprite.advance / 2.0,
-                baseline,
                 QColor(255, 255, 255, 104),
                 (colors["c1"], colors["c2"], colors["c3"]),
-                self._lyric_progress(snapshot, current),
                 QColor(colors["glow"]),
-                scale=scale,
-                opacity=0.55 + 0.45 * ease_out_cubic(min(1.0, anim * 1.5)),
                 outline_width=max(2.0, fitted * 0.05),
                 outline_color=QColor(0, 0, 0, 145),
+                shadow=True,
+                dpr=self.devicePixelRatioF(),
+            )
+            render_mod.draw_line_art(
+                painter,
+                art,
+                text_left + sprite.advance / 2.0,
+                baseline,
+                progress=self._lyric_progress(snapshot, current),
+                scale=scale,
+                opacity=0.55 + 0.45 * ease_out_cubic(min(1.0, anim * 1.5)),
             )
         else:
             pulse = 0.5 + 0.5 * math.sin(now * 3.2)
@@ -3075,6 +3195,8 @@ class LyricWindow(QWidget):
 
     def _set_theme(self, key: str) -> None:
         self.settings.theme = key
+        render_mod.clear_line_cache()
+        self._prefetched_line_key = None
         self._commit(background=True)
 
     def _set_font_size(self, value: int) -> None:
