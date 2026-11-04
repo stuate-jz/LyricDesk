@@ -1123,11 +1123,11 @@ class LyricWindow(QWidget):
         if transform is not None:
             painter.setTransform(transform, True)
 
-        def placeholder(message: str, opacity: float) -> None:
+        def placeholder(message: str, opacity: float, y_offset: float = 0.0) -> None:
             family, size, weight = self._fonts["list"]
             fitted = fit_size(message, family, weight, size, width)
             sprite = make_sprite(message, family, fitted, weight)
-            baseline = center_y + (sprite.ascent - sprite.descent) / 2.0
+            baseline = center_y + y_offset + (sprite.ascent - sprite.descent) / 2.0
             draw_sprite(
                 painter,
                 sprite,
@@ -1247,6 +1247,10 @@ class LyricWindow(QWidget):
             return
         if not lyrics.lines:
             placeholder("♪ 暂无歌词", 0.65)
+            return
+        if not getattr(snapshot, "position_known", True):
+            placeholder(lyrics.lines[0].text, 0.92, -slot * 0.28)
+            placeholder("已识别歌曲 · 客户端未提供播放进度", 0.48, slot * 0.30)
             return
 
         anim, index, current, _next = self._resolve_lyrics(snapshot, lyrics, now)
@@ -1762,6 +1766,12 @@ class LyricWindow(QWidget):
             return 1.0, -1, None, None
         if getattr(lyrics, "source", "") == "miss":
             return 1.0, -1, None, None
+        if not getattr(snapshot, "position_known", True):
+            if self._display_idx != 0:
+                self._display_idx = 0
+                self._anim_t0 = now
+            next_line = lyrics.lines[1] if len(lyrics.lines) > 1 else None
+            return 1.0, 0, lyrics.lines[0], next_line
 
         position = snapshot.position + self._offset_ms() / 1000.0
         index = lyrics.index_at(position)
@@ -1776,7 +1786,12 @@ class LyricWindow(QWidget):
         return anim, index, current, next_line
 
     def _lyric_progress(self, snapshot, current) -> float:
-        if snapshot is None or not snapshot.is_playing or not current.text:
+        if (
+            snapshot is None
+            or not snapshot.is_playing
+            or not getattr(snapshot, "position_known", True)
+            or not current.text
+        ):
             return 0.0
         position = snapshot.position + self._offset_ms() / 1000.0
         span = max(0.05, current.end - current.time)
@@ -2161,9 +2176,14 @@ class LyricWindow(QWidget):
         painter.restore()
 
     def _cover_key(self, lyrics) -> str:
-        """封面键：B 站视频 URL 优先，其次是曲库 albummid。"""
+        """封面键：平台客户端 URL 优先，其次是曲库 albummid。"""
         url = getattr(lyrics, "cover_url", "") if lyrics is not None else ""
-        url = url or getattr(self.engine, "bili_cover", "") or ""
+        url = (
+            url
+            or getattr(self.engine, "bili_cover", "")
+            or getattr(self.engine, "netease_cover", "")
+            or ""
+        )
         return url or (getattr(lyrics, "albummid", "") if lyrics is not None else "")
 
     def _scale_cover(self, pixmap: QPixmap, key, size: int) -> QPixmap:
@@ -2534,6 +2554,13 @@ class LyricWindow(QWidget):
         """把菜单项填进给定菜单（复用同一个菜单对象，避免反复创建销毁）。"""
         menu.clear()
         settings = self.settings
+        if settings.netease_mode and not getattr(
+            self.engine, "netease_connected", False
+        ):
+            netease_state = menu.addAction("网易云：未连接（需要重启网易云）")
+            netease_state.setForeground(QColor("#9aa4b8"))
+            netease_state.triggered.connect(self._restart_netease_for_lyrics)
+            menu.addSeparator()
         self._toggle(
             menu,
             "显示歌词",
@@ -3216,6 +3243,81 @@ class LyricWindow(QWidget):
             return
         self.settings.bili_mode = True
         self._commit()
+
+    def _toggle_netease_mode(self) -> None:
+        """网易云歌词开关：必要时征得同意，再以调试端口启动或重启一次。"""
+        if self.settings.netease_mode:
+            self.settings.netease_mode = False
+            self._commit()
+            return
+        if not self.ensure_netease_ready():
+            self._commit()
+            return
+        self.settings.netease_mode = True
+        self._commit()
+
+    def _restart_netease_for_lyrics(self) -> None:
+        """右键菜单的恢复入口：保留开关，重新准备客户端。"""
+        if self.ensure_netease_ready():
+            self.settings.netease_mode = True
+            self._commit()
+
+    def ensure_netease_ready(self) -> bool:
+        """检查网易云；需要时先问用户，再启动 / 重启到 9222 调试模式。"""
+        from PySide6.QtWidgets import QMessageBox
+
+        from . import netease_launcher
+
+        if netease_launcher.debug_ready():
+            return True
+        exe = netease_launcher.find_exe()
+        if exe is None:
+            box = self._update_box(
+                QMessageBox.Icon.Warning,
+                "网易云歌词",
+                "没找到网易云音乐客户端",
+                "请先安装网易云音乐电脑版，再回来勾选这个开关。",
+            )
+            box.addButton("知道了", QMessageBox.ButtonRole.AcceptRole)
+            box.exec()
+            return False
+
+        running = netease_launcher.is_running(exe)
+        box = self._update_box(
+            QMessageBox.Icon.Question,
+            "网易云歌词",
+            (
+                "需要重启一次网易云，才能读取桌面歌词的播放进度。"
+                if running
+                else "网易云现在没有运行，需要以可读取歌词的方式启动一次。"
+            ),
+            (
+                "重启会中断当前播放，桌面歌词会等待客户端重新打开。现在重启吗？"
+                if running
+                else "现在启动网易云吗？"
+            ),
+        )
+        yes = box.addButton("现在重启" if running else "现在启动", QMessageBox.ButtonRole.YesRole)
+        box.addButton("稍后", QMessageBox.ButtonRole.NoRole)
+        box.exec()
+        if box.clickedButton() is not yes:
+            return False
+
+        started = (
+            netease_launcher.restart_with_debug(exe)
+            if running
+            else netease_launcher.launch_with_debug(exe)
+        )
+        if not started:
+            self.requestNotify.emit("网易云歌词", "网易云启动失败，请手动打开后再试。")
+            return False
+        ready = netease_launcher.wait_ready(10.0)
+        if not ready:
+            self.requestNotify.emit(
+                "网易云歌词",
+                "网易云已启动，但调试端口尚未就绪；桌面歌词会在后台继续尝试连接。",
+            )
+        return True
 
     def ensure_bili_ready(self) -> bool:
         """准备 B 站字幕模式，但不会替用户打开没有运行的 B 站。"""

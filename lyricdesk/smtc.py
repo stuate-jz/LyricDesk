@@ -86,6 +86,9 @@ class Snapshot:
     can_next: bool = True
     can_prev: bool = True
     can_seek: bool = True
+    # 某些客户端（网易云的窗口标题兜底）只有歌名歌手、没有可读进度。
+    # 界面据此显示第一行歌词和提示，而不是把 00:00 当成真实播放位置。
+    position_known: bool = True
 
 
 class SmtcReader:
