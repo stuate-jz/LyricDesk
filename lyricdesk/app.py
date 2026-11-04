@@ -239,51 +239,57 @@ def main() -> int:
             player.keep_on_screen()
             player._remember_position()
 
-        show_at_slot(player)
         lyrics, _new_lyrics = cached_panel(
             "lyrics", anchor_y=player.y() + player.height() + 24
         )
         show_at_slot(lyrics)
+        show_at_slot(player)
         panel_windows[:] = [player, lyrics]
         settings.save()
 
-    def exit_split() -> None:
+    def exit_split() -> list[LyricWindow]:
+        """交接前只准备退场窗口；调用方先显示主窗，再真正 hide。"""
         nonlocal panels_transferred
-        for win in panel_windows:
+        outgoing = list(panel_windows)
+        for win in outgoing:
             # 设置窗口可能挂在某个面板上；面板要销毁了，先把它转交出去，
             # 不然用户开着的设置窗口会指向已释放的窗口
             if not panels_transferred:
                 transfer = getattr(win, "transfer_settings_dialog", None)
                 if transfer is not None and main_window is not None:
                     transfer(main_window)
-            win.hide()
         panels_transferred = True
         panel_windows.clear()
-        if main_window is not None:
-            main_window.recalculate()
-            main_window.apply_slot_position()
+        return outgoing
 
     def sync_mode_windows() -> None:
+        # 硬约束：进入 / 退出分离时，旧窗口必须等接替窗口显示后才隐藏，
+        # 任何一次切换都不能出现“屏幕上一个窗口都没有”的中间帧。
         want_split = settings.show_lyrics and settings.show_player
         if want_split:
-            if main_window is not None:
-                main_window.hide()
             if not panel_windows:
                 enter_split()
             else:
                 for win in panel_windows:
                     show_at_slot(win)
+            if main_window is not None:
+                main_window.hide()
             return
 
+        outgoing: list[LyricWindow] = []
         if panel_windows:
-            exit_split()
+            outgoing = exit_split()
 
         if main_window is None:
+            for win in outgoing:
+                win.hide()
             return
         if settings.show_lyrics or settings.show_player:
             show_at_slot(main_window)
         else:
             main_window.hide()
+        for win in outgoing:
+            win.hide()
 
     _sync_queued = False
     # 鼠标穿透这种真正的窗口标志改了以后，两扇面板都要重新套一遍。
