@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
-from .config import PLAYER_WIDTH_MIN, THEMES, WIDTH_MAX, WIDTH_MIN, Settings
+from .config import PLAYER_WIDTH_MIN, THEMES, WIDTH_MAX, WIDTH_MIN, Settings, app_dir
 from .covers import CoverLoader
 from . import heat as heat_lookup
 from .i18n import tr
@@ -129,6 +129,46 @@ _NO_BOARD_MODES = ("album", "lyrics")
 # 分离面板模式下会有多扇窗口同时轮询全局热键，
 # 用共享状态保证一次按键只触发一次切换。
 _HOTKEY_STATE = {"prev": False}
+
+# 只有 LD_PROFILE=1 才启用的轻量计数器。关闭时只多两三次布尔判断。
+_PROFILE_ENABLED = os.environ.get("LD_PROFILE") == "1"
+_PROFILE_LOCK = threading.Lock()
+_PROFILE_GLOBAL_TIMER: QTimer | None = None
+_PROFILE_GLOBAL_START = time.monotonic()
+_PROFILE_GLOBAL_EVENTS = {"settings": 0, "menus": 0}
+
+
+def _profile_write(line: str) -> None:
+    try:
+        with _PROFILE_LOCK:
+            with (app_dir() / "perf.log").open("a", encoding="utf-8") as handle:
+                handle.write(line.rstrip() + "\n")
+    except Exception:
+        pass
+
+
+def _profile_flush_global() -> None:
+    global _PROFILE_GLOBAL_START
+    now = time.monotonic()
+    elapsed = max(0.001, now - _PROFILE_GLOBAL_START)
+    with _PROFILE_LOCK:
+        settings = _PROFILE_GLOBAL_EVENTS["settings"]
+        menus = _PROFILE_GLOBAL_EVENTS["menus"]
+        _PROFILE_GLOBAL_EVENTS["settings"] = 0
+        _PROFILE_GLOBAL_EVENTS["menus"] = 0
+    _PROFILE_GLOBAL_START = now
+    _profile_write(
+        f"[{time.strftime('%H:%M:%S')}] global "
+        f"settingsChanged={settings / elapsed:.1f}/s "
+        f"populate_menu={menus / elapsed:.1f}/s"
+    )
+
+
+def _profile_event(name: str) -> None:
+    if not _PROFILE_ENABLED:
+        return
+    with _PROFILE_LOCK:
+        _PROFILE_GLOBAL_EVENTS[name] += 1
 
 # 活着的那几扇歌词窗（单窗口 1 个、分离面板 2 个）。
 # 打开设置窗口时要把它们的「置顶」临时摘掉，否则歌词会画在设置窗口上面；
@@ -319,6 +359,27 @@ class LyricWindow(QWidget):
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
+
+        self._profile_paint_start = 0.0
+        self._profile_start = time.monotonic()
+        self._profile_stats = {
+            "paints": 0,
+            "paint_ms": 0.0,
+            "paint_max_ms": 0.0,
+            "ticks": 0,
+        }
+        if _PROFILE_ENABLED:
+            global _PROFILE_GLOBAL_TIMER
+            self.settingsChanged.connect(self._profile_settings_signal)
+            self._profile_timer = QTimer(self)
+            self._profile_timer.setInterval(5000)
+            self._profile_timer.timeout.connect(self._profile_flush)
+            self._profile_timer.start()
+            if _PROFILE_GLOBAL_TIMER is None:
+                _PROFILE_GLOBAL_TIMER = QTimer()
+                _PROFILE_GLOBAL_TIMER.setInterval(5000)
+                _PROFILE_GLOBAL_TIMER.timeout.connect(_profile_flush_global)
+                _PROFILE_GLOBAL_TIMER.start()
 
         self.recalculate(initial=True)
         self._update_cursor()
@@ -718,6 +779,8 @@ class LyricWindow(QWidget):
     # ==================================================================
 
     def _tick(self) -> None:
+        if _PROFILE_ENABLED:
+            self._profile_stats["ticks"] += 1
         now = time.monotonic()
         delta = min(0.25, max(0.0, now - self._last_tick))
         self._last_tick = now
@@ -753,7 +816,45 @@ class LyricWindow(QWidget):
     # 背景
     # ==================================================================
 
+    def _profile_finish_paint(self) -> None:
+        started = self._profile_paint_start
+        if not started:
+            return
+        self._profile_paint_start = 0.0
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        stats = self._profile_stats
+        stats["paints"] += 1
+        stats["paint_ms"] += elapsed_ms
+        stats["paint_max_ms"] = max(stats["paint_max_ms"], elapsed_ms)
+
+    def _profile_flush(self) -> None:
+        now = time.monotonic()
+        elapsed = max(0.001, now - self._profile_start)
+        stats = self._profile_stats
+        paints = stats["paints"]
+        avg = stats["paint_ms"] / paints if paints else 0.0
+        _profile_write(
+            f"[{time.strftime('%H:%M:%S')}] win={self.role} "
+            f"mode={self._effective_mode()} visible={int(self.isVisible())}  "
+            f"paints={paints / elapsed:.0f}/s avg={avg:.1f}ms "
+            f"max={stats['paint_max_ms']:.0f}ms  "
+            f"ticks={stats['ticks'] / elapsed:.0f}/s  "
+            f"size={self.width()}x{self.height()} dpr={self.devicePixelRatioF():.1f}"
+        )
+        self._profile_start = now
+        self._profile_stats = {
+            "paints": 0,
+            "paint_ms": 0.0,
+            "paint_max_ms": 0.0,
+            "ticks": 0,
+        }
+
+    def _profile_settings_signal(self) -> None:
+        _profile_event("settings")
+
     def paintEvent(self, event) -> None:  # noqa: N802
+        if _PROFILE_ENABLED:
+            self._profile_paint_start = time.perf_counter()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
@@ -763,6 +864,8 @@ class LyricWindow(QWidget):
         mode = self._effective_mode()
         if mode == "none":
             painter.end()
+            if _PROFILE_ENABLED:
+                self._profile_finish_paint()
             return
 
         # 唱片 / 纯歌词面板都不要背景板，直接浮在壁纸上
@@ -799,6 +902,8 @@ class LyricWindow(QWidget):
         elif mode == "lyrics":
             self._paint_lyrics_panel(painter, card, snapshot, lyrics)
         painter.end()
+        if _PROFILE_ENABLED:
+            self._profile_finish_paint()
 
     def _background(self) -> QPixmap:
         ratio = self.devicePixelRatioF()
@@ -2564,6 +2669,7 @@ class LyricWindow(QWidget):
 
     def populate_menu(self, menu: QMenu) -> None:
         """把菜单项填进给定菜单（复用同一个菜单对象，避免反复创建销毁）。"""
+        _profile_event("menus")
         menu.clear()
         settings = self.settings
         if settings.netease_mode and not getattr(
