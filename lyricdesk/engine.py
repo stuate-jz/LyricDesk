@@ -11,7 +11,7 @@ from .bili_client import BiliBridge
 from .bili_launcher import BiliWatcher
 from .lyrics import Lyrics, fetch, load_cached, provider_for_player, save_cached
 from .netease_client import NeteaseBridge, configure as configure_netease
-from .netease_launcher import find_ready_port
+from .netease_launcher import NeteaseWatcher, find_ready_port
 from .smtc import SMTC_AVAILABLE, SmtcReader, Snapshot
 
 
@@ -39,6 +39,7 @@ class Engine(QObject):
         self._bili_lyrics: Lyrics | None = None
         self._bili_watch: BiliWatcher | None = None
         self._netease: NeteaseBridge | None = None
+        self._netease_watch: NeteaseWatcher | None = None
 
         self._timer = QTimer(self)
         self._timer.setInterval(400)
@@ -191,6 +192,12 @@ class Engine(QObject):
             if self._netease is None:
                 self._netease = NeteaseBridge()
                 self._netease.start()
+            if self._netease_watch is None:
+                self._netease_watch = NeteaseWatcher(
+                    self.settings,
+                    notify=lambda text: self.notice.emit("网易云歌词", text),
+                )
+                self._netease_watch.start()
         elif self._netease is not None:
             self._stop_netease()
 
@@ -259,6 +266,9 @@ class Engine(QObject):
         self.notice.emit("B 站字幕", text)
 
     def _stop_netease(self) -> None:
+        watcher, self._netease_watch = self._netease_watch, None
+        if watcher is not None:
+            watcher.stop()
         bridge, self._netease = self._netease, None
         if bridge is not None:
             bridge.stop()

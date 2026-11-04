@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import socket
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -127,6 +129,49 @@ def is_running(exe: Path) -> bool:
     return exe.name.lower() in text
 
 
+def window_processes(exe: Path) -> set[int]:
+    """返回拥有顶层窗口的 exe PID；比 tasklist 更适合跟踪“用户重新打开”。"""
+    if not hasattr(ctypes, "windll"):
+        return set()
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+    except Exception:  # noqa: BLE001
+        return set()
+    result: set[int] = set()
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def callback(hwnd, _lparam):
+        try:
+            if int(user32.GetWindowTextLengthW(hwnd)) <= 0:
+                return True
+            pid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            handle = kernel32.OpenProcess(0x1000, False, pid.value)
+            if not handle:
+                return True
+            try:
+                buffer = ctypes.create_unicode_buffer(2048)
+                size = ctypes.c_ulong(len(buffer))
+                if not kernel32.QueryFullProcessImageNameW(
+                    handle, 0, buffer, ctypes.byref(size)
+                ):
+                    return True
+                if Path(buffer.value).name.lower() == exe.name.lower():
+                    result.add(int(pid.value))
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+    try:
+        user32.EnumWindows(callback_type(callback), 0)
+    except Exception:  # noqa: BLE001
+        return set()
+    return result
+
+
 def port_available(port: int) -> bool:
     """本机端口当前是否可绑定（True = 空闲）。"""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -199,3 +244,92 @@ def wait_ready(timeout: float = 10.0, port: int = 0) -> bool:
             return True
         time.sleep(0.4)
     return False
+
+
+class NeteaseWatcher(threading.Thread):
+    """开关打开时盯着网易云：用户重新打开客户端就带端口重启一次。"""
+
+    def __init__(
+        self,
+        settings,
+        notify=None,
+        interval: float = 5.0,
+        restart_cooldown: float = 120.0,
+    ) -> None:
+        super().__init__(name="netease-watch", daemon=True)
+        self._settings = settings
+        self._notify = notify
+        self._interval = max(1.0, float(interval))
+        self._restart_cooldown = max(0.0, float(restart_cooldown))
+        self._stop_event = threading.Event()
+        self._known_pids: set[int] | None = None
+        self._handled_pids: set[int] = set()
+        self._last_action = 0.0
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                self.tick()
+            except Exception:  # noqa: BLE001
+                pass
+            self._stop_event.wait(self._interval)
+
+    def tick(self, now: float | None = None) -> bool:
+        """一次检查；返回本次是否重启了客户端。"""
+        if self._stop_event.is_set():
+            return False
+        now = time.monotonic() if now is None else float(now)
+        exe = find_exe()
+        if exe is None:
+            self._known_pids = set()
+            return False
+        current = window_processes(exe)
+
+        ready_port = find_ready_port()
+        if ready_port:
+            from .netease_client import configure
+
+            if int(self._settings.netease_port) != ready_port:
+                self._settings.netease_port = ready_port
+                self._settings.save()
+                configure(ready_port)
+            self._known_pids = set(current)
+            return False
+
+        if self._known_pids is None:
+            # 第一轮只记录当前客户端，不重启用户启动程序前就开着的网易云。
+            self._known_pids = set(current)
+            return False
+
+        new_pids = current - self._known_pids
+        self._known_pids = set(current)
+        if not current or not new_pids:
+            return False
+        candidates = {pid for pid in new_pids if pid not in self._handled_pids}
+        if not candidates:
+            return False
+        if now - self._last_action < self._restart_cooldown:
+            return False
+
+        self._handled_pids.update(candidates)
+        port = pick_port(int(self._settings.netease_port))
+        self._settings.netease_port = port
+        self._settings.save()
+        from .netease_client import configure
+
+        configure(port)
+        self._last_action = now
+        if not restart_with_debug(exe, port):
+            return False
+        if self._notify is not None:
+            self._notify(
+                "已为歌词重启网易云\n下次从任务栏打开也会自动处理。"
+            )
+        wait_ready(10.0, port)
+        final_pids = window_processes(exe)
+        self._known_pids = set(final_pids)
+        self._handled_pids.update(final_pids)
+        return True
