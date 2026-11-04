@@ -8,7 +8,7 @@
 
 **悬浮在桌面上的歌词组件** —— 不挑播放器，带歌词跳动动画，不改你的壁纸
 
-**当前版本 v1.6.8**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
+**当前版本 v1.6.9**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 镜像仓库：[GitHub](https://github.com/stuate-jz/LyricDesk)　·　发布页：[stuate-jz.github.io/LyricDesk](https://stuate-jz.github.io/LyricDesk/)
 
@@ -18,7 +18,7 @@
 
 ## ⬇ 下载
 
-### ⚙ [**LyricDesk-Setup-v1.6.8.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
+### ⚙ [**LyricDesk-Setup-v1.6.9.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 双击一路「下一步」装好即可（不需要管理员权限，不需要改任何系统设置）。
 
@@ -62,7 +62,8 @@
 4. 左键拖动摆位置；**右键是常用操作**（显示歌词 / 播放器、字体、行数、锁定、播放控制…），
    完整的设置（配色、倾斜、尺寸、语言…）在右键菜单最后的 **「设置…」** 里
 
-想换字体：右键 → 歌词字体 —— 内置了「得意黑」「霞鹜漫黑」，
+想换字体：右键 → 歌词字体 —— 内置了「得意黑」「霞鹜漫黑」「马善政楷书」
+「龙藏体」「志莽行书」，
 也可以用「导入字体文件…」把自己下载的 ttf / otf 字体导进来，导入一次以后一直在。
 
 卸载：开始菜单 → 桌面歌词 → 卸载，或者「设置 → 应用」里卸载。
@@ -70,9 +71,9 @@
 ## 常见问题
 
 **桌面显示「未检测到正在播放的歌曲」？**
-不少音乐软件的「系统播放控件 / 媒体控制」默认是关的，关掉之后 Windows 里
-没有任何播放信息，任何歌词插件都读不到。到音乐软件设置里打开它即可：
-网易云 → 设置 → 常规 → 系统媒体控制；酷狗、QQ音乐 等也有类似开关。
+网易云桌面版请到设置 →「窗口与交互」勾选「网易云歌词」，按提示重启一次
+网易云；其他播放器通常是「系统播放控件 / 媒体控制」被关闭，酷狗、QQ音乐 等
+可在各自设置里打开类似开关。
 
 **怎么退出？**
 右键桌面上的歌词 → 最小化到托盘，程序仍在后台；彻底退出请右键右下角的
@@ -102,4 +103,5 @@ gitee:pursue-studies/LyricDesk
 
 ## 许可
 
-免费使用。内置字体「得意黑」「霞鹜漫黑」均为 SIL OFL 1.1 授权，可自由分发。
+免费使用。内置的得意黑、霞鹜漫黑、马善政楷书、龙藏体、志莽行书
+均为 SIL OFL 1.1 授权，可自由分发。

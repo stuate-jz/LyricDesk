@@ -8,6 +8,8 @@
 **不挑播放器**：读取的是 Windows 系统媒体控制（SMTC），任何向系统报告
 播放状态的播放器都能用——QQ音乐、酷狗音乐、网易云音乐、酷我音乐、
 Spotify、PotPlayer、foobar2000 等。同时开多个时可以右键指定跟随哪一个。
+网易云桌面版不注册 SMTC，可在「窗口与交互」勾选「网易云歌词」；首次启用时
+需要确认重启一次网易云，之后会直接从客户端底栏读取歌名、歌手、进度和封面。
 
 首次启动只显示**透明歌词面板**。设置里的「显示歌词」「显示播放器」两个开关
 决定桌面上出现什么：都勾是两扇独立窗口，只勾一个是一扇窗口，都不勾则完全隐藏到托盘。
@@ -110,7 +112,8 @@ pythonw run.pyw
 
 ![唱片样式](assets/screenshots/screenshot-album-styles.png)
 - **歌词列表行数**：1 / 3 / 5 / 7 / 9 / 11 行（想更细就在设置窗口里拖滑动条，1 ~ 15 行）
-- **歌词字体**：内置「得意黑」「霞鹜漫黑」（随程序打包，装上就能用、不用联网）/
+- **歌词字体**：内置「得意黑」「霞鹜漫黑」「马善政楷书」「龙藏体」「志莽行书」
+  （随程序打包，装上就能用、不用联网）/
   导入自己的 ttf·otf 字体 / 从系统字体中选择 / 打开字体文件夹
 - **跟随音乐**：检测到多个音乐软件时，指定跟随哪一个（默认自动选正在播放的）
 - **播放控制（极简图标）**：菜单里**一行三个图标** —— 上一首 / 播放暂停 / 下一首，
@@ -140,6 +143,8 @@ pythonw run.pyw
     多设备/多播放器时按「用户指定 > 正在播放」排序挑一个。
     播放器的时间轴约每秒刷新一次，程序只在采样真正变化时重新锚定，
     两次采样之间用本地单调时钟外推，所以歌词是平滑推进而不是一秒一跳。
+    网易云桌面版例外：它不提供 SMTC 会话，勾选网易云歌词后会从 CEF 调试页面
+    读取底栏播放条；端口不可用时只回退到窗口标题（能显示歌名歌手，但没有进度）。
 2. 按「歌名 + 歌手」在多个曲库里匹配最接近的一首（标题、歌手、时长三项打分）：
    依次尝试 **QQ音乐 → 酷狗 → 网易云**，哪家匹配最好用哪家，
     都不合适时用开放的 LRCLIB 兜底，再取回带时间轴的歌词。
@@ -163,7 +168,7 @@ pythonw run.pyw
 ```
 pip install --user PySide6-Essentials winrt-runtime winrt-Windows.Foundation ^
     winrt-Windows.Foundation.Collections winrt-Windows.Media.Control ^
-    winrt-Windows.Storage.Streams requests
+    winrt-Windows.Storage.Streams requests websocket-client
 ```
 
 ## 改完代码，让桌面上的程序立刻生效（开发用）
@@ -188,7 +193,7 @@ python -m PyInstaller desktop-lyric.spec --noconfirm
 
 （改过图标才需要重新生成 `desktop-lyric.ico`，用本机 `dev\make_icon.py`，不在仓库内。）
 
-默认输出**单文件** `dist\LyricDesk.exe`，约 39 MB，双击即可运行。
+默认输出**单文件** `dist\LyricDesk.exe`，约 53 MB，双击即可运行。
 
 想要启动更快的文件夹版（不用每次解压），先设置环境变量 `LD_ONEFILE=0`
 再执行同一条命令，输出在 `dist\LyricDesk\`。
@@ -205,7 +210,7 @@ python -m PyInstaller desktop-lyric.spec --noconfirm
 "%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe" installer.iss
 ```
 
-输出 `dist\LyricDesk-Setup-v1.6.8.exe`（约 **46 MB**），双击即可安装：
+输出 `dist\LyricDesk-Setup-v1.6.9.exe`（约 **54 MB**），双击即可安装：
 
 - 标准安装向导：欢迎 → **许可协议**（需同意才放行）→ 更新说明 → 选择位置 →
   附加任务 → 安装中 → 完成
@@ -237,6 +242,18 @@ python -m PyInstaller installer.spec --noconfirm
 
 - 需要 Windows 10 1809 以上（本项目在 Windows 11 上开发测试）。
 - 只有在播放器向系统上报媒体信息时才能读取，QQ音乐 支持该接口。
-  其他播放器（网易云、Spotify 等）通常也可以，会优先选择 QQ音乐。
+  Spotify 等支持 SMTC 的播放器可直接使用；网易云请按上面的说明勾选专用开关。
 - QQ音乐 的逐字 QRC 歌词需要登录态才能获取，因此这里使用逐行时间轴
   + 行内插值，视觉效果一致。
+
+## 内置字体与许可
+
+这些字体都使用 SIL Open Font License 1.1，许可原文随安装包一起分发：
+
+| 显示名 | 来源 | 许可文件 |
+| --- | --- | --- |
+| 得意黑 | <https://github.com/atelier-anchor/smiley-sans> | `assets/fonts/得意黑-LICENSE.txt` |
+| 霞鹜漫黑 | <https://github.com/lxgw/LxgwMarkerGothic> | `assets/fonts/霞鹜漫黑-LICENSE.txt` |
+| 马善政楷书 | <https://github.com/google/fonts/tree/main/ofl/mashanzheng> | `assets/fonts/马善政楷书-LICENSE.txt` |
+| 龙藏体 | <https://github.com/google/fonts/tree/main/ofl/longcang> | `assets/fonts/龙藏体-LICENSE.txt` |
+| 志莽行书 | <https://github.com/google/fonts/tree/main/ofl/zhimangxing> | `assets/fonts/志莽行书-LICENSE.txt` |
