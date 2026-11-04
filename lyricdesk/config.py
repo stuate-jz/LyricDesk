@@ -156,6 +156,8 @@ class Settings:
     # 设置窗口的语言与外观（只影响设置窗口本身）
     language: str = ""
     dialog_theme: str = "auto"
+    # v1.6.8 及更早的单窗口位置。v1.6.9 起窗口只写 lyrics_pos / player_pos；
+    # 这两项保留，仅用于从老配置迁移。
     x: int = -1
     y: int = -1
     locked: bool = False
@@ -168,7 +170,7 @@ class Settings:
     song_offsets: dict = field(default_factory=dict)
     # 设置文件的格式版本：2 起偏移才是「一歌一记」。
     # 老文件没有这个字段，用来判断要不要把遗留的全局偏移清掉。
-    settings_version: int = 4
+    settings_version: int = 5
     preferred_player: str = ""
     # 检查更新的来源：owner/repo、gitee:owner/repo、http(s) 链接或本地 json 路径
     update_source: str = ""
@@ -252,8 +254,38 @@ class Settings:
                     "vinyl": "vinyl",
                     "cover_vinyl": "square",
                 }.get(str(raw.get("depth_album_style", "classic")), "classic")
+        # 版本 5：单窗口按当前内容分别记到歌词 / 播放器槽位。
+        # 老配置只有 x/y，先把它当作歌词位置；开着播放器且没有播放器位置时
+        # 交给分离面板自动摆位，避免把同一个坐标复制给两扇窗口。
+        if version < 5:
+            try:
+                legacy_x = int(raw.get("x", -1))
+                legacy_y = int(raw.get("y", -1))
+            except (TypeError, ValueError, IndexError):
+                legacy_x = -1
+                legacy_y = -1
+
+            def legacy_first(name: str) -> int:
+                value = raw.get(name)
+                if not isinstance(value, (list, tuple)) or len(value) != 2:
+                    return -1
+                try:
+                    return int(value[0])
+                except (TypeError, ValueError):
+                    return -1
+
+            if (
+                legacy_first("lyrics_pos") < 0
+                and legacy_x >= 0
+            ):
+                obj.lyrics_pos = [legacy_x, legacy_y]
+            if (
+                bool(raw.get("show_player"))
+                and legacy_first("player_pos") < 0
+            ):
+                obj.player_pos = [-1, -1]
         # 迁移完之后写回当前格式号，否则每次启动都会再迁移一次
-        obj.settings_version = 4
+        obj.settings_version = 5
         obj.clamp()
         return obj
 

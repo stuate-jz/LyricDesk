@@ -609,38 +609,35 @@ class LyricWindow(QWidget):
         screen = self.screen() or QApplication.primaryScreen()
         area = screen.availableGeometry()
 
+        slot_name = self._position_slot()
+        slot = getattr(settings, slot_name)
+        if slot[0] >= 0:
+            self.move(int(slot[0]), int(slot[1]))
+            return
+
         if self.role == "player":
-            slot = settings.player_pos
-            if slot[0] < 0:
-                # 默认落在桌面右上角
-                self.move(area.right() - self.width() - 60, area.top() + 60)
-                self._remember_position()
-            else:
-                self.move(int(slot[0]), int(slot[1]))
+            # 默认落在桌面右上角
+            self.move(area.right() - self.width() - 60, area.top() + 60)
+            self._remember_position()
             return
 
         if self.role == "lyrics":
-            slot = settings.lyrics_pos
-            if slot[0] < 0:
-                # 默认紧贴在唱片面板下方（app.py 会把唱片面板底边的 y 传进来）
-                y = (
-                    int(self._anchor_y)
-                    if self._anchor_y is not None
-                    else area.top() + 60 + self.height() + 24
-                )
-                self.move(
-                    area.right() - self.width() - 60,
-                    y,
-                )
-                self._remember_position()
-            else:
-                self.move(int(slot[0]), int(slot[1]))
+            # 默认紧贴在唱片面板下方（app.py 会把唱片面板底边的 y 传进来）
+            y = (
+                int(self._anchor_y)
+                if self._anchor_y is not None
+                else area.top() + 60 + self.height() + 24
+            )
+            self.move(area.right() - self.width() - 60, y)
+            self._remember_position()
             return
 
-        if settings.x < 0:
-            self._default_position()
+        if slot_name == "player_pos":
+            self.move(area.right() - self.width() - 60, area.top() + 60)
         else:
-            self.move(settings.x, settings.y)
+            self._default_position()
+            return
+        self._remember_position()
 
     def _default_position(self) -> None:
         """新装用户的默认落位：屏幕右上偏中（1707 宽的屏上大约 x≈915、y=25）。
@@ -686,14 +683,23 @@ class LyricWindow(QWidget):
             self.move(x, y)
             self._remember_position()
 
-    def _remember_position(self) -> None:
+    def _position_slot(self) -> str:
+        """这扇窗口的位置该记到哪个槽位。"""
         if self.role == "player":
-            self.settings.player_pos = [self.x(), self.y()]
-        elif self.role == "lyrics":
-            self.settings.lyrics_pos = [self.x(), self.y()]
-        else:
-            self.settings.x = self.x()
-            self.settings.y = self.y()
+            return "player_pos"
+        if self.role == "lyrics":
+            return "lyrics_pos"
+        # 单窗：看它现在显示的是什么
+        return "player_pos" if self._effective_mode() == "album" else "lyrics_pos"
+
+    def apply_slot_position(self) -> None:
+        """按当前内容对应的槽位移动；不负责首次默认落位。"""
+        slot = getattr(self.settings, self._position_slot())
+        if isinstance(slot, (list, tuple)) and len(slot) == 2 and int(slot[0]) >= 0:
+            self.move(int(slot[0]), int(slot[1]))
+
+    def _remember_position(self) -> None:
+        setattr(self.settings, self._position_slot(), [self.x(), self.y()])
 
     # ==================================================================
     # 刷新
@@ -3253,8 +3259,7 @@ class LyricWindow(QWidget):
         elif self.role == "lyrics":
             self.settings.lyrics_pos = [-1, -1]
         else:
-            self.settings.x = -1
-            self.settings.y = -1
+            setattr(self.settings, self._position_slot(), [-1, -1])
         self._apply_initial_position()
         self.keep_on_screen()
         self.settings.save()

@@ -186,15 +186,11 @@ def main() -> int:
             else QApplication.primaryScreen()
         )
         area = screen.availableGeometry()
-        auto_player = bool(settings.player_pos[0] < 0)
-
-        # 用户手动摆过 lyrics_pos 也会被这次切换覆盖——这是故意的：
-        # 勾选的一瞬间，「当前歌词在哪儿」比历史坐标更可信。
-        before = None
-        if main_window is not None:
-            before = (main_window.x(), main_window.y())
+        # 只在槽位从来没记过时，才把当前歌词窗的位置当成初始值。
+        before = (main_window.x(), main_window.y()) if main_window is not None else None
+        if settings.lyrics_pos[0] < 0 and before is not None:
             settings.lyrics_pos = [before[0], before[1]]
-            settings.x, settings.y = before[0], before[1]
+        auto_player = bool(settings.player_pos[0] < 0)
 
         player = LyricWindow(settings, engine, role="player")
         wire(player)
@@ -232,13 +228,6 @@ def main() -> int:
         settings.save()
 
     def exit_split() -> None:
-        # 取消分离时，把歌词面板最后的位置交还给单窗口。
-        lyrics_panels = [
-            win for win in panel_windows if getattr(win, "role", "") == "lyrics"
-        ]
-        if lyrics_panels:
-            settings.x, settings.y = lyrics_panels[0].x(), lyrics_panels[0].y()
-
         for win in panel_windows:
             # 设置窗口可能挂在某个面板上；面板要销毁了，先把它转交出去，
             # 不然用户开着的设置窗口会指向已释放的窗口
@@ -251,7 +240,7 @@ def main() -> int:
         panel_windows.clear()
         if main_window is not None:
             main_window.recalculate()
-            main_window.move(settings.x, settings.y)
+            main_window.apply_slot_position()
 
     def sync_mode_windows() -> None:
         want_split = settings.show_lyrics and settings.show_player
@@ -269,6 +258,7 @@ def main() -> int:
             return
         if settings.show_lyrics or settings.show_player:
             main_window.recalculate()
+            main_window.apply_slot_position()
             main_window.show()
             main_window.keep_on_screen()
             main_window.raise_()
