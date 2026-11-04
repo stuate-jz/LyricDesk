@@ -42,7 +42,12 @@ def _cache_path(key: str):
 
 def _headers_for(url: str) -> dict[str, str]:
     host = urlparse(url).hostname or ""
-    referer = "https://www.bilibili.com/" if "hdslb.com" in host else "https://y.qq.com/"
+    if "hdslb.com" in host:
+        referer = "https://www.bilibili.com/"
+    elif "126.net" in host:
+        referer = "https://music.163.com/"
+    else:
+        referer = "https://y.qq.com/"
     return {"User-Agent": UA, "Referer": referer}
 
 

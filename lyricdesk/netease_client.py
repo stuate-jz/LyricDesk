@@ -156,6 +156,11 @@ READ_JS = f"""
     cover = cover.slice('orpheus://cache/?'.length);
   }}
   if (cover.startsWith('//')) cover = 'https:' + cover;
+  // 底栏 img 默认是 60×60 的缩略图（常小于 2 KB）。去掉缓存参数后
+  // 主动请求 500×500；曲库封面加载器会按窗口尺寸再缩放。
+  if (cover.indexOf('music.126.net') >= 0) {{
+    cover = cover.split('?')[0] + '?param=500y500';
+  }}
 
   return JSON.stringify({{
     title: title,

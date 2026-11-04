@@ -3983,9 +3983,12 @@ class LyricWindow(QWidget):
         self.settings.save()
         if resize:
             self.recalculate()
-            self.keep_on_screen()
-            self._remember_position()
-            self.settings.save()
+            # 分离面板模式下主窗是隐藏的：切换显示开关时它仍停在旧坐标，
+            # 此时若回写槽位会把真正歌词面板刚记住的位置覆盖掉。
+            if self.isVisible():
+                self.keep_on_screen()
+                self._remember_position()
+                self.settings.save()
         if background:
             self._bg_key = None
         if flags:
