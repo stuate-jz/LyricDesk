@@ -2547,10 +2547,10 @@ class LyricWindow(QWidget):
     def _want_song_info(self) -> bool:
         """要不要在歌词上方显示歌名 / 作者 / 热度。
 
-        只有独立的「纯歌词面板」显示；分离面板里的那条歌词列不加，
-        保持它单纯只是歌词。
+        只由用户开关决定；单窗歌词和分离面板歌词保持一致高度，
+        避免切换形态时坐标相同、歌词块却上下跳。
         """
-        return bool(self.settings.show_song_info) and self.role != "lyrics"
+        return bool(self.settings.show_song_info)
 
     def _song_key(self) -> str:
         """当前这首歌的标识（用来记这首歌单独的偏移）。
@@ -2838,8 +2838,8 @@ class LyricWindow(QWidget):
                 action.setChecked(settings.lyric_lines == value)
                 action.triggered.connect(lambda _c, v=value: self._set_lines(v))
 
-        # 只有独立的纯歌词面板才需要这个开关（分离面板里的歌词列不带头部）
-        if self._effective_mode() == "lyrics" and self.role != "lyrics":
+        # 单窗歌词和分离面板歌词共用同一个头部开关。
+        if self._effective_mode() == "lyrics":
             self._toggle(
                 menu,
                 "显示歌名歌手和热度",

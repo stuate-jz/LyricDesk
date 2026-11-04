@@ -95,7 +95,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "lyrics.align.center": "居中",
         "lyrics.align.right": "向右对齐",
         "lyrics.show_info": "显示歌名、歌手和热度",
-        "lyrics.show_info.hint": "只有独立的纯歌词面板显示它；分离面板里的歌词列不显示",
+        "lyrics.show_info.hint": "单窗歌词与分离面板的歌词列会一起显示或隐藏",
         "lyrics.section.size": "歌词尺寸",
         "lyrics.size.hint": "「歌词字号」和「歌词行间距」是滑动条，在左边「界面」分类的「尺寸」里。",
         "btn.goto_general": "去「界面」调字号 / 行间距",
@@ -298,7 +298,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "lyrics.align.right": "Right",
         "lyrics.show_info": "Show title, artist and popularity",
         "lyrics.show_info.hint": (
-            "Only the standalone lyrics panel shows it; the lyric column in split mode does not."
+            "Applies to both the single lyrics window and the split lyrics panel."
         ),
         "lyrics.section.size": "Lyric size",
         "lyrics.size.hint": (

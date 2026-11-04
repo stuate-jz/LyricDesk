@@ -1359,7 +1359,7 @@ class SettingsDialog(QDialog):
             getter=lambda: settings.show_song_info,
             apply=self._set_song_info,
             hint_key="lyrics.show_info.hint",
-            hint="只有独立的纯歌词面板显示它；分离面板里的歌词列不显示",
+            hint="单窗歌词与分离面板的歌词列会一起显示或隐藏",
         )
         self._bind_show(info_box, "lyrics")
         self._slider(
