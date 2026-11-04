@@ -45,14 +45,12 @@ from . import heat as heat_lookup
 from .i18n import tr
 from .processes import music_app_running
 from .fonts import (
-    BUNDLED_FONTS,
     ONLINE_FONTS,
-    RECOMMENDED,
     download,
     downloaded,
     family_for,
+    font_choices,
     import_font_file,
-    imported_fonts,
     user_font_dir,
 )
 from . import APP_TITLE, __version__
@@ -371,6 +369,20 @@ class LyricWindow(QWidget):
     def _build_fonts(self) -> dict[str, tuple]:
         size = int(self.settings.font_size)
         family = self.settings.font_family
+        installed = set(QFontDatabase.families())
+        self._font_missing = bool(family and family not in installed)
+        if self._font_missing:
+            for fallback in (
+                "Microsoft YaHei UI",
+                "Microsoft YaHei",
+                "Noto Sans CJK SC",
+                "SimSun",
+            ):
+                if fallback in installed:
+                    family = fallback
+                    break
+            else:
+                family = QApplication.font().family()
         return {
             "lyric": (family, size, WEIGHT_LYRIC),
             "next": (family, max(12, int(size * 0.50)), WEIGHT_MEDIUM),
@@ -2633,63 +2645,17 @@ class LyricWindow(QWidget):
 
         font_menu = menu.addMenu("歌词字体")
         families = set(QFontDatabase.families())
-        recommended = {family for _label, family in RECOMMENDED}
-        # 内置字体和自备字体的族名要排除掉，
-        # 否则当前用的是它们时，菜单顶上会多出一条重复的「（当前）」
-        named_elsewhere = {family for _file, _label, family in BUNDLED_FONTS}
-        named_elsewhere |= {item.family for item in ONLINE_FONTS}
-        listed: set[str] = set()
-        mine = imported_fonts()
-        mine_families = {family for family, _filename in mine}
-        # 当前用的字体如果不在推荐列表里（比如被精简掉的常见字体），
-        # 单独放在最前面，保证菜单里总能看到自己现在用的是哪个
         current = settings.font_family
-        if (
-            current
-            and current in families
-            and current not in recommended
-            and current not in mine_families
-            and current not in named_elsewhere
-        ):
-            self._font_action(font_menu, f"{current}（当前）", current)
-            listed.add(current)
-            font_menu.addSeparator()
-        for label, family in RECOMMENDED:
-            if family not in families or family in listed:
-                continue
+        for label, family in font_choices(families, current):
             self._font_action(font_menu, label, family)
-            listed.add(family)
-        bundled = [
-            (label, family)
-            for _filename, label, family in BUNDLED_FONTS
-            if family in families
-        ]
-        if bundled:
-            font_menu.addSeparator()
-            for label, family in bundled:
-                self._font_action(font_menu, label, family)
-        if mine:
-            font_menu.addSeparator()
-            listed_mine: set[str] = set()
-            for family, _filename in mine:
-                if family in listed_mine:
-                    continue
-                listed_mine.add(family)
-                suffix = "（当前）" if family == current else "（我导入的）"
-                self._font_action(font_menu, f"{family}{suffix}", family)
-        if ONLINE_FONTS:
-            font_menu.addSeparator()
-            for item in ONLINE_FONTS:
-                family = family_for(item)
-                if family:
-                    self._font_action(font_menu, f"{item.label}（已下载）", family)
-                else:
-                    action = font_menu.addAction(
-                        f"下载 {item.label}（{item.size_mb:.0f} MB）"
-                    )
-                    action.triggered.connect(
-                        lambda _c, k=item.key: self._download_font(k)
-                    )
+        for item in ONLINE_FONTS:
+            if family_for(item) is None:
+                action = font_menu.addAction(
+                    f"下载 {item.label}（{item.size_mb:.0f} MB）"
+                )
+                action.triggered.connect(
+                    lambda _c, k=item.key: self._download_font(k)
+                )
         font_menu.addSeparator()
         font_menu.addAction("导入字体文件…", self._import_font_dialog)
         font_menu.addAction("打开字体文件夹", self._open_font_folder)

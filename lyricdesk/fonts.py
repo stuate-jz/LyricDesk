@@ -1,8 +1,7 @@
-"""歌词字体：内置字体 + 在线下载的免费字体。
+"""歌词字体：内置 OFL 字体 + 用户自己导入的字体。
 
-内置的是「得意黑」（1.9 MB，SIL OFL 1.1），随程序一起分发。
-霞鹜文楷 / 霞鹜新晰黑体积较大（24 MB / 7 MB），做成菜单里按需下载，
-下载后放在 %APPDATA%\\LyricDesk\\fonts，之后每次启动自动加载。
+内置字体的显示名直接取文件名，渲染时仍使用字体内部真实 family 名，
+避免修改字体 name 表造成许可和兼容问题。
 """
 
 from __future__ import annotations
@@ -48,9 +47,13 @@ class OnlineFont:
 ONLINE_FONTS: tuple[OnlineFont, ...] = ()
 
 # 随程序分发的免费字体（SIL OFL 1.1，可自由分发）
-BUNDLED_FONTS: tuple[tuple[str, str, str], ...] = (
-    ("SmileySans-Oblique.otf", "得意黑（内置）", "Smiley Sans"),
-    ("LXGWMarkerGothic-Regular.ttf", "霞鹜漫黑（内置）", "LXGW Marker Gothic"),
+# (文件名, Qt 内部 family 名)；界面标签一律由文件名去扩展名生成。
+BUNDLED_FONTS: tuple[tuple[str, str], ...] = (
+    ("得意黑.otf", "Smiley Sans"),
+    ("霞鹜漫黑.ttf", "LXGW Marker Gothic"),
+    ("马善政楷书.ttf", "Ma Shan Zheng"),
+    ("龙藏体.ttf", "Long Cang"),
+    ("志莽行书.ttf", "Zhi Mang Xing"),
 )
 
 
@@ -122,6 +125,48 @@ def imported_fonts() -> list[tuple[str, str]]:
     return result
 
 
+def font_label(filename: str) -> str:
+    """字体在界面里的显示名：文件名去扩展名。"""
+    return Path(filename).stem or filename
+
+
+def font_choices(
+    installed_families: set[str] | None = None,
+    current: str = "",
+) -> list[tuple[str, str]]:
+    """设置页和右键菜单共用的字体列表。
+
+    只列内置、用户导入和已安装的少量推荐字体；不再把系统几百个字体族塞进来。
+    当前字体不在列表里时仍插到第一项，让老配置能看明白正在用哪个字体。
+    """
+    families = installed_families if installed_families is not None else set(
+        QFontDatabase.families()
+    )
+    entries: list[tuple[str, str]] = []
+    listed: set[str] = set()
+
+    for label, family in RECOMMENDED:
+        if family in families and family not in listed:
+            entries.append((label, family))
+            listed.add(family)
+    for filename, family in BUNDLED_FONTS:
+        if family in families and family not in listed:
+            entries.append((font_label(filename), family))
+            listed.add(family)
+    for family, filename in imported_fonts():
+        if family not in listed:
+            entries.append((font_label(filename), family))
+            listed.add(family)
+    for item in ONLINE_FONTS:
+        family = family_for(item)
+        if family and family not in listed:
+            entries.append((item.label, family))
+            listed.add(family)
+    if current and current not in listed:
+        entries.insert(0, (current, current))
+    return entries
+
+
 def import_font_file(source: Path) -> tuple[bool, str]:
     """把字体文件复制到用户字体目录并加载。
 
@@ -150,7 +195,7 @@ def import_font_file(source: Path) -> tuple[bool, str]:
 def register_all() -> list[str]:
     """加载内置字体、用户下载的字体、用户自己导入的字体。"""
     loaded: list[str] = []
-    for filename, _label, _family in BUNDLED_FONTS:
+    for filename, _family in BUNDLED_FONTS:
         loaded += _register_file(bundled_dir() / filename)
     for item in ONLINE_FONTS:
         loaded += _register_file(user_font_dir() / item.filename)

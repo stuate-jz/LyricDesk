@@ -53,7 +53,7 @@ from .config import (
     app_dir,
     cache_dir,
 )
-from .fonts import BUNDLED_FONTS, ONLINE_FONTS, RECOMMENDED, family_for, imported_fonts
+from .fonts import ONLINE_FONTS, family_for, font_choices
 from .i18n import set_language, tr
 from .smtc import friendly_player_name
 from .update import homepage_url, releases_url
@@ -1311,9 +1311,14 @@ class SettingsDialog(QDialog):
         self._font_label.setObjectName("value")
         layout.addWidget(self._font_label)
         self._font_combo = QComboBox()
-        self._font_combo.setMaxVisibleItems(24)
+        self._font_combo.setMaxVisibleItems(12)
         self._font_combo.currentIndexChanged.connect(self._on_font_picked)
         layout.addWidget(self._font_combo)
+        self._font_warning = QLabel()
+        self._font_warning.setObjectName("warn")
+        self._font_warning.setWordWrap(True)
+        self._font_warning.hide()
+        layout.addWidget(self._font_warning)
         self._buttons(
             layout,
             ("btn.import_font", "导入字体文件…", self.window._import_font_dialog),
@@ -1326,7 +1331,7 @@ class SettingsDialog(QDialog):
             # 表里查不到就会退回下面这段原文，不会把按钮文字刷成光秃秃一个标签
             key = f"online_font.{item.key}"
             text = (
-                f"{item.label}{tr('font.tag.downloaded', '（已下载）')}"
+                item.label
                 if family
                 else tr("font.download", "下载 {label}").format(label=item.label)
             )
@@ -2051,45 +2056,36 @@ class SettingsDialog(QDialog):
         ).format(current=current)
 
     def _refresh_fonts(self, force: bool = False) -> None:
-        """字体列表：内置 / 推荐 / 我导入的 / 系统里的都列出来。"""
+        """字体列表：只列内置 / 推荐 / 用户导入，不再塞入整个系统字体库。"""
         current = self.window.settings.font_family
         families = set(QFontDatabase.families())
-        entries: list[tuple[str, str]] = []
-        listed: set[str] = set()
-
-        for label, family in RECOMMENDED:
-            if family in families and family not in listed:
-                entries.append((f"{label}{tr('font.tag.recommended', '（推荐）')}", family))
-                listed.add(family)
-        for _filename, label, family in BUNDLED_FONTS:
-            if family in families and family not in listed:
-                # fonts.py 里的标签自带「（内置）」，这里换成当前语言的写法
-                clean = label.replace("（内置）", "").strip()
-                entries.append((f"{clean}{tr('font.tag.bundled', '（内置）')}", family))
-                listed.add(family)
-        for family, _filename in imported_fonts():
-            if family not in listed:
-                entries.append((f"{family}{tr('font.tag.mine', '（我导入的）')}", family))
-                listed.add(family)
-        for item in ONLINE_FONTS:
-            family = family_for(item)
-            if family and family not in listed:
-                entries.append(
-                    (f"{item.label}{tr('font.tag.downloaded', '（已下载）')}", family)
-                )
-                listed.add(family)
-
-        rest = sorted(f for f in families if f not in listed)
-        entries.extend((family, family) for family in rest)
-        if current and current not in listed:
-            entries.insert(0, (f"{current}{tr('font.tag.current', '（当前）')}", current))
+        entries = font_choices(families, current)
+        current_label = next(
+            (label for label, family in entries if family == current),
+            current,
+        )
+        missing = bool(
+            current
+            and current not in families
+            and getattr(self.window, "_font_missing", False)
+        )
+        self._font_warning.setVisible(missing)
+        if missing:
+            self._font_warning.setText(
+                tr(
+                    "lyrics.font.missing",
+                    "找不到字体「{name}」，当前已使用系统默认字体。",
+                ).format(name=current)
+            )
 
         if not force and self._font_combo.count() == len(entries):
             # 列表没变就不重建，省得每次刷新都重置下拉框
             index = self._font_combo.findData(current)
             if index >= 0 and index == self._font_combo.currentIndex():
                 self._font_label.setText(
-                    tr("lyrics.current_font", "当前字体：{name}").format(name=current)
+                    tr("lyrics.current_font", "当前字体：{name}").format(
+                        name=current_label
+                    )
                 )
                 return
 
@@ -2102,7 +2098,7 @@ class SettingsDialog(QDialog):
             self._font_combo.setCurrentIndex(index)
         self._silent = False
         self._font_label.setText(
-            tr("lyrics.current_font", "当前字体：{name}").format(name=current)
+            tr("lyrics.current_font", "当前字体：{name}").format(name=current_label)
         )
 
     def _on_font_picked(self, _index: int) -> None:

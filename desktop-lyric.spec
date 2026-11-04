@@ -22,19 +22,11 @@ hiddenimports += collect_submodules("winrt")
 
 # requests 需要 certifi 的根证书
 datas = collect_data_files("certifi")
-# 内置歌词字体（得意黑，SIL OFL 1.1，随程序分发）
-datas += [
-    (os.path.join(PROJECT_DIR, "assets", "fonts", "SmileySans-Oblique.otf"), "assets/fonts"),
-    (os.path.join(PROJECT_DIR, "assets", "fonts", "SmileySans-LICENSE.txt"), "assets/fonts"),
-    (
-        os.path.join(PROJECT_DIR, "assets", "fonts", "LXGWMarkerGothic-Regular.ttf"),
-        "assets/fonts",
-    ),
-    (
-        os.path.join(PROJECT_DIR, "assets", "fonts", "LXGWMarkerGothic-LICENSE.txt"),
-        "assets/fonts",
-    ),
-]
+# 内置歌词字体与对应 OFL 许可文件一起打包。
+_font_dir = os.path.join(PROJECT_DIR, "assets", "fonts")
+for _name in sorted(os.listdir(_font_dir)):
+    if _name.lower().endswith((".ttf", ".otf", ".txt")):
+        datas.append((os.path.join(_font_dir, _name), "assets/fonts"))
 
 # Qt 自带对话框（字体选择等）的中文翻译。PySide6 装在哪由 Python 决定，
 # 所以路径用 QLibraryInfo 查，不写死；不进包的话打包版的字体对话框会是英文。

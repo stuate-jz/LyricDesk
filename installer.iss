@@ -65,8 +65,11 @@ Source: "packaging\许可协议.txt";  DestDir: "{app}"; Flags: ignoreversion
 Source: "packaging\update.json";  DestDir: "{app}"; DestName: "更新源模板.json"; Flags: ignoreversion
 Source: "packaging\启动B站歌词模式.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "packaging\Start-BiliLyrics.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "assets\fonts\SmileySans-LICENSE.txt"; DestDir: "{app}"; DestName: "字体授权-得意黑.txt"; Flags: ignoreversion
-Source: "assets\fonts\LXGWMarkerGothic-LICENSE.txt"; DestDir: "{app}"; DestName: "字体授权-霞鹜漫黑.txt"; Flags: ignoreversion
+Source: "assets\fonts\得意黑-LICENSE.txt"; DestDir: "{app}"; DestName: "字体授权-得意黑.txt"; Flags: ignoreversion
+Source: "assets\fonts\霞鹜漫黑-LICENSE.txt"; DestDir: "{app}"; DestName: "字体授权-霞鹜漫黑.txt"; Flags: ignoreversion
+Source: "assets\fonts\马善政楷书-LICENSE.txt"; DestDir: "{app}"; DestName: "字体授权-马善政楷书.txt"; Flags: ignoreversion
+Source: "assets\fonts\龙藏体-LICENSE.txt"; DestDir: "{app}"; DestName: "字体授权-龙藏体.txt"; Flags: ignoreversion
+Source: "assets\fonts\志莽行书-LICENSE.txt"; DestDir: "{app}"; DestName: "字体授权-志莽行书.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}";                  Filename: "{app}\{#AppExeName}"
