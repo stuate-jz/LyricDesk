@@ -882,7 +882,8 @@ class LyricWindow(QWidget):
         if index != self._display_idx:
             return True
         current = lyrics.lines[index]
-        return self._lyric_progress(snapshot, current) < 0.999
+        next_line = lyrics.lines[index + 1] if index + 1 < len(lyrics.lines) else None
+        return self._lyric_progress(snapshot, current, next_line) < 0.999
 
     def _prefetch_visible_lyric_art(self, snapshot) -> None:
         """在计时器线程里构建下一帧要贴的位图，避免首帧绘制超预算。"""
@@ -984,7 +985,8 @@ class LyricWindow(QWidget):
         index = lyrics.index_at(position)
         if index < 0 or index != self._display_idx:
             return None
-        if self._lyric_progress(snapshot, lyrics.lines[index]) >= 0.999:
+        next_line = lyrics.lines[index + 1] if index + 1 < len(lyrics.lines) else None
+        if self._lyric_progress(snapshot, lyrics.lines[index], next_line) >= 0.999:
             return None
 
         over_x = self._overscan
@@ -1585,7 +1587,7 @@ class LyricWindow(QWidget):
             placeholder("已识别歌曲 · 客户端未提供播放进度", 0.48, slot * 0.30)
             return
 
-        anim, index, current, _next = self._resolve_lyrics(snapshot, lyrics, now)
+        anim, index, current, next_line = self._resolve_lyrics(snapshot, lyrics, now)
         if index < 0 or current is None:
             # 还没到第一句歌词 = 还在前奏里。
             # 前奏通常有十几秒，干等着像卡住了，干脆把还要等多久写出来。
@@ -1635,7 +1637,7 @@ class LyricWindow(QWidget):
                     art,
                     self._align_center_x(left, right, sprite.advance * scale),
                     baseline,
-                    progress=self._lyric_progress(snapshot, line),
+                    progress=self._lyric_progress(snapshot, line, next_line),
                     scale=scale,
                     opacity=0.6 + 0.4 * ease_out_cubic(min(1.0, anim * 1.6)),
                 )
@@ -2104,7 +2106,7 @@ class LyricWindow(QWidget):
                 art,
                 text_left + sprite.advance / 2.0,
                 baseline,
-                progress=self._lyric_progress(snapshot, current),
+                progress=self._lyric_progress(snapshot, current, next_line),
                 scale=scale,
                 opacity=0.55 + 0.45 * ease_out_cubic(min(1.0, anim * 1.5)),
             )
@@ -2155,7 +2157,7 @@ class LyricWindow(QWidget):
         next_line = lyrics.lines[index + 1] if index + 1 < len(lyrics.lines) else None
         return anim, index, current, next_line
 
-    def _lyric_progress(self, snapshot, current) -> float:
+    def _lyric_progress(self, snapshot, current, next_line=None) -> float:
         if (
             snapshot is None
             or not snapshot.is_playing
@@ -2164,9 +2166,14 @@ class LyricWindow(QWidget):
         ):
             return 0.0
         position = snapshot.position + self._offset_ms() / 1000.0
-        span = max(0.05, current.end - current.time)
-        duration = min(span, max(0.9, 0.185 * len(current.text) + 0.4))
-        return max(0.0, min(1.0, (position - current.time) / duration))
+        start = float(current.time)
+        end = float(current.end or 0.0)
+        if end - start <= 0.3 and next_line is not None:
+            end = float(next_line.time)
+        span = end - start
+        if span <= 0.3:
+            span = max(0.9, 0.185 * len(current.text) + 0.4)
+        return max(0.0, min(1.0, (position - start) / span))
 
     # ==================================================================
     # 纯歌词模式
