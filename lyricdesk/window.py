@@ -3116,7 +3116,6 @@ class LyricWindow(QWidget):
         self._toggle(menu, "置顶显示", settings.always_on_top, self._toggle_always_on_top)
 
         menu.addSeparator()
-        menu.addAction("最小化到托盘（隐藏歌词）", self._minimize_to_tray)
         menu.addAction("重新获取歌词", self.requestReload.emit)
         menu.addAction("回到默认位置", self._reset_position)
 

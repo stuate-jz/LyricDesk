@@ -87,6 +87,17 @@ def main() -> int:
             any("网易云：未连接" in text for text in right_texts)
             == (netease_mode and not connected),
         )
+        expected_head = (
+            "网易云：未连接（需要重启网易云）"
+            if netease_mode and not connected
+            else "显示歌词"
+        )
+        check(
+            f"{label} 托盘菜单首项正确",
+            tray_texts and tray_texts[0] == expected_head,
+            str(tray_texts[:2]),
+        )
+        check(f"{label} 没有重复隐藏入口", not any("隐藏歌词" in text for text in right_texts))
         right_menu.deleteLater()
         tray_menu.deleteLater()
 
@@ -161,6 +172,11 @@ def main() -> int:
                 if not allowed:
                     offenders.append(f"{source.name}:{line_no}: {line.strip()}")
     check("没有 QAction 误用 setForeground / setBackground", not offenders, "; ".join(offenders))
+
+    app_source = (ROOT / "lyricdesk" / "app.py").read_text(encoding="utf-8")
+    window_source = (ROOT / "lyricdesk" / "window.py").read_text(encoding="utf-8")
+    check("双击托盘的 toggle_visibility 保留", "def toggle_visibility()" in app_source)
+    check("设置页最小化到托盘方法保留", "def _minimize_to_tray" in window_source)
 
     print("\n结果：", "全部通过" if FAILS == 0 else f"{FAILS} 项失败")
     return 1 if FAILS else 0

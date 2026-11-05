@@ -140,15 +140,6 @@ def main() -> int:
             if not windows:
                 return
             windows[0].populate_menu(tray_menu)
-            visible = any(win.isVisible() for win in windows)
-            toggle = QAction("隐藏歌词" if visible else "显示歌词", tray_menu)
-            toggle.triggered.connect(toggle_visibility)
-            actions = tray_menu.actions()
-            if actions:
-                tray_menu.insertAction(actions[0], toggle)
-                tray_menu.insertSeparator(actions[0])
-            else:
-                tray_menu.addAction(toggle)
         except Exception as exc:  # noqa: BLE001
             # 托盘菜单失败不能把主程序带崩，至少保留设置和退出入口。
             log_error("构建托盘菜单失败", exc)
