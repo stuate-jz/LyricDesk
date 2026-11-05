@@ -1,10 +1,10 @@
 r"""逐帧检查桌面歌词录屏：闪屏、区域卡顿、静音和音频断点。
 
 用法：
-    python dev\rec_diff.py <录屏.mp4>
+    python dev\rec_diff.py <录屏.mp4> [--toggle 5]
 
 判读规则：
-    · 全空帧 > 0：闪屏未修好。
+    · 黑帧 / 文字消失 / 填充倒退任一 > 0：闪屏或动画未修好。
     · 歌词区域最长静止段 > 150ms 且不是换歌时刻：仍在卡顿。
     · 音频静音段可能来自换歌，需要结合播放器画面人工确认。
     · 音频跳变 > 0：可能有爆音、断点或解码损坏。
@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 from pathlib import Path
@@ -127,6 +128,24 @@ def frame_stats(values: list[int]) -> tuple[float, float]:
     return mean, dark_ratio
 
 
+def right_bright_and_boundary(frame: bytes) -> tuple[int, int | None]:
+    """右侧亮像素数量，以及彩色高亮像素的最右边界。"""
+    bright = 0
+    boundary = None
+    for y in range(0, FRAME_H, 2):
+        row = y * FRAME_W * 3
+        for x in range(FRAME_W // 2, FRAME_W, 4):
+            index = row + x * 3
+            red, green, blue = frame[index], frame[index + 1], frame[index + 2]
+            luma = (red + green + blue) // 3
+            if luma > 175:
+                bright += 1
+            saturation = max(red, green, blue) - min(red, green, blue)
+            if luma > 130 and saturation > 28:
+                boundary = x
+    return bright, boundary
+
+
 def empty_flags_from_stats(stats: list[tuple[float, float]]) -> list[bool]:
     """纯黑帧或相对前 15 帧亮度突然塌陷的空白帧。"""
     flags: list[bool] = []
@@ -145,6 +164,17 @@ def empty_flags_from_stats(stats: list[tuple[float, float]]) -> list[bool]:
         if len(rolling) > 15:
             rolling.pop(0)
     return flags
+
+
+def isolated_dark_frames(stats: list[tuple[float, float]]) -> int:
+    """灰度均值比前后各 4 帧至少暗 3 的孤立帧。"""
+    means = [item[0] for item in stats]
+    count = 0
+    for index, mean in enumerate(means):
+        neighbours = means[max(0, index - 4):index] + means[index + 1:index + 5]
+        if neighbours and mean < statistics.mean(neighbours) - 3.0:
+            count += 1
+    return count
 
 
 def static_summary(deltas: list[float]) -> tuple[int, float]:
@@ -191,6 +221,8 @@ def analyze_video(ffmpeg: Path, source: Path) -> dict:
     left_deltas: list[float] = []
     right_deltas: list[float] = []
     frame_stats_list: list[tuple[float, float]] = []
+    right_bright_counts: list[int] = []
+    right_boundaries: list[int | None] = []
     frames = 0
     while True:
         frame = process.stdout.read(FRAME_BYTES)
@@ -201,6 +233,9 @@ def analyze_video(ffmpeg: Path, source: Path) -> dict:
         right = region_samples(frame, FRAME_W // 2, FRAME_W)
         overall = left + right
         frame_stats_list.append(frame_stats(overall))
+        bright, boundary = right_bright_and_boundary(frame)
+        right_bright_counts.append(bright)
+        right_boundaries.append(boundary)
         if previous_left is not None:
             left_deltas.append(region_diff(previous_left, left))
             right_deltas.append(region_diff(previous_right or right, right))
@@ -224,12 +259,37 @@ def analyze_video(ffmpeg: Path, source: Path) -> dict:
             in_empty = False
     left_segments, left_longest = static_summary(left_deltas)
     right_segments, right_longest = static_summary(right_deltas)
+    bright_median = statistics.median(right_bright_counts) if right_bright_counts else 0
+    text_disappear_frames = sum(
+        1
+        for count in right_bright_counts
+        if bright_median and count < bright_median * 0.45
+    )
+    fill_regressions = 0
+    for index in range(1, len(right_boundaries)):
+        previous = right_boundaries[index - 1]
+        current = right_boundaries[index]
+        if previous is None or current is None or previous - current <= 2:
+            continue
+        # 换句、重排版或大片 UI 变化时高亮会自然回跳；这些帧不判为填充倒退。
+        if right_deltas[index - 1] > 8.0:
+            continue
+        bright_change = abs(
+            right_bright_counts[index] - right_bright_counts[index - 1]
+        )
+        if bright_change > 2:
+            continue
+        fill_regressions += 1
     return {
         "frames": frames,
         "duration": frames / ANALYSIS_FPS,
         "empty_segments": empty_segments,
         "empty_frames": empty_frames,
         "empty_starts": empty_starts,
+        "black_frames": isolated_dark_frames(frame_stats_list),
+        "bright_median": bright_median,
+        "text_disappear_frames": text_disappear_frames,
+        "fill_regressions": fill_regressions,
         "left_segments": left_segments,
         "left_longest_ms": left_longest,
         "right_segments": right_segments,
@@ -317,10 +377,23 @@ def analyze_audio(ffmpeg: Path, source: Path) -> dict:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
+    args: list[str] = []
+    toggle_count = 0
+    for index, arg in enumerate(sys.argv):
+        if arg == "--toggle" and index + 1 < len(sys.argv):
+            try:
+                toggle_count = max(0, int(sys.argv[index + 1]))
+            except ValueError:
+                toggle_count = 0
+            continue
+        if index > 0 and sys.argv[index - 1] == "--toggle":
+            continue
+        if index > 0:
+            args.append(arg)
+    if len(args) != 1:
         print(__doc__)
         return 2
-    source = Path(sys.argv[1])
+    source = Path(args[0])
     if not source.is_file():
         print("找不到录屏：", source)
         return 2
@@ -339,6 +412,7 @@ def main() -> int:
         f"  段数={video['empty_segments']}  帧数={video['empty_frames']}  "
         f"（期望 0）"
     )
+    print(f"  孤立黑帧={video['black_frames']}（期望 0）")
     if video["empty_starts"]:
         print(
             "  起始帧：",
@@ -347,7 +421,20 @@ def main() -> int:
                 for index in video["empty_starts"]
             ),
         )
-    print("\n2) 区域静止段")
+    print("\n2) 文字消失")
+    print(
+        f"  右侧亮像素中位数={video['bright_median']:.0f}  "
+        f"低于 45% 的帧={video['text_disappear_frames']}（期望 0）"
+    )
+    print("\n3) 填充倒退")
+    print(f"  同一句内高亮边界回退={video['fill_regressions']}（期望 0）")
+    if toggle_count:
+        abnormal = video["black_frames"] + video["text_disappear_frames"]
+        print(
+            f"  切换 {toggle_count} 次，平均每次异常帧="
+            f"{abnormal / toggle_count:.2f}"
+        )
+    print("\n4) 区域静止段")
     print(
         f"  左半（网易云）：{video['left_segments']} 处 / "
         f"最长 {video['left_longest_ms']:.0f}ms"
@@ -357,16 +444,30 @@ def main() -> int:
         f"最长 {video['right_longest_ms']:.0f}ms"
     )
     print("  判读：歌词窗最长 > 150ms 且非换歌 = 仍在卡")
-    print("\n3) 音频静音段")
+    print("\n5) 音频静音段")
     if not audio["silences"]:
         print("  0 处")
     else:
         print(f"  {len(audio['silences'])} 处")
         for start, length in audio["silences"]:
             print(f"  {start:.2f}s 起，持续 {length * 1000:.0f}ms")
-    print("\n4) 音频跳变")
+    print("\n6) 音频跳变")
     print(f"  {audio['jumps']} 处（期望 0）")
-    return 0 if video["empty_segments"] == 0 else 1
+    failed = (
+        video["empty_segments"]
+        or video["black_frames"]
+        or video["text_disappear_frames"]
+        or video["fill_regressions"]
+    )
+    print(
+        "\n判读："
+        + (
+            "通过（黑帧 = 0、文字消失 = 0、填充倒退 = 0）"
+            if not failed
+            else "失败（存在闪屏、内容消失或填充倒退）"
+        )
+    )
+    return 0 if not failed else 1
 
 
 if __name__ == "__main__":
