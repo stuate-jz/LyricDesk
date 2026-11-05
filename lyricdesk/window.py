@@ -693,19 +693,8 @@ class LyricWindow(QWidget):
         return value
 
     def _effective_mode(self) -> str:
-        """面板角色优先；主窗口由两个显示开关派生。"""
-        if self.role == "player":
-            return "album"
-        if self.role == "lyrics":
-            return "lyrics"
-        settings = self.settings
-        if settings.show_lyrics and settings.show_player:
-            return "split"
-        if settings.show_lyrics:
-            return "lyrics"
-        if settings.show_player:
-            return "album"
-        return "none"
+        """主窗永久承担歌词；独立面板只承担播放器。"""
+        return "album" if self.role == "player" else "lyrics"
 
     def _apply_initial_position(self) -> None:
         settings = self.settings
@@ -790,10 +779,7 @@ class LyricWindow(QWidget):
         """这扇窗口的位置该记到哪个槽位。"""
         if self.role == "player":
             return "player_pos"
-        if self.role == "lyrics":
-            return "lyrics_pos"
-        # 单窗：看它现在显示的是什么
-        return "player_pos" if self._effective_mode() == "album" else "lyrics_pos"
+        return "lyrics_pos"
 
     def apply_slot_position(self) -> None:
         """按当前内容对应的槽位移动；不负责首次默认落位。"""

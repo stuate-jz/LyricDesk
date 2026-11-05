@@ -93,17 +93,20 @@ def main() -> int:
     engine = Engine(settings)
 
     # ---------- 窗口装配 ----------
-    # 普通模式只有一扇主窗口；「分离面板」模式下主窗口让位给
-    # 唱片面板 + 歌词面板两扇独立窗口，都可以各自拖动。
+    # 主窗永久承担歌词；播放器是另一扇按需复用的独立窗口。
     main_window: LyricWindow | None = LyricWindow(settings, engine)
-    # 分离面板常驻复用：反复切换时不再反复创建透明 HWND / 首帧。
-    panel_cache: dict[str, LyricWindow] = {}
-    panel_windows: list[LyricWindow] = []
-    panels_transferred = False
+    player_panel: LyricWindow | None = None
+
+    def all_windows() -> list[LyricWindow]:
+        windows = [main_window] if main_window is not None else []
+        if player_panel is not None:
+            windows.append(player_panel)
+        return windows
 
     def active_windows() -> list[LyricWindow]:
-        if panel_windows:
-            return list(panel_windows)
+        visible = [win for win in all_windows() if win.isVisible()]
+        if visible:
+            return visible
         return [main_window] if main_window is not None else []
 
     settings.save()
@@ -121,15 +124,13 @@ def main() -> int:
     def toggle_visibility() -> None:
         if not settings.show_lyrics and not settings.show_player:
             return
-        windows = active_windows()
-        if not windows:
-            return
-        visible = any(win.isVisible() for win in windows)
-        for win in windows:
-            if visible:
+        windows = all_windows()
+        visible = [win for win in windows if win.isVisible()]
+        if visible:
+            for win in visible:
                 win.hide()
-            else:
-                show_at_slot(win)
+        else:
+            sync_mode_windows()
 
     tray_menu = QMenu()
 
@@ -162,17 +163,15 @@ def main() -> int:
     def on_quit() -> None:
         settings.save()
         engine.stop()
-        for win in list(panel_cache.values()):
+        for win in all_windows():
             win.hide()
             win.setParent(None)
             win.deleteLater()
-        panel_cache.clear()
-        panel_windows.clear()
         tray.hide()
         app.quit()
 
     def hide_all() -> None:
-        for win in active_windows():
+        for win in all_windows():
             win.hide()
         rebuild_tray_menu()
 
@@ -184,83 +183,56 @@ def main() -> int:
         win.requestHide.connect(hide_all)
         win.settingsChanged.connect(schedule_sync)
 
-    # ---------- 分离面板的进出场 ----------
+    # ---------- 主歌词窗 + 独立播放器面板 ----------
 
     def show_at_slot(win: LyricWindow) -> None:
-        """尺寸、位置、贴边都在显示前定好，避免出现首帧后再跳动。"""
+        """尺寸、位置、贴边都在显示前定好；首次出现预热一帧。"""
+        was_visible = win.isVisible()
         win.recalculate()
         win.apply_slot_position()
         win.keep_on_screen()
         win._remember_position()
+        if not was_visible:
+            win.apply_flags()
+            win.setWindowOpacity(0.0)
         win.show()
         win.raise_()
+        if not was_visible:
+            QTimer.singleShot(
+                0,
+                lambda w=win: w.setWindowOpacity(1.0) if w.isVisible() else None,
+            )
 
-    def cached_panel(role: str, anchor_y: int | None = None) -> tuple[LyricWindow, bool]:
-        """返回 (窗口, 是否新建)。缓存复用时不重复连接信号。"""
-        existing = panel_cache.get(role)
-        if existing is not None:
-            return existing, False
-        window = LyricWindow(settings, engine, role=role, anchor_y=anchor_y)
-        wire(window)
-        panel_cache[role] = window
-        return window, True
+    def ensure_player_panel() -> LyricWindow:
+        nonlocal player_panel
+        if player_panel is not None:
+            return player_panel
+        auto_position = settings.player_pos[0] < 0
+        panel = LyricWindow(settings, engine, role="player")
+        wire(panel)
+        player_panel = panel
 
-    def enter_split() -> None:
-        nonlocal panels_transferred
-        screen = (
-            main_window.screen()
-            if main_window is not None and main_window.screen() is not None
-            else QApplication.primaryScreen()
-        )
-        area = screen.availableGeometry()
-        # 只在槽位从来没记过时，才把当前歌词窗的位置当成初始值。
-        before = (main_window.x(), main_window.y()) if main_window is not None else None
-        if settings.lyrics_pos[0] < 0 and before is not None:
-            settings.lyrics_pos = [before[0], before[1]]
-        auto_player = bool(settings.player_pos[0] < 0)
-
-        player, _new_player = cached_panel("player")
-
-        if before is not None and auto_player:
-            player.recalculate()
-            lx, ly = before
-            left_x = lx - player.width() - 24
+        # 第一次显示播放器且歌词也在桌面：尽量放歌词左边，放不下再放下面。
+        if auto_position and main_window is not None and settings.show_lyrics:
+            panel.recalculate()
+            screen = main_window.screen() or QApplication.primaryScreen()
+            area = screen.availableGeometry()
+            lx, ly = main_window.x(), main_window.y()
+            left_x = lx - panel.width() - 24
             if left_x >= area.x() + 20:
-                player.move(left_x, ly)
+                panel.move(left_x, ly)
             else:
-                below_y = ly + (main_window.height() if main_window else 0) + 24
-                if below_y + player.height() <= area.bottom() - 20:
-                    player.move(lx, below_y)
+                below_y = ly + main_window.height() + 24
+                if below_y + panel.height() <= area.bottom() - 20:
+                    panel.move(lx, below_y)
                 else:
-                    player.move(
+                    panel.move(
                         lx,
-                        max(area.y() + 20, ly - player.height() - 24),
+                        max(area.y() + 20, ly - panel.height() - 24),
                     )
-            player.keep_on_screen()
-            player._remember_position()
-
-        lyrics, _new_lyrics = cached_panel(
-            "lyrics", anchor_y=player.y() + player.height() + 24
-        )
-        show_at_slot(lyrics)
-        show_at_slot(player)
-        panel_windows[:] = [player, lyrics]
-        settings.save()
-
-    def exit_split() -> list[LyricWindow]:
-        """交接前只准备退场窗口；调用方先显示主窗，再真正 hide。"""
-        nonlocal panels_transferred
-        outgoing = list(panel_windows)
-        for win in outgoing:
-            # 设置窗口可能挂在某个面板上；面板要销毁了，先把它转交出去，
-            # 不然用户开着的设置窗口会指向已释放的窗口
-            if not panels_transferred:
-                transfer = getattr(win, "transfer_settings_dialog", None)
-                if transfer is not None and main_window is not None:
-                    transfer(main_window)
-        panels_transferred = True
-        panel_windows.clear()
-        return outgoing
+            panel.keep_on_screen()
+            panel._remember_position()
+        return panel
 
     _mode_switch_busy = False
 
@@ -269,35 +241,28 @@ def main() -> int:
         if _mode_switch_busy:
             return
         _mode_switch_busy = True
-        # 硬约束：进入 / 退出分离时，旧窗口必须等接替窗口显示后才隐藏，
-        # 任何一次切换都不能出现“屏幕上一个窗口都没有”的中间帧。
-        # 本函数由 schedule_sync 的一次单发回调调用，内部不 processEvents()。
+        # 歌词永远由主窗承担。播放器先出现，再处理主窗，确保切换时屏幕上
+        # 始终至少有一扇已经完成预热的窗口。
+        # 本函数由 schedule_sync 的一次单发回调调用，内部不进入嵌套事件循环。
         try:
-            want_split = settings.show_lyrics and settings.show_player
-            if want_split:
-                if not panel_windows:
-                    enter_split()
+            panel = None
+            if settings.show_player:
+                panel = ensure_player_panel()
+                show_at_slot(panel)
+
+            if main_window is not None:
+                if settings.show_lyrics:
+                    show_at_slot(main_window)
                 else:
-                    for win in panel_windows:
-                        show_at_slot(win)
-                if main_window is not None:
                     main_window.hide()
-                return
+                    if panel is not None:
+                        main_window.transfer_settings_dialog(panel)
 
-            outgoing: list[LyricWindow] = []
-            if panel_windows:
-                outgoing = exit_split()
-
-            if main_window is None:
-                for win in outgoing:
-                    win.hide()
-                return
-            if settings.show_lyrics or settings.show_player:
-                show_at_slot(main_window)
-            else:
-                main_window.hide()
-            for win in outgoing:
-                win.hide()
+            if panel is None and player_panel is not None:
+                if main_window is not None:
+                    player_panel.transfer_settings_dialog(main_window)
+                player_panel.hide()
+            settings.save()
         finally:
             _mode_switch_busy = False
 
@@ -321,7 +286,7 @@ def main() -> int:
             rebuild_tray_menu()
             if _flag_state["click_through"] != settings.click_through:
                 _flag_state["click_through"] = settings.click_through
-                for win in active_windows():
+                for win in all_windows():
                     win.apply_flags()
             # 设置窗口开着的话要留在最前面：切模式新建的面板会盖在它上面
             hosts = list(active_windows())
@@ -520,12 +485,7 @@ def main() -> int:
         # 只在「本来没有、现在有了」的那一下动手，免得跟手动隐藏打架
         if previous is None or previous or not running:
             return
-        windows = active_windows()
-        if not windows:
-            return
-        for win in windows:
-            if not win.isVisible():
-                show_at_slot(win)
+        sync_mode_windows()
         rebuild_tray_menu()
 
     music_timer = QTimer()
