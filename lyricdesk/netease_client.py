@@ -237,12 +237,10 @@ class NeteaseState:
     visible: bool = True
     stamp: float = 0.0
 
-    def snapshot(self) -> Snapshot | None:
+    def snapshot(self, position: float | None = None) -> Snapshot | None:
         if not self.title:
             return None
-        position = self.position
-        if self.position_known and self.playing and self.stamp:
-            position += max(0.0, time.monotonic() - self.stamp)
+        position = self.position if position is None else float(position)
         if self.duration > 0:
             position = min(position, self.duration)
         track = Track(
@@ -432,6 +430,9 @@ class NeteaseBridge:
         self._connect_count = 0
         self._reconnects = 0
         self._last_stats = time.monotonic()
+        self._pos_anchor: float | None = None
+        self._pos_mono = 0.0
+        self._pos_title = ""
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -465,7 +466,20 @@ class NeteaseBridge:
     def snapshot(self) -> Snapshot | None:
         with self._lock:
             state = self._state
-        return state.snapshot() if state is not None else None
+            anchor = self._pos_anchor
+            anchor_mono = self._pos_mono
+        if state is None:
+            return None
+        position = state.position
+        if (
+            state.position_known
+            and state.playing
+            and anchor is not None
+        ):
+            position = anchor + max(0.0, time.monotonic() - anchor_mono)
+            if state.duration > 0:
+                position = min(position, state.duration)
+        return state.snapshot(position=position)
 
     @property
     def connected(self) -> bool:
@@ -489,9 +503,53 @@ class NeteaseBridge:
                 return
             self._seek(seconds)
 
+    def _smooth_position(
+        self,
+        sample: float,
+        playing: bool,
+        title: str,
+        duration: float,
+    ) -> float:
+        """把网易云 1 秒一级的播放条抹平，只允许位置前进。"""
+        now = time.monotonic()
+        if self._pos_title != title:
+            self._pos_title = title
+            self._pos_anchor = None
+        if self._pos_anchor is None or not playing:
+            self._pos_anchor, self._pos_mono = sample, now
+            value = sample
+        else:
+            guess = self._pos_anchor + (now - self._pos_mono)
+            if abs(sample - guess) > 2.0:
+                # 用户 seek、换歌或播放器重新锚定：直接接受新位置。
+                self._pos_anchor, self._pos_mono = sample, now
+                value = sample
+            else:
+                value = max(guess, sample)
+                self._pos_anchor, self._pos_mono = value, now
+        if duration > 0:
+            value = min(max(0.0, value), duration)
+        return value
+
     def _set_state(self, state: NeteaseState | None) -> None:
         if state is not None:
             self._playing_hint = state.playing
+            if state.position_known:
+                state.position = self._smooth_position(
+                    state.position,
+                    state.playing,
+                    state.title,
+                    state.duration,
+                )
+            else:
+                self._pos_anchor = None
+                self._pos_title = state.title
+            # snapshot() 由 NeteaseBridge 负责外推，State 本身不要再算一次。
+            state.stamp = 0.0
+        else:
+            self._pos_anchor = None
+            self._pos_mono = 0.0
+            self._pos_title = ""
         with self._lock:
             self._state = state
 
