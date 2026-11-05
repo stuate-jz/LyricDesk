@@ -16,7 +16,7 @@ from .autostart import set_enabled
 from .config import Settings
 from .engine import Engine
 from .processes import music_app_running
-from .window import LyricWindow
+from .window import LyricWindow, log_error
 
 _SHARED_MEMORY = None
 # 翻译器要一直活着，否则被 GC 掉之后翻译会失效（Qt 不持有所有权）
@@ -135,19 +135,28 @@ def main() -> int:
 
     def rebuild_tray_menu() -> None:
         # 复用同一个菜单对象，只重填内容，避免反复创建/销毁原生菜单
-        windows = active_windows()
-        if not windows:
-            return
-        windows[0].populate_menu(tray_menu)
-        visible = any(win.isVisible() for win in windows)
-        toggle = QAction("隐藏歌词" if visible else "显示歌词", tray_menu)
-        toggle.triggered.connect(toggle_visibility)
-        actions = tray_menu.actions()
-        if actions:
-            tray_menu.insertAction(actions[0], toggle)
-            tray_menu.insertSeparator(actions[0])
-        else:
-            tray_menu.addAction(toggle)
+        try:
+            windows = active_windows()
+            if not windows:
+                return
+            windows[0].populate_menu(tray_menu)
+            visible = any(win.isVisible() for win in windows)
+            toggle = QAction("隐藏歌词" if visible else "显示歌词", tray_menu)
+            toggle.triggered.connect(toggle_visibility)
+            actions = tray_menu.actions()
+            if actions:
+                tray_menu.insertAction(actions[0], toggle)
+                tray_menu.insertSeparator(actions[0])
+            else:
+                tray_menu.addAction(toggle)
+        except Exception as exc:  # noqa: BLE001
+            # 托盘菜单失败不能把主程序带崩，至少保留设置和退出入口。
+            log_error("构建托盘菜单失败", exc)
+            tray_menu.clear()
+            tray_menu.addAction("菜单出错了（详情见 error.log）").setEnabled(False)
+            tray_menu.addSeparator()
+            tray_menu.addAction("设置…", lambda: active_windows()[0].open_settings())
+            tray_menu.addAction("退出", on_quit)
 
     def update_tooltip(track) -> None:
         if track is None:

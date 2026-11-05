@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import traceback
 import weakref
 from pathlib import Path
 
@@ -168,6 +169,19 @@ def _profile_event(name: str) -> None:
         return
     with _PROFILE_LOCK:
         _PROFILE_GLOBAL_EVENTS[name] += 1
+
+
+def log_error(context: str, error: BaseException | None = None) -> None:
+    """把菜单等非致命 UI 异常追加到 error.log，避免静默失败。"""
+    try:
+        detail = traceback.format_exc()
+        if detail.strip() == "NoneType: None" and error is not None:
+            detail = f"{type(error).__name__}: {error}\n"
+        with (app_dir() / "error.log").open("a", encoding="utf-8") as handle:
+            handle.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] {context}\n")
+            handle.write(detail.rstrip() + "\n")
+    except Exception:
+        pass
 
 # 活着的那几扇歌词窗（单窗口 1 个、分离面板 2 个）。
 # 打开设置窗口时要把它们的「置顶」临时摘掉，否则歌词会画在设置窗口上面；
@@ -2806,7 +2820,15 @@ class LyricWindow(QWidget):
             self._update_cursor()
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802
-        menu = self.build_menu()
+        try:
+            menu = self.build_menu()
+        except Exception as exc:  # noqa: BLE001
+            log_error("构建歌词右键菜单失败", exc)
+            menu = QMenu()
+            menu.addAction("菜单出错了（详情见 error.log）").setEnabled(False)
+            menu.addSeparator()
+            menu.addAction("设置…", self.open_settings)
+            menu.addAction("退出", self.requestQuit.emit)
         menu.exec(event.globalPos())
         menu.deleteLater()
 
@@ -2916,7 +2938,6 @@ class LyricWindow(QWidget):
             self.engine, "netease_connected", False
         ):
             netease_state = menu.addAction("网易云：未连接（需要重启网易云）")
-            netease_state.setForeground(QColor("#9aa4b8"))
             netease_state.triggered.connect(self._restart_netease_for_lyrics)
             menu.addSeparator()
         self._toggle(
