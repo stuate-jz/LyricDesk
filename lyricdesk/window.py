@@ -2159,6 +2159,29 @@ class LyricWindow(QWidget):
         span = end - start
         if span <= 0.3:
             span = max(0.9, 0.185 * len(current.text) + 0.4)
+        words = list(getattr(current, "words", None) or [])
+        if words:
+            family, size, weight = self._fonts["list_cur"]
+            widths = [
+                max(0.01, render_mod.measure(word.text, family, size, weight))
+                for word in words
+            ]
+            total = sum(widths)
+            if total > 0:
+                elapsed = 0.0
+                for word, width in zip(words, widths):
+                    word_start = float(word.time)
+                    word_end = max(word_start + 0.001, word_start + float(word.dur))
+                    if position >= word_end:
+                        elapsed += width
+                    elif position > word_start:
+                        elapsed += width * min(
+                            1.0, (position - word_start) / (word_end - word_start)
+                        )
+                        break
+                    else:
+                        break
+                return max(0.0, min(1.0, elapsed / total))
         return max(0.0, min(1.0, (position - start) / span))
 
     # ==================================================================
