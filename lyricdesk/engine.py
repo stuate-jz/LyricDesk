@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from .config import Settings
 from .bili_client import BiliBridge
 from .bili_launcher import BiliWatcher
-from .lyrics import Lyrics, fetch, load_cached, provider_for_player, save_cached
+from .lyrics import Lyrics, fetch_enhanced, load_cached, provider_for_player, save_cached
 from .netease_client import NeteaseBridge, configure as configure_netease
 from .netease_launcher import NeteaseWatcher, find_ready_port
 from .smtc import SMTC_AVAILABLE, SmtcReader, Snapshot
@@ -233,7 +233,11 @@ class Engine(QObject):
         self._display_idx_reset()
         self.trackChanged.emit(track)
 
-        cached = load_cached(track.title, track.artist)
+        provider = provider_for_player(snapshot.source)
+        song_id = ""
+        if provider == "netease" and self._netease is not None:
+            song_id = self._netease.song_id
+        cached = load_cached(track.title, track.artist, provider, track.key)
         if cached is not None:
             self._lyrics = cached
             self.lyricsChanged.emit(cached)
@@ -250,7 +254,9 @@ class Engine(QObject):
             track.title,
             track.artist,
             track.duration,
-            provider_for_player(snapshot.source),
+            provider,
+            track_key=track.key,
+            song_id=song_id,
         )
 
     def _stop_bili(self) -> None:
@@ -280,7 +286,15 @@ class Engine(QObject):
     # ------------------------------------------------------------------
 
     def _start_fetch(
-        self, key: str, title: str, artist: str, duration: float, prefer: str = ""
+        self,
+        key: str,
+        title: str,
+        artist: str,
+        duration: float,
+        prefer: str = "",
+        *,
+        track_key: str = "",
+        song_id: str = "",
     ) -> None:
         with self._lock:
             self._token += 1
@@ -288,10 +302,17 @@ class Engine(QObject):
 
         def worker() -> None:
             try:
-                result = fetch(title, artist, duration, prefer=prefer)
+                result = fetch_enhanced(
+                    title,
+                    artist,
+                    duration,
+                    prefer=prefer,
+                    track_key=track_key,
+                    song_id=song_id,
+                )
             except Exception:
                 result = Lyrics(lines=[], source="", title=title, artist=artist)
-            save_cached(title, artist, result)
+            save_cached(title, artist, result, prefer, track_key)
             with self._lock:
                 if token != self._token:
                     return
@@ -310,10 +331,13 @@ class Engine(QObject):
         if snapshot is None or snapshot.track is None:
             return
         track = snapshot.track
-        from .lyrics import _cache_path, normalize
+        from .lyrics import _cache_path, _track_cache_key, provider_for_player
 
         try:
-            path = _cache_path(f"{normalize(track.title)}|{normalize(track.artist)}")
+            provider = provider_for_player(snapshot.source)
+            path = _cache_path(
+                _track_cache_key(track.title, track.artist, provider, track.key)
+            )
             if path.exists():
                 path.unlink()
         except Exception:
@@ -321,4 +345,15 @@ class Engine(QObject):
 
         self._lyrics = None
         self.lyricsChanged.emit(None)
-        self._start_fetch(track.key, track.title, track.artist, track.duration)
+        song_id = ""
+        if provider == "netease" and self._netease is not None:
+            song_id = self._netease.song_id
+        self._start_fetch(
+            track.key,
+            track.title,
+            track.artist,
+            track.duration,
+            provider,
+            track_key=track.key,
+            song_id=song_id,
+        )

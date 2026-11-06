@@ -9,12 +9,15 @@ import json
 import re
 import time
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import requests
 
 from .config import cache_dir
+from .lyricdoc import LyricDoc
+from .lyricdoc import LyricLine as DocLyricLine
+from .lyricdoc import LyricWord
 from .titles import clean_title
 
 UA = (
@@ -40,8 +43,8 @@ NE_HEADERS = {"User-Agent": UA, "Referer": "https://music.163.com/"}
 KG_HEADERS = {"User-Agent": UA, "Referer": "https://www.kugou.com/"}
 
 MISS_TTL = 900.0
-# 3：开始按「歌词覆盖率」换源，老的缓存（可能是残缺歌词）一律作废重取
-CACHE_VERSION = 3
+# 4：缓存逐字、翻译、音译和来源信息；旧缓存统一重新获取
+CACHE_VERSION = 4
 TIMEOUT = 8.0
 
 _SESSION = requests.Session()
@@ -78,6 +81,9 @@ class LyricLine:
     time: float
     text: str
     end: float = 0.0
+    words: list[LyricWord] = field(default_factory=list)
+    trans: str = ""
+    roma: str = ""
 
     @property
     def is_gap(self) -> bool:
@@ -93,6 +99,9 @@ class Lyrics:
     albummid: str = ""
     album: str = ""
     cover_url: str = ""
+    provider: str = ""
+    track_key: str = ""
+    doc: LyricDoc | None = None
 
     def index_at(self, position: float) -> int:
         """返回 position 时刻应高亮的行号；无歌词时返回 -1。"""
@@ -108,6 +117,57 @@ class Lyrics:
             else:
                 hi = mid - 1
         return lo
+
+    @classmethod
+    def from_doc(
+        cls,
+        doc: LyricDoc,
+        title: str,
+        artist: str,
+    ) -> "Lyrics":
+        lines = [
+            LyricLine(
+                time=float(line.time),
+                text=line.text,
+                end=float(line.end),
+                words=list(line.words),
+                trans=line.trans,
+                roma=line.roma,
+            )
+            for line in doc.lines
+        ]
+        return cls(
+            lines=lines,
+            source=doc.source,
+            title=title,
+            artist=artist,
+            provider=doc.provider,
+            track_key=doc.track_key,
+            doc=doc,
+        )
+
+    def to_doc(self) -> LyricDoc:
+        doc_lines = [
+            DocLyricLine(
+                time=float(line.time),
+                end=float(line.end or line.time + 2.5),
+                text=line.text,
+                words=list(line.words),
+                trans=line.trans,
+                roma=line.roma,
+            )
+            for line in self.lines
+        ]
+        provider = self.provider or self.source.lower()
+        doc = LyricDoc(
+            lines=doc_lines,
+            source=self.source,
+            provider=provider,
+            track_key=self.track_key,
+        )
+        self.doc = doc
+        self.provider = provider
+        return doc
 
 
 # ----------------------------------------------------------------------
@@ -521,8 +581,21 @@ def _cache_path(key: str) -> Path:
     return cache_dir() / f"{digest}.json"
 
 
-def load_cached(title: str, artist: str) -> Lyrics | None:
-    path = _cache_path(f"{normalize(title)}|{normalize(artist)}")
+def _track_cache_key(title: str, artist: str, provider: str, track_key: str) -> str:
+    # track_key 区分同一播放器里的不同版本；provider 区分不同曲库的歌词。
+    return (
+        f"{normalize(title)}|{normalize(artist)}|"
+        f"{provider or '-'}|{track_key or '-'}"
+    )
+
+
+def load_cached(
+    title: str,
+    artist: str,
+    provider: str = "",
+    track_key: str = "",
+) -> Lyrics | None:
+    path = _cache_path(_track_cache_key(title, artist, provider, track_key))
     if not path.exists():
         return None
     try:
@@ -537,23 +610,54 @@ def load_cached(title: str, artist: str) -> Lyrics | None:
         return None
     if data.get("kind") != "lyrics":
         return None
-    lines = [
-        LyricLine(time=float(item[0]), text=str(item[1]), end=float(item[2]))
-        for item in data.get("lines", [])
-        if len(item) >= 2
-    ]
-    return Lyrics(
+    lines: list[LyricLine] = []
+    for item in data.get("lines", []):
+        if len(item) < 3:
+            continue
+        words = [
+            LyricWord(
+                time=float(word[0]),
+                dur=float(word[1]),
+                text=str(word[2]),
+            )
+            for word in item[4]
+            if isinstance(word, (list, tuple)) and len(word) >= 3
+        ] if len(item) > 4 and isinstance(item[4], list) else []
+        lines.append(
+            LyricLine(
+                time=float(item[0]),
+                text=str(item[1]),
+                end=float(item[2]),
+                words=words,
+                trans=str(item[3] or "") if len(item) > 3 else "",
+                roma=str(item[5] or "") if len(item) > 5 else "",
+            )
+        )
+    result = Lyrics(
         lines=lines,
         source=data.get("source", "cache"),
         title=data.get("title", title),
         artist=data.get("artist", artist),
         albummid=data.get("albummid", ""),
         album=data.get("album", ""),
+        provider=data.get("provider", provider),
+        track_key=data.get("track_key", track_key),
     )
+    if lines:
+        result.to_doc()
+    return result
 
 
-def save_cached(title: str, artist: str, lyrics: Lyrics) -> None:
-    path = _cache_path(f"{normalize(title)}|{normalize(artist)}")
+def save_cached(
+    title: str,
+    artist: str,
+    lyrics: Lyrics,
+    provider: str = "",
+    track_key: str = "",
+) -> None:
+    provider = lyrics.provider or provider
+    track_key = lyrics.track_key or track_key
+    path = _cache_path(_track_cache_key(title, artist, provider, track_key))
     try:
         if not lyrics.lines:
             payload = {"v": CACHE_VERSION, "kind": "miss", "ts": time.time()}
@@ -566,8 +670,23 @@ def save_cached(title: str, artist: str, lyrics: Lyrics) -> None:
                 "artist": lyrics.artist,
                 "albummid": lyrics.albummid,
                 "album": lyrics.album,
+                "provider": provider,
+                "track_key": track_key,
                 "saved": time.time(),
-                "lines": [[line.time, line.text, line.end] for line in lyrics.lines],
+                "lines": [
+                    [
+                        line.time,
+                        line.text,
+                        line.end,
+                        line.trans,
+                        [
+                            [word.time, word.dur, word.text]
+                            for word in line.words
+                        ],
+                        line.roma,
+                    ]
+                    for line in lyrics.lines
+                ],
             }
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     except Exception:
@@ -587,7 +706,7 @@ _PROVIDERS: tuple[tuple[str, str, callable, callable], ...] = (
 )
 
 GOOD_MATCH = 0.90   # 到这一步就不再看后面的源
-MIN_MATCH = 0.55    # 低于这个分数宁可不显示
+MIN_MATCH = 0.72    # 低于这个分数宁可不显示，避免同名翻唱/剪辑版串词
 
 # 歌词至少要覆盖到歌曲时长的这个比例，否则就换下一个候选。
 # 有些曲库的同名条目只有半首（试过一首 200 秒的歌歌词只到 59 秒，
@@ -649,7 +768,9 @@ def _try_candidate(
         artist=candidate.get("artist") or artist,
         albummid=extra.get("albummid", ""),
         album=extra.get("album", ""),
+        provider=key,
     )
+    lyrics.to_doc()
     # 匹配分和覆盖度各占一半：宁可要一个名字稍微差点但歌词完整的
     weight = score * (0.5 + 0.5 * _coverage(lines, duration))
     return weight, lyrics
@@ -757,3 +878,54 @@ def fetch(
         return Lyrics(lines=lines, source="LRCLIB", title=title, artist=artist)
 
     return Lyrics(lines=[], source="", title=title, artist=artist)
+
+
+def fetch_enhanced(
+    title: str,
+    artist: str,
+    duration: float = 0.0,
+    prefer: str = "",
+    track_key: str = "",
+    song_id: str = "",
+) -> Lyrics:
+    """优先用播放器自己的曲库 ID/逐字源，再回落到严格跨库匹配。
+
+    ID 和逐字源都只认公开接口；任一环节失败都不影响行级歌词。
+    """
+    from .lyricdoc import validate
+    from .sources import kugou as kugou_source
+    from .sources import netease as netease_source
+
+    cleaned_title = clean_title(title) or title
+    cleaned_artist = clean_title(artist) or artist
+
+    if prefer == "netease" and song_id:
+        try:
+            doc = netease_source.fetch_doc(song_id, track_key or song_id)
+            if doc is not None and validate(doc, duration)[0]:
+                result = Lyrics.from_doc(doc, cleaned_title, cleaned_artist)
+                result.track_key = track_key or song_id
+                return result
+        except Exception:  # noqa: BLE001
+            pass
+
+    if prefer == "kugou":
+        try:
+            doc = kugou_source.fetch_doc(
+                cleaned_title,
+                cleaned_artist,
+                duration,
+                track_key or f"{cleaned_title}|{cleaned_artist}",
+            )
+            if doc is not None and validate(doc, duration)[0]:
+                result = Lyrics.from_doc(doc, cleaned_title, cleaned_artist)
+                result.track_key = track_key
+                return result
+        except Exception:  # noqa: BLE001
+            pass
+
+    result = fetch(title, artist, duration, prefer)
+    if result.lines:
+        result.track_key = track_key
+        result.to_doc()
+    return result

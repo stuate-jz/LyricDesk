@@ -186,9 +186,52 @@ READ_JS = f"""
     cover = cover.split('?')[0] + '?param=500y500';
   }}
 
+  let songId = null;
+  try {{
+    if (!window.__LD_STORE || Date.now() - window.__LD_STORE.ts > 2000) {{
+      const appRoot = document.querySelector('#root');
+      let fiber = null;
+      if (appRoot) {{
+        const key = Object.getOwnPropertyNames(appRoot)
+          .find((name) => name.startsWith('__reactContainer'));
+        if (key) fiber = appRoot[key];
+      }}
+      let found = null;
+      function walk(node, depth) {{
+        if (!node || depth > 80 || found) return;
+        try {{
+          if (
+            node.memoizedProps &&
+            node.memoizedProps.store &&
+            typeof node.memoizedProps.store.getState === 'function'
+          ) {{
+            const state = node.memoizedProps.store.getState();
+            const track =
+              state && state.playing &&
+              state.playing.curPlaying &&
+              state.playing.curPlaying.track;
+            if (track && track.id) {{
+              found = {{
+                id: String(track.id),
+                name: String(track.name || ''),
+                ts: Date.now()
+              }};
+            }}
+          }}
+        }} catch (e) {{}}
+        walk(node.child, depth + 1);
+        if (!found) walk(node.sibling, depth + 1);
+      }}
+      walk(fiber, 0);
+      if (found) window.__LD_STORE = found;
+    }}
+    songId = window.__LD_STORE ? window.__LD_STORE.id : null;
+  }} catch (e) {{}}
+
   return JSON.stringify({{
     title: title,
     artist: artist,
+    song_id: songId,
     position: Number.isFinite(position) ? position : null,
     duration: Number.isFinite(duration) ? duration : null,
     playing: playing,
@@ -229,6 +272,7 @@ CONTROL_JS = {
 class NeteaseState:
     title: str = ""
     artist: str = ""
+    song_id: str = ""
     position: float = 0.0
     duration: float = 0.0
     playing: bool = False
@@ -284,6 +328,7 @@ def parse_state(raw: str | None, previous_playing: bool = False) -> NeteaseState
     if not title or title.lower() in ("undefined", "null", "about:blank"):
         return None
     artist = str(data.get("artist") or "").strip()
+    song_id = str(data.get("song_id") or "").strip()
     raw_position = data.get("position")
     raw_duration = data.get("duration")
     position_known = raw_position is not None and _num(raw_position, -1.0) >= 0
@@ -292,6 +337,7 @@ def parse_state(raw: str | None, previous_playing: bool = False) -> NeteaseState
     return NeteaseState(
         title=title,
         artist=artist,
+        song_id=song_id,
         position=max(0.0, _num(raw_position)),
         duration=max(0.0, _num(raw_duration)),
         playing=playing,
@@ -491,6 +537,12 @@ class NeteaseBridge:
         with self._lock:
             state = self._state
         return state.cover_url if state is not None else ""
+
+    @property
+    def song_id(self) -> str:
+        with self._lock:
+            state = self._state
+        return state.song_id if state is not None else ""
 
     def send_control(self, action: str) -> None:
         if action in CONTROL_JS:
