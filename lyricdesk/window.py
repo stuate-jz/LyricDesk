@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 
 from .config import PLAYER_WIDTH_MIN, THEMES, WIDTH_MAX, WIDTH_MIN, Settings, app_dir
 from .covers import CoverLoader
+from . import audio as audio_mod
 from . import heat as heat_lookup
 from .i18n import tr
 from .processes import music_app_running
@@ -66,7 +67,7 @@ from .update import (
     describe_source,
     is_newer,
 )
-from .win_util import set_native_topmost
+from .win_util import is_topmost, set_native_topmost
 from .lyrics import normalize
 from .render import (
     draw_sprite,
@@ -290,6 +291,9 @@ class LyricWindow(QWidget):
         self._drag_offset: QPoint | None = None
         self._press_global = QPoint()
         self._dragging = False
+        self._scrub_pos: float | None = None
+        self._scrub_active = False
+        self._scrub_valid = False
         self._anim_t0 = 0.0
         self._display_idx = -1
         self._lyrics_ref = None
@@ -375,6 +379,13 @@ class LyricWindow(QWidget):
         self._timer.timeout.connect(self._tick)
         self._timer.start()
 
+        # 开机自启时，其它随系统启动的置顶窗口可能晚于我们出现。
+        # 定时只读扩展样式，只有真的被盖下去才重设，不抢焦点。
+        self._topmost_timer = QTimer(self)
+        self._topmost_timer.setInterval(10_000)
+        self._topmost_timer.timeout.connect(self._assert_topmost)
+        self._topmost_timer.start()
+
         self._profile_paint_start = 0.0
         self._profile_start = time.monotonic()
         self._profile_stats = {
@@ -406,6 +417,9 @@ class LyricWindow(QWidget):
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         self._last_tick = time.monotonic()
+        self._assert_topmost()
+        QTimer.singleShot(3_000, self._assert_topmost)
+        QTimer.singleShot(10_000, self._assert_topmost)
         self._prefetch_visible_lyric_art(self.engine.snapshot())
         if not self._timer.isActive():
             self._timer.start()
@@ -414,7 +428,14 @@ class LyricWindow(QWidget):
     def hideEvent(self, event) -> None:  # noqa: N802
         # 收进托盘 / 被分离面板替换时彻底停掉动画轮询。
         self._timer.stop()
+        if self.role == "player":
+            audio_mod.MONITOR.update_client(id(self), self.settings.real_wave, False)
         super().hideEvent(event)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self.role == "player":
+            audio_mod.MONITOR.remove_client(id(self))
+        super().closeEvent(event)
 
     def _apply_window_flags(self) -> None:
         flags = (
@@ -438,6 +459,16 @@ class LyricWindow(QWidget):
         self._apply_window_flags()
         self._bg_key = None
         self._update_cursor()
+
+    def _assert_topmost(self) -> None:
+        if (
+            not self.isVisible()
+            or not self.settings.always_on_top
+            or self._suspend_topmost
+            or is_topmost(self)
+        ):
+            return
+        set_native_topmost(self, True)
 
     def set_topmost_suspended(self, suspended: bool) -> None:
         """把「置顶」临时挂起 / 恢复（设置窗口开关时由 set_all_topmost_suspended 调）。
@@ -540,12 +571,21 @@ class LyricWindow(QWidget):
                 if settings.show_wave
                 else 0.0
             )
-            self._album_title_h = fm_title.height() if settings.show_title else 0.0
+            control_size = min(
+                max(24.0, float(settings.font_size) * 0.82),
+                max(18.0, fm_title.height() * 1.6),
+            )
+            title_row_h = (
+                max(fm_title.height(), control_size)
+                if settings.show_controls
+                else fm_title.height()
+            )
+            self._album_title_h = title_row_h if settings.show_title else 0.0
             self._album_artist_h = fm_artist.height() if settings.show_title else 0.0
             self._album_bar_h = 6.0
             self._album_label_h = fm_time.height()
             standalone_controls_h = (
-                max(24.0, float(settings.font_size) * 0.82) * 0.62 + 8
+                control_size * 0.62 + 8
                 if settings.show_controls and not settings.show_title
                 else 0.0
             )
@@ -561,13 +601,21 @@ class LyricWindow(QWidget):
             if settings.show_progress:
                 text_h += self._album_bar_h + 8 + self._album_label_h
             self._album_text_h = text_h
-            art_h = self._disc_size if settings.show_cover else 0.0
+            art_h = (
+                self._disc_size
+                if settings.show_cover and settings.lyric_layout != "disc"
+                else 0.0
+            )
             content_h = PAD * 2 + max(art_h, text_h)
             if settings.player_width >= PLAYER_WIDTH_MIN:
                 window_w = float(settings.player_width)
             else:
                 # 自动：按封面 + 文字需要的宽度（保持原来的观感）
-                window_w = float(max(280, int(self._disc_size) + 220))
+                window_w = float(
+                    max(280, int(self._disc_size) + 220)
+                    if settings.lyric_layout != "disc"
+                    else 320
+                )
         elif mode == "lyrics":
             fm_list = self._metrics["list"]
             self._list_slot = fm_list.height() * 1.52 * settings.line_spacing
@@ -584,13 +632,30 @@ class LyricWindow(QWidget):
                 if want_info
                 else 0.0
             )
-            content_h = (
-                PAD * 2 + self._list_slot * self._list_count + self._head_block
-            )
-            self._overscan, self._overscan_v = self._tilt_overscan(
-                float(settings.width),
-                self._list_slot * self._list_count + self._head_block,
-            )
+            if settings.lyric_layout == "disc":
+                self._disc_size = max(
+                    44.0, min(420.0, float(settings.cover_size) * 1.30)
+                )
+                self._disc_line_width = max(
+                    140.0, min(620.0, float(settings.width))
+                )
+                bound_w, bound_h = self._disc_bounds(
+                    self._disc_size,
+                    self._disc_line_width,
+                    fm_list.height(),
+                )
+                window_w = max(float(WIDTH_MIN), bound_w + PAD * 2.0)
+                content_h = PAD * 2 + self._head_block + bound_h
+                self._overscan = 0
+                self._overscan_v = 0
+            else:
+                content_h = (
+                    PAD * 2 + self._list_slot * self._list_count + self._head_block
+                )
+                self._overscan, self._overscan_v = self._tilt_overscan(
+                    float(settings.width),
+                    self._list_slot * self._list_count + self._head_block,
+                )
         else:
             # 兜底：按歌词面板的尺寸
             fm_list = self._metrics["list"]
@@ -656,6 +721,8 @@ class LyricWindow(QWidget):
         mode = self._effective_mode()
         if mode == "album":
             return int(self.settings.width)
+        if self.settings.lyric_layout == "disc":
+            return int(self.settings.width)
         lyrics = getattr(self.engine, "lyrics", None)
         if lyrics is None or not getattr(lyrics, "lines", None):
             return int(self.settings.width)
@@ -691,6 +758,53 @@ class LyricWindow(QWidget):
         value = max(WIDTH_MIN, min(WIDTH_MAX, value))
         self._auto_width_cache = (key, value)
         return value
+
+    def _disc_bounds(
+        self, disc: float, line_width: float, line_height: float
+    ) -> tuple[float, float]:
+        """圆盘 + 扇形歌词在任意角度下的保守包围盒（相对窗口内容区）。"""
+        radius = disc / 2.0
+        start = radius + 26.0
+        center_radius = start + line_width / 2.0
+        spread = float(self.settings.disc_spread)
+        angle = float(self.settings.disc_angle)
+        side = "left" if self.settings.lyric_align == "left" else "right"
+        count = max(1, int(self.settings.lyric_lines))
+        normal_step = line_height * 1.08
+        half = (count - 1) / 2.0
+        max_x = radius
+        max_y = radius
+        for offset in (-spread / 2.0, spread / 2.0):
+            for normal_index in (-half, half):
+                theta = (
+                    180.0 - angle + offset
+                    if side == "left"
+                    else angle + offset
+                )
+                radians = math.radians(theta)
+                outward_x, outward_y = math.cos(radians), math.sin(radians)
+                reading_x, reading_y = (
+                    (-outward_x, -outward_y)
+                    if side == "left"
+                    else (outward_x, outward_y)
+                )
+                normal_x, normal_y = -outward_y, outward_x
+                if side == "left":
+                    normal_x, normal_y = -normal_x, -normal_y
+                normal_distance = normal_index * normal_step
+                x = outward_x * center_radius + normal_x * normal_distance
+                y = outward_y * center_radius + normal_y * normal_distance
+                max_x = max(
+                    max_x,
+                    abs(x) + abs(reading_x) * line_width / 2.0
+                    + abs(normal_x) * line_height / 2.0,
+                )
+                max_y = max(
+                    max_y,
+                    abs(y) + abs(reading_y) * line_width / 2.0
+                    + abs(normal_y) * line_height / 2.0,
+                )
+        return max_x * 2.0, max_y * 2.0
 
     def _effective_mode(self) -> str:
         """主窗永久承担歌词；独立面板只承担播放器。"""
@@ -807,6 +921,12 @@ class LyricWindow(QWidget):
             self._auto_lyrics_ref = lyrics
             self._apply_new_width(QRect(self.geometry()), self.settings.lyric_align)
         snapshot = self.engine.snapshot()
+        if self.role == "player":
+            audio_mod.MONITOR.update_client(
+                id(self),
+                bool(self.settings.real_wave and self.settings.show_wave),
+                bool(self.isVisible() and snapshot is not None and snapshot.is_playing),
+            )
         track = snapshot.track if snapshot is not None else None
         sig = (
             (track.title, track.artist, round(float(track.duration or 0)))
@@ -835,6 +955,13 @@ class LyricWindow(QWidget):
             else:
                 self.update()
 
+    def _display_position(self, snapshot) -> float:
+        if snapshot is None:
+            return 0.0
+        if self._scrub_pos is not None:
+            return float(self._scrub_pos)
+        return float(snapshot.position)
+
     def _needs_redraw(self, snapshot, animating: bool) -> bool:
         """只在画面真的会变化时请求重绘；静止时仍保留低频轮询。"""
         if not self.isVisible():
@@ -860,7 +987,7 @@ class LyricWindow(QWidget):
             return False
         if not getattr(snapshot, "position_known", True):
             return False
-        position = snapshot.position + self._offset_ms() / 1000.0
+        position = self._display_position(snapshot) + self._offset_ms() / 1000.0
         index = lyrics.index_at(position)
         if index < 0:
             # 前奏倒计时由 180ms 的低频轮询刷新就够，不必每帧全窗重画。
@@ -880,7 +1007,7 @@ class LyricWindow(QWidget):
             return
         if not getattr(snapshot, "position_known", True):
             return
-        position = snapshot.position + self._offset_ms() / 1000.0
+        position = self._display_position(snapshot) + self._offset_ms() / 1000.0
         index = lyrics.index_at(position)
         if index < 0:
             return
@@ -959,6 +1086,7 @@ class LyricWindow(QWidget):
         if (
             animating
             or self._effective_mode() != "lyrics"
+            or self.settings.lyric_layout == "disc"
             or snapshot is None
             or not snapshot.is_playing
             or not getattr(snapshot, "position_known", True)
@@ -967,7 +1095,7 @@ class LyricWindow(QWidget):
         lyrics = self.engine.lyrics
         if lyrics is None or not lyrics.lines or lyrics.source == "miss":
             return None
-        position = snapshot.position + self._offset_ms() / 1000.0
+        position = self._display_position(snapshot) + self._offset_ms() / 1000.0
         index = lyrics.index_at(position)
         if index < 0 or index != self._display_idx:
             return None
@@ -1505,6 +1633,8 @@ class LyricWindow(QWidget):
 
     def _list_transform(self, left, right, center_y):
         """把歌词文字放在一个向内倾斜的平面上（上下 / 左右可同时生效）。"""
+        if self.settings.lyric_layout == "disc":
+            return None
         tilt = float(self.settings.text_tilt)
         depth_v = float(self.settings.text_depth_v)
         depth_h = float(self.settings.text_depth_h)
@@ -1577,7 +1707,7 @@ class LyricWindow(QWidget):
         if index < 0 or current is None:
             # 还没到第一句歌词 = 还在前奏里。
             # 前奏通常有十几秒，干等着像卡住了，干脆把还要等多久写出来。
-            position = snapshot.position + self._offset_ms() / 1000.0
+            position = self._display_position(snapshot) + self._offset_ms() / 1000.0
             remaining = (lyrics.lines[0].time - position) if lyrics.lines else 0.0
             if remaining > 1.5:
                 placeholder(f"♪ 前奏 · {remaining:.0f} 秒后开始", 0.5)
@@ -1618,11 +1748,17 @@ class LyricWindow(QWidget):
                     shadow=True,
                     dpr=self.devicePixelRatioF(),
                 )
-                render_mod.draw_line_art(
+                self._draw_lyric_effect(
                     painter,
                     art,
+                    line,
+                    snapshot,
                     self._align_center_x(left, right, sprite.advance * scale),
                     baseline,
+                    colors,
+                    family,
+                    fitted,
+                    weight,
                     progress=self._lyric_progress(snapshot, line, next_line),
                     scale=scale,
                     opacity=0.6 + 0.4 * ease_out_cubic(min(1.0, anim * 1.6)),
@@ -1691,7 +1827,7 @@ class LyricWindow(QWidget):
 
         # 「显示封面」关掉时，整块封面/唱片都不画，文字用满整行宽度
         block_w = 0.0
-        if settings.show_cover:
+        if settings.show_cover and settings.lyric_layout != "disc":
             box = QRectF(left, cy - disc / 2.0, disc, disc)
             shape = (
                 settings.album_shape
@@ -1734,23 +1870,28 @@ class LyricWindow(QWidget):
 
         # ---- 控制按钮（在标题行右侧）----
         reserved = 0.0
-        control_size = max(24.0, float(settings.font_size) * 0.82)
+        title_row_h = self._album_title_h if settings.show_title else fm_title.height()
+        control_size = min(
+            max(24.0, float(settings.font_size) * 0.82),
+            max(18.0, title_row_h * 1.6),
+        )
         if settings.show_controls:
             controls_w = self._controls_width(control_size)
             reserved = controls_w + 14
             self._draw_controls(
                 painter, right - controls_w, y, control_size,
                 snapshot, colors,
-                row_height=self._album_title_h,
+                row_height=title_row_h,
             )
 
         if settings.show_title:
             title_text = snapshot.track.title if snapshot and snapshot.track else "未在播放"
+            title_y = y + max(0.0, (title_row_h - fm_title.height()) / 2.0)
             self._draw_elided(
-                painter, title_text, text_left, max(40.0, text_w - reserved), y,
+                painter, title_text, text_left, max(0.0, text_w - reserved), title_y,
                 fm_title, self._fonts["title"], QColor(colors["base"]), 1.0,
             )
-            y += self._album_title_h + self._album_title_h * 0.18
+            y += title_row_h + title_row_h * 0.18
 
             if snapshot is not None and snapshot.track is not None:
                 parts = [p for p in (snapshot.track.artist, snapshot.track.album) if p]
@@ -1783,7 +1924,7 @@ class LyricWindow(QWidget):
         gap = 3.0
         bar_w = max(2.0, (rect.width() - gap * (count - 1)) / count)
         playing = bool(snapshot is not None and snapshot.is_playing)
-        position = snapshot.position if snapshot is not None else 0.0
+        position = self._display_position(snapshot)
         # 暂停时波形定格，避免为了一个装饰动画持续整窗重绘。
         base = position * 2.4 if playing else position * 0.6
 
@@ -1795,18 +1936,32 @@ class LyricWindow(QWidget):
         painter.setBrush(gradient)
 
         center_y = rect.center().y()
-        for index in range(count):
-            phase = base + index * 0.55
-            value = (
-                math.sin(phase * 1.7) * 0.5
-                + math.sin(phase * 3.1 + 1.3) * 0.3
-                + math.sin(phase * 0.7 + 2.1) * 0.2
+        real_levels = (
+            audio_mod.MONITOR.levels(count)
+            if (
+                self.settings.real_wave
+                and audio_mod.IMPORT_AVAILABLE
+                and audio_mod.MONITOR.has_data
             )
-            level = 0.5 + 0.5 * value
-            shape = 0.42 + 0.58 * math.sin(math.pi * (index + 0.5) / count)
-            height = max(0.10, min(1.0, level * shape)) * rect.height()
-            if not playing:
-                height *= 0.32 + 0.10 * math.sin(now * 1.6 + index * 0.4)
+            else []
+        )
+        for index in range(count):
+            if real_levels:
+                level = max(0.0, min(1.0, real_levels[index]))
+                shape = 0.36 + 0.64 * math.sin(math.pi * (index + 0.5) / count)
+                height = max(0.06, level * shape) * rect.height()
+            else:
+                phase = base + index * 0.55
+                value = (
+                    math.sin(phase * 1.7) * 0.5
+                    + math.sin(phase * 3.1 + 1.3) * 0.3
+                    + math.sin(phase * 0.7 + 2.1) * 0.2
+                )
+                level = 0.5 + 0.5 * value
+                shape = 0.42 + 0.58 * math.sin(math.pi * (index + 0.5) / count)
+                height = max(0.10, min(1.0, level * shape)) * rect.height()
+                if not playing:
+                    height *= 0.32 + 0.10 * math.sin(now * 1.6 + index * 0.4)
             x = rect.left() + index * (bar_w + gap)
             painter.drawRoundedRect(
                 QRectF(x, center_y - height / 2.0, bar_w, height),
@@ -1814,13 +1969,16 @@ class LyricWindow(QWidget):
                 bar_w / 2.0,
             )
 
-    def _draw_vinyl(self, painter, box, cover, snapshot, colors) -> None:
+    def _draw_vinyl(
+        self, painter, box, cover, snapshot, colors, spin: bool = True
+    ) -> None:
         radius = box.width() / 2.0
         if radius <= 1:
             return
         painter.save()
         painter.translate(box.center())
-        painter.rotate(self._spin_angle)
+        if spin:
+            painter.rotate(self._spin_angle)
         painter.setPen(Qt.PenStyle.NoPen)
 
         disc = QRectF(-radius, -radius, radius * 2.0, radius * 2.0)
@@ -1879,7 +2037,9 @@ class LyricWindow(QWidget):
     # 方形封面 + 唱片的整体比例：封面边长 side，总宽 = side * BLOCK_RATIO
     SQUARE_BLOCK_RATIO = 1.78
 
-    def _draw_album_square(self, painter, left, cy, side, cover, snapshot, colors) -> None:
+    def _draw_album_square(
+        self, painter, left, cy, side, cover, snapshot, colors, spin: bool = True
+    ) -> None:
         cover_rect = QRectF(left, cy - side / 2.0, side, side)
         vinyl_d = side * 1.30
         vinyl_rect = QRectF(
@@ -1888,7 +2048,9 @@ class LyricWindow(QWidget):
             vinyl_d,
             vinyl_d,
         )
-        self._draw_vinyl(painter, vinyl_rect, cover, snapshot, colors)
+        self._draw_vinyl(
+            painter, vinyl_rect, cover, snapshot, colors, spin=spin
+        )
 
         radius = side * 0.08
         painter.setPen(Qt.PenStyle.NoPen)
@@ -1942,7 +2104,7 @@ class LyricWindow(QWidget):
         painter.drawRoundedRect(QRectF(left, top, width, bar_h), bar_h / 2, bar_h / 2)
 
         duration = snapshot.track.duration if snapshot is not None and snapshot.track else 0.0
-        position = snapshot.position if snapshot is not None else 0.0
+        position = self._display_position(snapshot)
         fraction = max(0.0, min(1.0, position / duration)) if duration > 0 else 0.0
 
         self._hit_bar = QRectF(left - 8, top - 12, width + 16, bar_h + 24)
@@ -1956,11 +2118,17 @@ class LyricWindow(QWidget):
             painter.drawRoundedRect(
                 QRectF(left, top, width * fraction, bar_h), bar_h / 2, bar_h / 2
             )
+        if fraction > 0.001 or self._scrub_active:
             knob = bar_h * 0.95 if self._hover == "bar" else bar_h * 0.72
             knob_x = left + width * fraction
             painter.setBrush(QColor(colors["c3"]))
             painter.drawEllipse(
                 QRectF(knob_x - knob, top + bar_h / 2 - knob, knob * 2, knob * 2)
+            )
+        if self._scrub_active:
+            knob_x = left + width * fraction
+            self._draw_scrub_bubble(
+                painter, knob_x, top, left, right, position, duration, colors
             )
 
         label_top = top + bar_h + 8
@@ -2087,11 +2255,17 @@ class LyricWindow(QWidget):
                 shadow=True,
                 dpr=self.devicePixelRatioF(),
             )
-            render_mod.draw_line_art(
+            self._draw_lyric_effect(
                 painter,
                 art,
+                current,
+                snapshot,
                 text_left + sprite.advance / 2.0,
                 baseline,
+                colors,
+                family,
+                fitted,
+                weight,
                 progress=self._lyric_progress(snapshot, current, next_line),
                 scale=scale,
                 opacity=0.55 + 0.45 * ease_out_cubic(min(1.0, anim * 1.5)),
@@ -2131,7 +2305,7 @@ class LyricWindow(QWidget):
             next_line = lyrics.lines[1] if len(lyrics.lines) > 1 else None
             return 1.0, 0, lyrics.lines[0], next_line
 
-        position = snapshot.position + self._offset_ms() / 1000.0
+        position = self._display_position(snapshot) + self._offset_ms() / 1000.0
         index = lyrics.index_at(position)
         if index != self._display_idx:
             self._display_idx = index
@@ -2143,6 +2317,126 @@ class LyricWindow(QWidget):
         next_line = lyrics.lines[index + 1] if index + 1 < len(lyrics.lines) else None
         return anim, index, current, next_line
 
+    def _draw_lyric_effect(
+        self,
+        painter,
+        art,
+        line,
+        snapshot,
+        center_x,
+        baseline,
+        colors,
+        family,
+        fitted,
+        weight,
+        *,
+        progress: float,
+        scale: float = 1.0,
+        opacity: float = 1.0,
+    ) -> None:
+        """绘制默认 K 歌填充，或逐字点亮 / 弹起 / 扫光。"""
+        effect = str(getattr(self.settings, "lyric_effect", "off") or "off")
+        words = list(getattr(line, "words", None) or [])
+        if effect == "off" or len(words) < 2:
+            render_mod.draw_line_art(
+                painter,
+                art,
+                center_x,
+                baseline,
+                progress=progress,
+                scale=scale,
+                opacity=opacity,
+            )
+            return
+
+        if effect == "sweep":
+            render_mod.draw_line_art(
+                painter,
+                art,
+                center_x,
+                baseline,
+                progress=progress,
+                scale=scale,
+                opacity=opacity,
+            )
+            width = max(1.0, render_mod.measure(line.text, family, fitted, weight))
+            glint_x = center_x + (progress - 0.5) * width * scale
+            radius = max(8.0, fitted * 0.62)
+            glow = QRadialGradient(QPointF(glint_x, baseline - fitted * 0.1), radius)
+            accent = QColor(colors["glow"])
+            glow.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 100))
+            glow.setColorAt(0.35, QColor(accent.red(), accent.green(), accent.blue(), 34))
+            glow.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
+            painter.save()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(glow)
+            painter.drawEllipse(
+                QRectF(
+                    glint_x - radius,
+                    baseline - fitted * 0.1 - radius,
+                    radius * 2,
+                    radius * 2,
+                )
+            )
+            painter.restore()
+            return
+
+        # 先画低亮底字，再逐字叠加高光。已唱过的字常亮，当前字按自身时间
+        # 推进；弹起模式只让当前字短暂上浮，不会整行一起抖。
+        render_mod.draw_line_art(
+            painter,
+            art,
+            center_x,
+            baseline,
+            progress=0.0,
+            scale=scale,
+            opacity=opacity * 0.28,
+        )
+        measured = [
+            max(0.01, render_mod.measure(word.text, family, fitted, weight))
+            for word in words
+        ]
+        total = sum(measured)
+        cursor = center_x - total * scale / 2.0
+        position = self._display_position(snapshot) + self._offset_ms() / 1000.0
+        for word, word_width in zip(words, measured):
+            word_center = cursor + word_width * scale / 2.0
+            cursor += word_width * scale
+            word_start = float(word.time)
+            word_end = max(word_start + 0.001, word_start + float(word.dur))
+            if position < word_start:
+                continue
+            word_progress = min(1.0, (position - word_start) / (word_end - word_start))
+            active = word_progress < 1.0
+            sprite = make_sprite(word.text, family, fitted, weight)
+            highlight = render_mod.make_line_art(
+                sprite,
+                QColor(255, 255, 255, 120),
+                (colors["c1"], colors["c2"], colors["c3"]),
+                QColor(colors["glow"]),
+                outline_width=max(2.0, fitted * 0.045),
+                outline_color=QColor(0, 0, 0, 145),
+                shadow=True,
+                dpr=self.devicePixelRatioF(),
+            )
+            word_scale = scale
+            rise = 0.0
+            if effect == "bounce" and active:
+                pulse = math.sin(math.pi * word_progress)
+                rise = -fitted * 0.14 * pulse
+                word_scale *= 1.0 + 0.08 * pulse
+            elif active:
+                word_scale *= 1.04
+            render_mod.draw_line_art(
+                painter,
+                highlight,
+                word_center,
+                baseline + rise,
+                progress=word_progress,
+                scale=word_scale,
+                opacity=opacity * (1.0 if active or word_progress >= 1.0 else 0.6),
+            )
+
     def _lyric_progress(self, snapshot, current, next_line=None) -> float:
         if (
             snapshot is None
@@ -2151,7 +2445,7 @@ class LyricWindow(QWidget):
             or not current.text
         ):
             return 0.0
-        position = snapshot.position + self._offset_ms() / 1000.0
+        position = self._display_position(snapshot) + self._offset_ms() / 1000.0
         start = float(current.time)
         end = float(current.end or 0.0)
         if end - start <= 0.3 and next_line is not None:
@@ -2225,6 +2519,26 @@ class LyricWindow(QWidget):
 
         if show_info:
             self._ensure_heat(snapshot)
+            self._draw_song_header(
+                painter,
+                snapshot,
+                left,
+                right,
+                card.top() + PAD,
+                colors,
+            )
+
+        if settings.lyric_layout == "disc":
+            self._paint_disc_lyrics(
+                painter,
+                card,
+                snapshot,
+                lyrics,
+                colors,
+                now,
+                block,
+            )
+            return
 
         self._draw_lyric_list(
             painter,
@@ -2239,6 +2553,220 @@ class LyricWindow(QWidget):
             header=header if show_info else None,
         )
 
+    def _paint_disc_lyrics(
+        self, painter, card, snapshot, lyrics, colors, now, header_block
+    ) -> None:
+        """圆心封面 + 放射状歌词；左右由歌词对齐决定，角度由参数控制。"""
+        settings = self.settings
+        center_x = card.center().x()
+        content_top = card.top() + PAD + header_block
+        content_bottom = card.bottom() - PAD
+        center_y = (content_top + content_bottom) / 2.0
+        disc = self._disc_size
+        radius = disc / 2.0
+        start_radius = radius + 26.0
+        cover_key = self._cover_key(lyrics)
+
+        if settings.show_cover:
+            shape = (
+                settings.album_shape
+                if settings.album_shape in ("disc", "square", "vinyl", "classic")
+                else "disc"
+            )
+            cover = self._cover_for(cover_key, int(max(40, disc * 0.62)))
+            box = QRectF(
+                center_x - disc / 2.0,
+                center_y - disc / 2.0,
+                disc,
+                disc,
+            )
+            if shape == "square":
+                side = disc * 0.68
+                total_w = side * self.SQUARE_BLOCK_RATIO
+                self._draw_album_square(
+                    painter,
+                    center_x - total_w / 2.0,
+                    center_y,
+                    side,
+                    cover,
+                    snapshot,
+                    colors,
+                    spin=False,
+                )
+            elif shape == "classic":
+                block = disc * 0.82
+                art_size = min(float(settings.cover_size), block / 1.41421)
+                art = self._cover_for(cover_key, int(max(40, art_size)))
+                box = QRectF(
+                    center_x - block / 2.0,
+                    center_y - block / 2.0,
+                    block,
+                    block,
+                )
+                self._draw_classic_art(painter, box, art, colors, cover_key)
+            elif shape == "vinyl":
+                self._draw_vinyl(
+                    painter, box, cover, snapshot, colors, spin=False
+                )
+                self._draw_tonearm(painter, box, colors)
+            else:
+                self._draw_vinyl(
+                    painter, box, cover, snapshot, colors, spin=False
+                )
+
+        side = "left" if settings.lyric_align == "left" else "right"
+        if snapshot is None:
+            self._draw_disc_placeholder(
+                painter, side, center_x, center_y, radius, "♪ 等待播放器播放…",
+                colors,
+            )
+            return
+        if lyrics is None:
+            self._draw_disc_placeholder(
+                painter, side, center_x, center_y, radius, "♪ 正在获取歌词…",
+                colors,
+            )
+            return
+        if not lyrics.lines:
+            self._draw_disc_placeholder(
+                painter, side, center_x, center_y, radius, "♪ 暂无歌词", colors
+            )
+            return
+        if not getattr(snapshot, "position_known", True):
+            self._draw_disc_placeholder(
+                painter, side, center_x, center_y, radius,
+                "已识别歌曲 · 客户端未提供播放进度", colors,
+            )
+            return
+
+        _anim, index, current, next_line = self._resolve_lyrics(snapshot, lyrics, now)
+        if index < 0 or current is None:
+            position = self._display_position(snapshot) + self._offset_ms() / 1000.0
+            remaining = lyrics.lines[0].time - position
+            message = (
+                f"♪ 前奏 · {remaining:.0f} 秒后开始"
+                if remaining > 1.5
+                else "♪ 前奏…"
+            )
+            self._draw_disc_placeholder(
+                painter, side, center_x, center_y, radius, message, colors
+            )
+            return
+
+        count = max(1, int(self._list_count))
+        step = float(settings.disc_spread) / max(1, count - 1)
+        normal_step = self._metrics["list"].height() * 1.08
+        visual = self._visual_index(now)
+        base_angle = (
+            180.0 - float(settings.disc_angle)
+            if side == "left"
+            else float(settings.disc_angle)
+        )
+        current_progress = self._lyric_progress(snapshot, current, next_line)
+        max_width = max(80.0, float(self._disc_line_width))
+        first = index - count // 2
+        for line_index in range(first, first + count):
+            if line_index < 0 or line_index >= len(lyrics.lines):
+                continue
+            line = lyrics.lines[line_index]
+            if not line.text:
+                continue
+            selected = line_index == index
+            family, size, weight = self._fonts[
+                "list_cur" if selected else "list"
+            ]
+            fitted = fit_size(
+                line.text,
+                family,
+                weight,
+                size,
+                max_width,
+                min_size=10,
+            )
+            sprite = make_sprite(line.text, family, fitted, weight)
+            line_width = min(max_width, sprite.advance)
+            theta = base_angle + (line_index - visual) * step
+            push = 6.0 if selected else 0.0
+            center_radius = start_radius + line_width / 2.0 + push
+            opacity = 1.0 if selected else max(
+                0.18, 0.58 - abs(line_index - index) * 0.13
+            )
+
+            painter.save()
+            radians = math.radians(theta)
+            normal_offset = (line_index - visual) * normal_step
+            normal_x = -math.sin(radians)
+            normal_y = math.cos(radians)
+            if side == "left":
+                normal_x, normal_y = -normal_x, -normal_y
+            painter.translate(
+                center_x + normal_x * normal_offset,
+                center_y + normal_y * normal_offset,
+            )
+            if side == "left":
+                painter.rotate(theta + 180.0)
+                local_x = -center_radius
+            else:
+                painter.rotate(theta)
+                local_x = center_radius
+
+            if selected:
+                art = render_mod.make_line_art(
+                    sprite,
+                    QColor(255, 255, 255, 120),
+                    (colors["c1"], colors["c2"], colors["c3"]),
+                    QColor(colors["glow"]),
+                    outline_width=max(2.0, fitted * 0.05),
+                    outline_color=QColor(0, 0, 0, 150),
+                    shadow=True,
+                    dpr=self.devicePixelRatioF(),
+                )
+                self._draw_lyric_effect(
+                    painter,
+                    art,
+                    line,
+                    snapshot,
+                    local_x,
+                    0.0,
+                    colors,
+                    family,
+                    fitted,
+                    weight,
+                    progress=current_progress,
+                    opacity=opacity,
+                )
+            else:
+                art = render_mod.make_line_art(
+                    sprite,
+                    QColor(colors["base"]),
+                    shadow=False,
+                    dpr=self.devicePixelRatioF(),
+                )
+                render_mod.draw_line_art(
+                    painter, art, local_x, 0.0, opacity=opacity
+                )
+            painter.restore()
+
+    def _draw_disc_placeholder(
+        self, painter, side, center_x, center_y, radius, message, colors
+    ) -> None:
+        family, size, weight = self._fonts["list"]
+        max_width = max(100.0, float(getattr(self, "_disc_line_width", 280.0)))
+        fitted = fit_size(message, family, weight, size, max_width, min_size=10)
+        sprite = make_sprite(message, family, fitted, weight)
+        distance = radius + 42.0 + sprite.advance / 2.0
+        x = center_x - distance if side == "left" else center_x + distance
+        draw_sprite(
+            painter,
+            sprite,
+            x,
+            center_y + (sprite.ascent - sprite.descent) / 2.0,
+            QColor(colors["dim"]),
+            opacity=0.72,
+            outline_width=max(2.0, fitted * 0.05),
+            outline_color=QColor(0, 0, 0, 120),
+        )
+
     def _draw_song_header(self, painter, snapshot, left, right, top, colors) -> None:
         """纯歌词面板顶上的：歌名 + 作者（+ 右上角的播放热度）。"""
         track = snapshot.track
@@ -2246,6 +2774,8 @@ class LyricWindow(QWidget):
         fm_sub = self._metrics["head_sub"]
         full = max(60.0, right - left)
         align = self.settings.lyric_align
+        if self.settings.lyric_layout == "disc" and align == "center":
+            align = "right"
 
         # 歌名和热度当成一整行，按「歌词排版」的设置在窗口里对齐
         heat_text = ""
@@ -2431,7 +2961,7 @@ class LyricWindow(QWidget):
         painter.drawRoundedRect(QRectF(left, bar_top, width, bar_h), bar_h / 2, bar_h / 2)
 
         duration = snapshot.track.duration if snapshot is not None and snapshot.track else 0.0
-        position = snapshot.position if snapshot is not None else 0.0
+        position = self._display_position(snapshot)
         fraction = max(0.0, min(1.0, position / duration)) if duration > 0 else 0.0
 
         self._hit_bar = QRectF(left - 8, bar_top - 12, width + 16, bar_h + 26)
@@ -2445,11 +2975,17 @@ class LyricWindow(QWidget):
             painter.drawRoundedRect(
                 QRectF(left, bar_top, width * fraction, bar_h), bar_h / 2, bar_h / 2
             )
+        if fraction > 0.001 or self._scrub_active:
             knob_r = bar_h * 0.95 if self._hover == "bar" else bar_h * 0.72
             knob_x = left + width * fraction
             painter.setBrush(QColor(colors["c3"]))
             painter.drawEllipse(
                 QRectF(knob_x - knob_r, bar_top + bar_h / 2 - knob_r, knob_r * 2, knob_r * 2)
+            )
+        if self._scrub_active:
+            knob_x = left + width * fraction
+            self._draw_scrub_bubble(
+                painter, knob_x, bar_top, left, right, position, duration, colors
             )
 
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -2465,6 +3001,23 @@ class LyricWindow(QWidget):
             int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
             _format_time(duration),
         )
+
+    def _draw_scrub_bubble(
+        self, painter, knob_x, bar_top, left, right, position, duration, colors
+    ) -> None:
+        text = f"{_format_time(position)} / {_format_time(duration)}"
+        fm = self._metrics["time"]
+        width = max(96.0, fm.horizontalAdvance(text) + 20.0)
+        x = min(max(left, knob_x - width / 2.0), max(left, right - width))
+        rect = QRectF(x, bar_top - fm.height() - 16.0, width, fm.height() + 8.0)
+        painter.save()
+        painter.setPen(QPen(QColor(255, 255, 255, 34), 1.0))
+        painter.setBrush(QColor(12, 16, 26, 225))
+        painter.drawRoundedRect(rect, 8.0, 8.0)
+        painter.setPen(QColor(colors["base"]))
+        painter.setFont(_qt_font(*self._fonts["time"]))
+        painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), text)
+        painter.restore()
 
     def _draw_controls(
         self, painter, x, y, size, snapshot, colors, row_height: float | None = None
@@ -2756,7 +3309,6 @@ class LyricWindow(QWidget):
             snapshot = self.engine.snapshot()
             if (
                 snapshot is not None
-                and getattr(snapshot, "can_seek", True)
                 and self._hit_bar.contains(pos)
             ):
                 return "bar"
@@ -2781,7 +3333,13 @@ class LyricWindow(QWidget):
             event.accept()
             return
         if target == "bar":
-            self._seek_to(pos.x())
+            snapshot = self.engine.snapshot()
+            if snapshot is not None and snapshot.track is not None:
+                self._scrub_active = True
+                self._scrub_valid = True
+                self._hover = "bar"
+                self._scrub_pos = self._position_at_x(pos.x(), snapshot)
+                self.update()
             event.accept()
             return
         if not self.settings.locked:
@@ -2793,6 +3351,16 @@ class LyricWindow(QWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._scrub_active:
+            snapshot = self.engine.snapshot()
+            if snapshot is not None and snapshot.track is not None:
+                self._scrub_valid = self._hit_bar.contains(event.position())
+                self._scrub_pos = self._position_at_x(
+                    event.position().x(), snapshot
+                )
+                self.update()
+            event.accept()
+            return
         if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
             current = event.globalPosition().toPoint()
             if not self._dragging:
@@ -2812,6 +3380,24 @@ class LyricWindow(QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._scrub_active:
+            snapshot = self.engine.snapshot()
+            position = self._scrub_pos
+            valid = self._scrub_valid
+            self._scrub_active = False
+            self._scrub_valid = False
+            self._scrub_pos = None
+            if valid and position is not None and snapshot is not None:
+                if getattr(snapshot, "can_seek", True):
+                    self._send(f"seek:{max(0.0, float(position))}")
+                else:
+                    self.requestNotify.emit(
+                        "无法跳转",
+                        "当前播放器没有提供可用的播放进度或跳转能力。",
+                    )
+            self.update()
+            event.accept()
+            return
         if self._drag_offset is not None:
             self._drag_offset = None
             self._dragging = False
@@ -2835,6 +3421,30 @@ class LyricWindow(QWidget):
             self._hover = ""
             self._update_cursor()
 
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        if (
+            self._effective_mode() == "album"
+            and self.settings.show_progress
+            and self._hit_bar.contains(event.position())
+        ):
+            snapshot = self.engine.snapshot()
+            if snapshot is not None and snapshot.track is not None:
+                if getattr(snapshot, "can_seek", True):
+                    direction = 1.0 if event.angleDelta().y() > 0 else -1.0
+                    duration = max(0.0, float(snapshot.track.duration or 0.0))
+                    target = self._display_position(snapshot) + direction * 5.0
+                    if duration > 0:
+                        target = min(duration, target)
+                    self._send(f"seek:{max(0.0, target)}")
+                else:
+                    self.requestNotify.emit(
+                        "无法跳转",
+                        "当前播放器没有提供可用的播放进度或跳转能力。",
+                    )
+                event.accept()
+                return
+        super().wheelEvent(event)
+
     def contextMenuEvent(self, event) -> None:  # noqa: N802
         try:
             menu = self.build_menu()
@@ -2855,14 +3465,15 @@ class LyricWindow(QWidget):
         if sender is not None:
             sender(command)
 
-    def _seek_to(self, x: float) -> None:
-        snapshot = self.engine.snapshot()
-        if snapshot is None or snapshot.track is None or snapshot.track.duration <= 0:
-            return
+    def _position_at_x(self, x: float, snapshot) -> float:
+        duration = max(
+            0.0,
+            float(snapshot.track.duration if snapshot.track is not None else 0.0),
+        )
         bar_left = self._hit_bar.left() + 8
         bar_width = max(1.0, self._hit_bar.width() - 16)
         fraction = max(0.0, min(1.0, (x - bar_left) / bar_width))
-        self._send(f"seek:{fraction * snapshot.track.duration}")
+        return fraction * duration
 
     # ==================================================================
     # 菜单
@@ -2997,6 +3608,27 @@ class LyricWindow(QWidget):
                 action.triggered.connect(lambda _c, a=app_id: self._set_player(a))
 
         if settings.show_lyrics:
+            layout_action = menu.addAction("圆盘歌词")
+            layout_action.setCheckable(True)
+            layout_action.setChecked(settings.lyric_layout == "disc")
+            layout_action.triggered.connect(
+                lambda: self._set_lyric_layout(
+                    "list" if settings.lyric_layout == "disc" else "disc"
+                )
+            )
+            effect_menu = menu.addMenu("歌词动效")
+            for label, value in (
+                ("关闭", "off"),
+                ("逐字点亮", "word"),
+                ("逐字弹起", "bounce"),
+                ("扫光", "sweep"),
+            ):
+                action = effect_menu.addAction(label)
+                action.setCheckable(True)
+                action.setChecked(settings.lyric_effect == value)
+                action.triggered.connect(
+                    lambda _checked=False, v=value: self._set_lyric_effect(v)
+                )
             lines_menu = menu.addMenu("歌词列表行数")
             for value in (1, 3, 5, 7, 9, 11):
                 action = lines_menu.addAction(f"{value} 行")
@@ -3180,6 +3812,25 @@ class LyricWindow(QWidget):
     def _set_album_shape(self, value: str) -> None:
         self.settings.album_shape = value
         self._commit(resize=True)
+
+    def _set_lyric_layout(self, value: str) -> None:
+        self.settings.lyric_layout = "disc" if value == "disc" else "list"
+        self._prefetched_line_key = None
+        self._commit(resize=True)
+
+    def _set_disc_angle(self, value: float) -> None:
+        self.settings.disc_angle = float(value)
+        self._commit(resize=True)
+
+    def _set_disc_spread(self, value: float) -> None:
+        self.settings.disc_spread = float(value)
+        self._commit(resize=True)
+
+    def _set_lyric_effect(self, value: str) -> None:
+        self.settings.lyric_effect = (
+            value if value in ("off", "word", "bounce", "sweep") else "off"
+        )
+        self._commit()
 
     def _set_player(self, app_id: str) -> None:
         setter = getattr(self.engine, "set_preferred_player", None)
@@ -3494,6 +4145,10 @@ class LyricWindow(QWidget):
     def _toggle_wave(self) -> None:
         self.settings.show_wave = not self.settings.show_wave
         self._commit(resize=True)
+
+    def _toggle_real_wave(self) -> None:
+        self.settings.real_wave = not self.settings.real_wave
+        self._commit()
 
     def _toggle_prev(self) -> None:
         self.settings.show_prev = not self.settings.show_prev

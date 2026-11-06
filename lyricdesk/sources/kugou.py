@@ -6,6 +6,7 @@ import base64
 import difflib
 import json
 import re
+import time
 import unicodedata
 import zlib
 
@@ -33,6 +34,8 @@ XOR_KEY = bytes(
 LINE_RE = re.compile(r"^\[(\d+),(\d+)\](.*)$")
 WORD_RE = re.compile(r"<(\d+),(\d+),\d+>")
 LANG_RE = re.compile(r"\[language:([^\]]+)\]")
+FAIL_RETRY_SECONDS = 600.0
+_FAILED_UNTIL: dict[str, float] = {}
 
 
 def _normalize(text: str) -> str:
@@ -239,6 +242,9 @@ def fetch_doc(
     track_key: str = "",
 ) -> LyricDoc | None:
     """按严格歌名/歌手/时长匹配酷狗 KRC。失败静默返回 None。"""
+    failure_key = f"{_normalize(title)}|{_normalize(artist)}|{int(duration or 0)}"
+    if time.monotonic() < _FAILED_UNTIL.get(failure_key, 0.0):
+        return None
     try:
         catalog = _catalog(title, artist, duration)
         if catalog is None:
@@ -254,4 +260,5 @@ def fetch_doc(
         text = _download(candidate)
         return parse_krc(text or "", track_key=track_key)
     except Exception:
+        _FAILED_UNTIL[failure_key] = time.monotonic() + FAIL_RETRY_SECONDS
         return None

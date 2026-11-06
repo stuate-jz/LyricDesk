@@ -112,6 +112,8 @@ class Settings:
     show_player: bool = False
     show_title: bool = True
     show_wave: bool = True
+    # WASAPI 回环真实音波；默认关闭，避免无音频设备时启动采集线程
+    real_wave: bool = False
     font_family: str = "Microsoft YaHei UI"
     font_size: int = 38
     opacity: float = 0.90
@@ -121,6 +123,14 @@ class Settings:
     show_progress: bool = True
     show_controls: bool = True
     lyric_lines: int = 5
+    # 歌词排版：list 常规列表 / disc 以圆心封面为中心的放射排版
+    lyric_layout: str = "list"
+    # 圆盘角度：0 = 正右（左对齐时为正左），负数向上、正数向下
+    disc_angle: float = 0.0
+    # 扇形张角：按可见行数均分
+    disc_spread: float = 30.0
+    # 歌词动效：off / word / bounce / sweep
+    lyric_effect: str = "off"
     album_shape: str = "disc"
     # 1.6.8 起合并进 album_shape，字段仅为老配置反序列化保留
     depth_album_style: str = "classic"
@@ -357,6 +367,12 @@ class Settings:
         self.line_spacing = max(0.50, min(3.00, float(self.line_spacing)))
         if self.lyric_align not in ("left", "center", "right"):
             self.lyric_align = "right"
+        if self.lyric_layout not in ("list", "disc"):
+            self.lyric_layout = "list"
+        self.disc_angle = max(-90.0, min(90.0, float(self.disc_angle)))
+        self.disc_spread = max(20.0, min(120.0, float(self.disc_spread)))
+        if self.lyric_effect not in ("off", "word", "bounce", "sweep"):
+            self.lyric_effect = "off"
         if self.raise_style not in ("frost", "ambient", "outline"):
             self.raise_style = "frost"
         if self.album_shape not in ("disc", "square", "vinyl", "classic"):

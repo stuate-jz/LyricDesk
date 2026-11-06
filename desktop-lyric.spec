@@ -19,6 +19,7 @@ hiddenimports = [
     "winrt.windows.storage.streams",
 ]
 hiddenimports += collect_submodules("winrt")
+hiddenimports += collect_submodules("pyaudiowpatch")
 
 # requests 需要 certifi 的根证书
 datas = collect_data_files("certifi")

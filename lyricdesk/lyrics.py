@@ -101,6 +101,8 @@ class Lyrics:
     cover_url: str = ""
     provider: str = ""
     track_key: str = ""
+    match_score: float = 0.0
+    track_duration: float = 0.0
     doc: LyricDoc | None = None
 
     def index_at(self, position: float) -> int:
@@ -642,6 +644,8 @@ def load_cached(
         album=data.get("album", ""),
         provider=data.get("provider", provider),
         track_key=data.get("track_key", track_key),
+        match_score=float(data.get("match_score", 0.0) or 0.0),
+        track_duration=float(data.get("track_duration", 0.0) or 0.0),
     )
     if lines:
         result.to_doc()
@@ -672,6 +676,8 @@ def save_cached(
                 "album": lyrics.album,
                 "provider": provider,
                 "track_key": track_key,
+                "match_score": float(lyrics.match_score),
+                "track_duration": float(lyrics.track_duration),
                 "saved": time.time(),
                 "lines": [
                     [
@@ -769,6 +775,8 @@ def _try_candidate(
         albummid=extra.get("albummid", ""),
         album=extra.get("album", ""),
         provider=key,
+        match_score=score,
+        track_duration=float(candidate.get("duration") or duration or 0.0),
     )
     lyrics.to_doc()
     # 匹配分和覆盖度各占一半：宁可要一个名字稍微差点但歌词完整的
@@ -887,6 +895,7 @@ def fetch_enhanced(
     prefer: str = "",
     track_key: str = "",
     song_id: str = "",
+    partial=None,
 ) -> Lyrics:
     """优先用播放器自己的曲库 ID/逐字源，再回落到严格跨库匹配。
 
@@ -905,6 +914,8 @@ def fetch_enhanced(
             if doc is not None and validate(doc, duration)[0]:
                 result = Lyrics.from_doc(doc, cleaned_title, cleaned_artist)
                 result.track_key = track_key or song_id
+                result.match_score = 1.0
+                result.track_duration = float(duration or 0.0)
                 return result
         except Exception:  # noqa: BLE001
             pass
@@ -920,6 +931,8 @@ def fetch_enhanced(
             if doc is not None and validate(doc, duration)[0]:
                 result = Lyrics.from_doc(doc, cleaned_title, cleaned_artist)
                 result.track_key = track_key
+                result.match_score = 1.0
+                result.track_duration = float(duration or 0.0)
                 return result
         except Exception:  # noqa: BLE001
             pass
@@ -928,4 +941,28 @@ def fetch_enhanced(
     if result.lines:
         result.track_key = track_key
         result.to_doc()
+        if partial is not None:
+            try:
+                partial(result)
+            except Exception:  # noqa: BLE001
+                pass
+    if result.lines and not any(line.words for line in result.lines):
+        # 行级歌词已经可用时，再尝试一次严格三重匹配的 KRC 作为逐字增强；
+        # 接口失败或版本不符就保留原来的行级结果。
+        try:
+            actual_duration = float(duration or result.track_duration or 0.0)
+            doc = kugou_source.fetch_doc(
+                cleaned_title,
+                cleaned_artist,
+                actual_duration,
+                track_key or f"{cleaned_title}|{cleaned_artist}",
+            )
+            if doc is not None and validate(doc, actual_duration)[0]:
+                enhanced = Lyrics.from_doc(doc, cleaned_title, cleaned_artist)
+                enhanced.track_key = track_key
+                enhanced.match_score = max(float(result.match_score), 0.9)
+                enhanced.track_duration = actual_duration
+                return enhanced
+        except Exception:  # noqa: BLE001
+            pass
     return result

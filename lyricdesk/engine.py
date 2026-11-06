@@ -301,6 +301,13 @@ class Engine(QObject):
             token = self._token
 
         def worker() -> None:
+            def deliver_partial(result: Lyrics) -> None:
+                save_cached(title, artist, result, prefer, track_key)
+                with self._lock:
+                    if token != self._token:
+                        return
+                self._deliver(result)
+
             try:
                 result = fetch_enhanced(
                     title,
@@ -309,6 +316,7 @@ class Engine(QObject):
                     prefer=prefer,
                     track_key=track_key,
                     song_id=song_id,
+                    partial=deliver_partial,
                 )
             except Exception:
                 result = Lyrics(lines=[], source="", title=title, artist=artist)
@@ -333,8 +341,8 @@ class Engine(QObject):
         track = snapshot.track
         from .lyrics import _cache_path, _track_cache_key, provider_for_player
 
+        provider = provider_for_player(snapshot.source)
         try:
-            provider = provider_for_player(snapshot.source)
             path = _cache_path(
                 _track_cache_key(track.title, track.artist, provider, track.key)
             )

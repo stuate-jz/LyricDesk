@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__
+from . import audio as audio_mod
 from .autostart import is_enabled
 from .config import (
     LETTER_SPACING_MAX,
@@ -794,6 +795,13 @@ class SettingsDialog(QDialog):
         self._always_on_top = False
         self._style_mode = ""
         self._style_theme = ""
+        self._align_combo = None
+        self._disc_angle_row = None
+        self._disc_spread_row = None
+        self._line_spacing_row = None
+        self._text3d_rows: list[QWidget] = []
+        self._effect_hint = None
+        self._real_wave_box = None
 
         # 语言：设置里存 "" 表示跟随系统
         set_language(getattr(window.settings, "language", ""))
@@ -1340,10 +1348,10 @@ class SettingsDialog(QDialog):
                 (key, text, lambda _c=False, k=item.key: self.window._download_font(k)),
             )
         self._section(layout, "lyrics.section.layout", "排版")
-        self._combo(
+        self._align_combo = self._combo(
             layout,
             "lyrics.align",
-            "歌词排版",
+            "歌词对齐",
             [
                 ("lyrics.align.left", "向左对齐", "left"),
                 ("lyrics.align.center", "居中", "center"),
@@ -1351,6 +1359,67 @@ class SettingsDialog(QDialog):
             ],
             lambda: settings.lyric_align,
             self.window._set_align,
+        )
+        self._combo(
+            layout,
+            "lyrics.layout",
+            "布局形态",
+            [
+                ("lyrics.layout.list", "歌词列表", "list"),
+                ("lyrics.layout.disc", "圆盘歌词", "disc"),
+            ],
+            lambda: settings.lyric_layout,
+            self.window._set_lyric_layout,
+        )
+        self._disc_angle_row = self._slider(
+            layout,
+            "lyrics.disc.angle",
+            "圆盘角度",
+            getter=lambda: settings.disc_angle,
+            apply=self.window._set_disc_angle,
+            minimum=-90.0,
+            maximum=90.0,
+            step=1.0,
+            default=self._defaults.disc_angle,
+            unit="°",
+            signed=True,
+            coalesce_ms=60,
+        )
+        self._disc_spread_row = self._slider(
+            layout,
+            "lyrics.disc.spread",
+            "圆盘张角",
+            getter=lambda: settings.disc_spread,
+            apply=self.window._set_disc_spread,
+            minimum=20.0,
+            maximum=120.0,
+            step=1.0,
+            default=self._defaults.disc_spread,
+            unit="°",
+            coalesce_ms=60,
+        )
+        self._hint(
+            layout,
+            "lyrics.disc.hint",
+            "圆盘下「歌词对齐」表示歌词在封面的左侧或右侧；居中会临时按右侧显示。",
+        )
+        self._combo(
+            layout,
+            "lyrics.effect",
+            "歌词动效",
+            [
+                ("lyrics.effect.off", "关闭", "off"),
+                ("lyrics.effect.word", "逐字点亮", "word"),
+                ("lyrics.effect.bounce", "逐字弹起", "bounce"),
+                ("lyrics.effect.sweep", "扫光", "sweep"),
+            ],
+            lambda: settings.lyric_effect,
+            self.window._set_lyric_effect,
+        )
+        self._effect_hint = self._hint(
+            layout,
+            "lyrics.effect.hint",
+            "逐字动效只在歌词源提供字级时间时生效；没有逐字数据会自动按关闭处理。",
         )
         info_box = self._check(
             layout,
@@ -1390,7 +1459,7 @@ class SettingsDialog(QDialog):
             minimum=1, maximum=15, step=1, default=self._defaults.lyric_lines,
             unit_key="unit.lines", unit="行", coalesce_ms=60,
         )
-        self._slider(
+        self._line_spacing_row = self._slider(
             layout,
             "general.line_spacing",
             "歌词行间距",
@@ -1401,7 +1470,7 @@ class SettingsDialog(QDialog):
         )
 
         self._section(layout, "general.section.text3d", "文字立体（倾斜 / 旋转）")
-        self._slider(
+        tilt_v_row = self._slider(
             layout,
             "general.tilt_v",
             "上下倾斜",
@@ -1410,7 +1479,7 @@ class SettingsDialog(QDialog):
             minimum=-0.80, maximum=0.80, step=0.01, default=0.0,
             decimals=2, signed=True,
         )
-        self._slider(
+        tilt_h_row = self._slider(
             layout,
             "general.tilt_h",
             "左右倾斜",
@@ -1419,7 +1488,7 @@ class SettingsDialog(QDialog):
             minimum=-0.80, maximum=0.80, step=0.01, default=0.32,
             decimals=2, signed=True,
         )
-        self._slider(
+        tilt_rotate_row = self._slider(
             layout,
             "general.tilt_rotate",
             "整体旋转",
@@ -1428,6 +1497,7 @@ class SettingsDialog(QDialog):
             minimum=-90.0, maximum=90.0, step=1.0, default=0.0,
             unit="°", signed=True,
         )
+        self._text3d_rows = [tilt_v_row, tilt_h_row, tilt_rotate_row]
         self._section(layout, "lyrics.section.sync", "歌词同步（本歌偏移）")
         self._offset_label = QLabel()
         self._offset_label.setWordWrap(True)
@@ -1501,6 +1571,49 @@ class SettingsDialog(QDialog):
         if bool(self.window.settings.show_song_info) != bool(value):
             self.window._toggle_song_info()
 
+    def _sync_layout_controls(self) -> None:
+        settings = self.window.settings
+        disc = settings.lyric_layout == "disc"
+        for row in (
+            self._disc_angle_row,
+            self._disc_spread_row,
+            self._text3d_rows[0] if self._text3d_rows else None,
+            self._text3d_rows[1] if len(self._text3d_rows) > 1 else None,
+            self._text3d_rows[2] if len(self._text3d_rows) > 2 else None,
+        ):
+            if row is not None:
+                row.setEnabled(disc)
+        if self._line_spacing_row is not None:
+            self._line_spacing_row.setEnabled(not disc)
+        if self._align_combo is not None:
+            try:
+                index = self._align_combo.findData("center")
+                item = self._align_combo.model().item(index)
+                if item is not None:
+                    item.setEnabled(not disc)
+            except (AttributeError, RuntimeError):
+                pass
+        if self._effect_hint is not None:
+            lyrics = getattr(self.window.engine, "lyrics", None)
+            has_words = bool(
+                lyrics is not None
+                and any(getattr(line, "words", None) for line in lyrics.lines)
+            )
+            if settings.lyric_effect != "off" and not has_words:
+                self._effect_hint.setText(
+                    tr(
+                        "lyrics.effect.no_words",
+                        "当前歌词没有逐字时间，已自动按「关闭」显示；换到支持逐字的歌曲后会生效。",
+                    )
+                )
+            else:
+                self._effect_hint.setText(
+                    tr(
+                        "lyrics.effect.hint",
+                        "逐字动效只在歌词源提供字级时间时生效；没有逐字数据会自动按关闭处理。",
+                    )
+                )
+
     # ==================================================================
     # 分类 3：播放
     # ==================================================================
@@ -1540,6 +1653,28 @@ class SettingsDialog(QDialog):
                 apply=lambda value, f=field, m=flipper: self._flip(f, m, value),
             )
             self._bind_show(box, "player")
+        audio_ok, audio_detail = audio_mod.available()
+        self._real_wave_box = self._check(
+            layout,
+            "player.real_wave",
+            "真实音波（WASAPI 回环）",
+            getter=lambda: settings.real_wave,
+            apply=self._set_real_wave,
+            hint_key="player.real_wave.hint",
+            hint=(
+                f"已找到输出设备：{audio_detail}"
+                if audio_ok
+                else f"不可用：{audio_detail}"
+            ),
+        )
+        self._real_wave_box.setEnabled(audio_ok)
+        self._bind_show(self._real_wave_box, "player")
+        self._hint(
+            layout,
+            "player.cover.hint",
+            "普通列表下「显示封面」控制播放器面板；圆盘歌词下它只控制圆心封面，"
+            "播放器面板不再重复画封面。",
+        )
 
         self._section(layout, "player.section.size", "尺寸")
         cover_row = self._slider(
@@ -1572,6 +1707,10 @@ class SettingsDialog(QDialog):
         """勾选类字段：值不一样才去调宿主的翻转方法，避免来回打架。"""
         if bool(getattr(self.window.settings, field)) != bool(value):
             getattr(self.window, method)()
+
+    def _set_real_wave(self, value: bool) -> None:
+        if bool(self.window.settings.real_wave) != bool(value):
+            self.window._toggle_real_wave()
 
     def _on_player_picked(self, _index: int) -> None:
         if self._silent:
@@ -1956,6 +2095,7 @@ class SettingsDialog(QDialog):
             widget.setEnabled(
                 bool(settings.show_lyrics if kind == "lyrics" else settings.show_player)
             )
+        self._sync_layout_controls()
 
         self._click_warn.setText(tr("window.click_warn", CLICK_WARN_DEFAULT))
         clicking = bool(settings.click_through)
