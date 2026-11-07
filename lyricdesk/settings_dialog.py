@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import sys
 
@@ -1414,7 +1415,7 @@ class SettingsDialog(QDialog):
             unit="°",
             coalesce_ms=60,
         )
-        self._hint(
+        self._disc_hint = self._hint(
             layout,
             "lyrics.disc.hint",
             "圆盘下「歌词对齐」表示歌词在封面的左侧或右侧；居中会临时按右侧显示。",
@@ -1605,6 +1606,38 @@ class SettingsDialog(QDialog):
                     item.setEnabled(not disc)
             except (AttributeError, RuntimeError):
                 pass
+        if self._disc_hint is not None:
+            if disc:
+                try:
+                    _step, effective, _scale = self.window._disc_render_layout()
+                    required = effective
+                    shown = math.ceil(required - 0.05)
+                    if shown > int(self.window.settings.disc_spread):
+                        self._disc_hint.setText(
+                            tr(
+                                "lyrics.disc.required",
+                                "当前 {count} 行至少需要 {required}°，已自动按 {required}° 显示。",
+                            ).format(
+                                count=int(self.window.settings.lyric_lines),
+                                required=shown,
+                            )
+                        )
+                    else:
+                        self._disc_hint.setText(
+                            tr(
+                                "lyrics.disc.hint",
+                                "圆盘下「歌词对齐」表示歌词在封面的左侧或右侧；居中会临时按右侧显示。",
+                            )
+                        )
+                except (AttributeError, RuntimeError):
+                    pass
+            else:
+                self._disc_hint.setText(
+                    tr(
+                        "lyrics.disc.hint",
+                        "圆盘下「歌词对齐」表示歌词在封面的左侧或右侧；居中会临时按右侧显示。",
+                    )
+                )
         if self._effect_hint is not None:
             lyrics = getattr(self.window.engine, "lyrics", None)
             has_words = bool(

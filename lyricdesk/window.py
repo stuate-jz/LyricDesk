@@ -340,6 +340,7 @@ class LyricWindow(QWidget):
         self._list_count = 0
         self._main_h = 0.0
         self._disc_size = 44.0
+        self._disc_center_offset = QPointF()
         self._wave_h = 18.0
         self._album_title_h = 0.0
         self._album_artist_h = 0.0
@@ -643,7 +644,7 @@ class LyricWindow(QWidget):
                 bound_w, bound_h = self._disc_bounds(
                     self._disc_size,
                     self._disc_line_width,
-                    fm_list.height(),
+                    max(fm_list.height(), self._metrics["list_cur"].height()),
                 )
                 window_w = max(float(WIDTH_MIN), bound_w)
                 content_h = PAD * 2 + bound_h
@@ -763,49 +764,91 @@ class LyricWindow(QWidget):
     def _disc_bounds(
         self, disc: float, line_width: float, line_height: float
     ) -> tuple[float, float]:
-        """圆盘 + 扇形歌词在任意角度下的保守包围盒（相对窗口内容区）。"""
+        """圆盘 + 扇形歌词的精确包围盒与圆心偏移。"""
         radius = disc / 2.0
         start = radius + 26.0
         center_radius = start + line_width / 2.0
-        spread = float(self.settings.disc_spread)
         angle = float(self.settings.disc_angle)
         side = "left" if self.settings.lyric_align == "left" else "right"
         count = max(1, int(self.settings.lyric_lines))
-        normal_step = line_height * 1.08
+        step, _spread, _scale = self._disc_layout_metrics(
+            count, line_width, line_height
+        )
         half = (count - 1) / 2.0
-        max_x = radius
-        max_y = radius
-        for offset in (-spread / 2.0, spread / 2.0):
-            for normal_index in (-half, half):
-                theta = (
-                    180.0 - angle + offset
-                    if side == "left"
-                    else angle + offset
+        min_x, max_x = -radius, radius
+        min_y, max_y = -radius, radius
+        base_angle = 180.0 - angle if side == "left" else angle
+        for line_index in range(count):
+            theta = base_angle + (line_index - half) * step
+            radians = math.radians(theta)
+            radial_x, radial_y = math.cos(radians), math.sin(radians)
+            tangent_x, tangent_y = -radial_y, radial_x
+            x = radial_x * center_radius
+            y = radial_y * center_radius
+            extent_x = (
+                abs(radial_x) * line_width / 2.0
+                + abs(tangent_x) * line_height / 2.0
+            )
+            extent_y = (
+                abs(radial_y) * line_width / 2.0
+                + abs(tangent_y) * line_height / 2.0
+            )
+            min_x = min(min_x, x - extent_x)
+            max_x = max(max_x, x + extent_x)
+            min_y = min(min_y, y - extent_y)
+            max_y = max(max_y, y + extent_y)
+        self._disc_center_offset = QPointF(
+            -(min_x + max_x) / 2.0, -(min_y + max_y) / 2.0
+        )
+        return max_x - min_x, max_y - min_y
+
+    def _disc_layout_metrics(
+        self, count: int, line_width: float, line_height: float
+    ) -> tuple[float, float, float]:
+        """返回（单行角步长、实际张角、极端排版下的字号缩放）。"""
+        count = max(1, int(count))
+        requested = max(20.0, min(120.0, float(self.settings.disc_spread)))
+        start_radius = self._disc_size / 2.0 + 26.0
+        # 所有行都在同一内端半径收口；按行中心半径算会让短句和长句在
+        # 靠近封面处相撞。这里按内端的最坏角宽留 4% 包围盒余量。
+        half_angle = math.asin(
+            min(0.78, max(1.0, line_height * 0.52) / max(1.0, start_radius))
+        )
+        min_step = math.degrees(half_angle * 2.0)
+        font_scale = 1.0
+        raw_spread = min_step * max(1, count - 1)
+        if raw_spread > requested and count > 1:
+            target_step = requested / (count - 1)
+            target_height = (
+                start_radius * math.sin(math.radians(target_step) / 2.0) / 0.52
+            )
+            font_scale = max(0.55, min(1.0, target_height / line_height))
+            scaled_half_angle = math.asin(
+                min(
+                    0.78,
+                    max(1.0, line_height * font_scale * 0.52)
+                    / max(1.0, start_radius),
                 )
-                radians = math.radians(theta)
-                outward_x, outward_y = math.cos(radians), math.sin(radians)
-                reading_x, reading_y = (
-                    (-outward_x, -outward_y)
-                    if side == "left"
-                    else (outward_x, outward_y)
-                )
-                normal_x, normal_y = -outward_y, outward_x
-                if side == "left":
-                    normal_x, normal_y = -normal_x, -normal_y
-                normal_distance = normal_index * normal_step
-                x = outward_x * center_radius + normal_x * normal_distance
-                y = outward_y * center_radius + normal_y * normal_distance
-                max_x = max(
-                    max_x,
-                    abs(x) + abs(reading_x) * line_width / 2.0
-                    + abs(normal_x) * line_height / 2.0,
-                )
-                max_y = max(
-                    max_y,
-                    abs(y) + abs(reading_y) * line_width / 2.0
-                    + abs(normal_y) * line_height / 2.0,
-                )
-        return max_x * 2.0, max_y * 2.0
+            )
+            min_step = math.degrees(scaled_half_angle * 2.0)
+            raw_spread = min_step * (count - 1)
+        effective = max(requested, raw_spread)
+        step = effective / max(1, count - 1)
+        return step, effective, font_scale
+
+    def _disc_render_layout(self) -> tuple[float, float, float]:
+        """当前设置下圆盘实际使用的角步长、张角与字号缩放。"""
+        count = max(1, int(self.settings.lyric_lines))
+        line_width = float(
+            getattr(self, "_disc_line_width", min(620.0, self.settings.width))
+        )
+        fm_list = self._metrics.get("list")
+        fm_current = self._metrics.get("list_cur") or fm_list
+        line_height = max(
+            fm_current.height() if fm_current is not None else 40.0,
+            fm_list.height() if fm_list is not None else 40.0,
+        )
+        return self._disc_layout_metrics(count, line_width, line_height)
 
     def _disc_center_on_screen(self) -> QPointF | None:
         """返回当前圆盘圆心在屏幕上的位置；非歌词窗口时返回 None。"""
@@ -824,10 +867,16 @@ class LyricWindow(QWidget):
             if self.settings.lyric_layout != "disc" and self._want_song_info()
             else 0.0
         )
-        center = QPointF(
-            card.center().x(),
-            (card.top() + PAD + header_block + card.bottom() - PAD) / 2.0,
-        )
+        if self.settings.lyric_layout == "disc":
+            center = QPointF(
+                card.center().x() + self._disc_center_offset.x(),
+                card.center().y() + self._disc_center_offset.y(),
+            )
+        else:
+            center = QPointF(
+                card.center().x(),
+                (card.top() + PAD + header_block + card.bottom() - PAD) / 2.0,
+            )
         return QPointF(self.x() + center.x(), self.y() + center.y())
 
     def _apply_disc_change(self, before: QPointF | None = None) -> None:
@@ -2607,10 +2656,8 @@ class LyricWindow(QWidget):
     ) -> None:
         """圆心封面 + 放射状歌词；左右由歌词对齐决定，角度由参数控制。"""
         settings = self.settings
-        center_x = card.center().x()
-        content_top = card.top() + PAD + header_block
-        content_bottom = card.bottom() - PAD
-        center_y = (content_top + content_bottom) / 2.0
+        center_x = card.center().x() + self._disc_center_offset.x()
+        center_y = card.center().y() + self._disc_center_offset.y()
         disc = self._disc_size
         radius = disc / 2.0
         start_radius = radius + 26.0
@@ -2703,8 +2750,7 @@ class LyricWindow(QWidget):
             return
 
         count = max(1, int(self._list_count))
-        step = float(settings.disc_spread) / max(1, count - 1)
-        normal_step = self._metrics["list"].height() * 1.08
+        step, _effective_spread, font_scale = self._disc_render_layout()
         visual = self._visual_index(now)
         base_angle = (
             180.0 - float(settings.disc_angle)
@@ -2724,13 +2770,14 @@ class LyricWindow(QWidget):
             family, size, weight = self._fonts[
                 "list_cur" if selected else "list"
             ]
+            render_size = max(8, int(round(size * font_scale)))
             fitted = fit_size(
                 line.text,
                 family,
                 weight,
-                size,
+                render_size,
                 max_width,
-                min_size=10,
+                min_size=max(8, int(round(10 * font_scale))),
             )
             sprite = make_sprite(line.text, family, fitted, weight)
             line_width = min(max_width, sprite.advance)
@@ -2743,15 +2790,7 @@ class LyricWindow(QWidget):
 
             painter.save()
             radians = math.radians(theta)
-            normal_offset = (line_index - visual) * normal_step
-            normal_x = -math.sin(radians)
-            normal_y = math.cos(radians)
-            if side == "left":
-                normal_x, normal_y = -normal_x, -normal_y
-            painter.translate(
-                center_x + normal_x * normal_offset,
-                center_y + normal_y * normal_offset,
-            )
+            painter.translate(center_x, center_y)
             if side == "left":
                 painter.rotate(theta + 180.0)
                 local_x = -center_radius
