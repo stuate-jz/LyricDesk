@@ -134,6 +134,8 @@ class Settings:
     lyric_glow: float = 1.0
     lyric_scatter: bool = False
     lyric_chaos: float = 0.35
+    chorus_boost: bool = True
+    beat_boost: bool = False
     album_shape: str = "disc"
     # 1.6.8 起合并进 album_shape，字段仅为老配置反序列化保留
     depth_album_style: str = "classic"
@@ -406,6 +408,8 @@ class Settings:
         self.lyric_glow = max(0.0, min(2.0, float(self.lyric_glow)))
         self.lyric_chaos = max(0.0, min(1.0, float(self.lyric_chaos)))
         self.lyric_scatter = bool(self.lyric_scatter)
+        self.chorus_boost = bool(self.chorus_boost)
+        self.beat_boost = bool(self.beat_boost)
         if self.raise_style not in ("frost", "ambient", "outline"):
             self.raise_style = "frost"
         if self.album_shape not in ("disc", "square", "vinyl", "classic"):

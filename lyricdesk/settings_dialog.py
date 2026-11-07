@@ -818,10 +818,13 @@ class SettingsDialog(QDialog):
         self._glow_row = None
         self._scatter_box = None
         self._chaos_row = None
+        self._chorus_box = None
+        self._beat_box = None
         self._line_spacing_row = None
         self._text3d_rows: list[QWidget] = []
         self._effect_hint = None
         self._real_wave_box = None
+        self._loopback_available = bool(audio_mod.available()[0])
 
         # 语言：设置里存 "" 表示跟随系统
         set_language(getattr(window.settings, "language", ""))
@@ -1475,6 +1478,22 @@ class SettingsDialog(QDialog):
             "lyrics.effect.hint",
             "逐字动效只在歌词源提供字级时间时生效；没有逐字数据会自动按关闭处理。",
         )
+        self._chorus_box = self._check(
+            layout,
+            "lyrics.chorus",
+            "副歌加强",
+            getter=lambda: bool(settings.chorus_boost),
+            apply=lambda value: self.window._set_chorus(bool(value)),
+        )
+        self._beat_box = self._check(
+            layout,
+            "lyrics.beat",
+            "跟着节拍闪",
+            getter=lambda: bool(settings.beat_boost),
+            apply=lambda value: self.window._set_beat(bool(value)),
+            hint_key="lyrics.beat.hint",
+            hint="需要先打开「真实音波」；根据低频起音给光晕加一点脉动，不改变歌词时间。",
+        )
         info_box = self._check(
             layout,
             "lyrics.show_info",
@@ -1637,6 +1656,12 @@ class SettingsDialog(QDialog):
             self._scatter_box.setEnabled(not disc)
         if self._chaos_row is not None:
             self._chaos_row.setEnabled(not disc and bool(settings.lyric_scatter))
+        if self._chorus_box is not None:
+            self._chorus_box.setEnabled(settings.lyric_effect != "off")
+        if self._beat_box is not None:
+            self._beat_box.setEnabled(
+                bool(settings.real_wave) and self._loopback_available
+            )
         if self._line_spacing_row is not None:
             self._line_spacing_row.setEnabled(not disc)
         if self._align_combo is not None:

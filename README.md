@@ -96,6 +96,8 @@ pythonw run.pyw
 | 光晕强度 | 0% ~ 200% | 0 完全关闭；近光与远光共用同一强度 |
 | 随机错落 | 开关 | 默认关闭；只作用于列表，圆盘下禁用 |
 | 错落强度 | 0% ~ 100% | 开关打开后可调；按歌词时间确定性变化 |
+| 副歌加强 | 开关 | 默认开启；识别重复歌词并增强光晕、弹簧和余辉 |
+| 跟着节拍闪 | 开关 | 默认关闭；需要同时开启真实音波与回环设备 |
 | 真实音波 | WASAPI 回环 | 读取系统输出，随鼓点起伏；关闭后采集线程完全退出 |
 
 双击任意一项的标题就能把它恢复成默认值；每条滑动条右边的数值框可以直接输入精确数字。
@@ -233,7 +235,7 @@ python -m PyInstaller desktop-lyric.spec --noconfirm
 想要启动更快的文件夹版（不用每次解压），先设置环境变量 `LD_ONEFILE=0`
 再执行同一条命令，输出在 `dist\LyricDesk\`。
 
-想直接分发给朋友：发送 `dist\LyricDesk-Setup-v1.7.5.exe` 即可，
+想直接分发给朋友：发送 `dist\LyricDesk-Setup-v1.7.6.exe` 即可，
 对方双击就能安装，后续版本也可以从程序里检查更新。
 
 ## 做成双击安装的安装包（推荐：Inno Setup）
@@ -245,7 +247,7 @@ python -m PyInstaller desktop-lyric.spec --noconfirm
 "%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe" installer.iss
 ```
 
-输出 `dist\LyricDesk-Setup-v1.7.5.exe`，双击即可安装：
+输出 `dist\LyricDesk-Setup-v1.7.6.exe`，双击即可安装：
 
 - 标准安装向导：欢迎 → **许可协议**（需同意才放行）→ 更新说明 → 选择位置 →
   附加任务 → 安装中 → 完成

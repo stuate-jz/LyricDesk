@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
 from .config import PLAYER_WIDTH_MIN, THEMES, WIDTH_MAX, WIDTH_MIN, Settings, app_dir
 from .covers import CoverLoader
 from . import audio as audio_mod
+from .beat import BeatTracker
 from . import heat as heat_lookup
 from .i18n import tr
 from .processes import music_app_running
@@ -451,6 +452,7 @@ class LyricWindow(QWidget):
         self._spring_last_position = -1.0
         self._chorus_key = None
         self._chorus_map: dict[int, float] = {}
+        self._beat = BeatTracker()
 
         self._hit_prev = QRectF()
         self._hit_play = QRectF()
@@ -2616,8 +2618,31 @@ class LyricWindow(QWidget):
                 rotation=rotation,
             )
             return
-        chorus = self._chorus_for_line(line)
+        chorus = (
+            self._chorus_for_line(line)
+            if self.settings.chorus_boost
+            else 0.0
+        )
         glow_scale = min(2.0, glow_scale * (1.0 + 0.60 * chorus))
+        if (
+            self.settings.beat_boost
+            and self.settings.real_wave
+            and audio_mod.MONITOR.has_data
+        ):
+            beat = self._beat.update(
+                audio_mod.MONITOR.low_energy(),
+                time.monotonic(),
+            )
+            if beat.pulse > 0.25:
+                glow_scale = min(
+                    2.0,
+                    glow_scale
+                    * (
+                        1.0
+                        + 0.12 * beat.pulse
+                        + 0.10 * beat.pulse * chorus
+                    ),
+                )
         budget = render_budget(float(line.end or 0.0) - float(line.time or 0.0))
         position = self._display_position(snapshot) + self._offset_ms() / 1000.0
         if budget.reveal == "instant":
@@ -4196,6 +4221,14 @@ class LyricWindow(QWidget):
         self.settings.lyric_scatter = bool(value)
         self._commit(resize=True)
         self.settingsChanged.emit()
+
+    def _set_chorus(self, value: bool) -> None:
+        self.settings.chorus_boost = bool(value)
+        self._commit()
+
+    def _set_beat(self, value: bool) -> None:
+        self.settings.beat_boost = bool(value)
+        self._commit()
 
     def _set_player(self, app_id: str) -> None:
         setter = getattr(self.engine, "set_preferred_player", None)

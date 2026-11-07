@@ -113,6 +113,15 @@ def main() -> int:
     off1 = render(window)
     check("effect=off 时副歌乘子不改变画面", raw(off0) == raw(off1))
 
+    settings.lyric_effect = "word"
+    window._commit()
+    window._chorus_map[id(line)] = 0.0
+    render(window)
+    word0 = render(window)
+    window._chorus_map[id(line)] = 1.0
+    word1 = render(window)
+    check("word 模式下副歌权重会增强光晕与余辉", raw(word0) != raw(word1))
+
     window.close()
     window.deleteLater()
     app.processEvents()

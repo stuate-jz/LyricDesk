@@ -22,6 +22,7 @@ from lyricdesk import config
 config.SETTINGS_PATH = Path(tempfile.mkdtemp(prefix="lyricdesk-v174-perf-")) / "settings.json"
 
 from lyricdesk.config import Settings
+from lyricdesk import audio as audio_mod
 from lyricdesk.lyricdoc import LyricWord
 from lyricdesk.lyrics import LyricLine, Lyrics
 from lyricdesk.smtc import Snapshot, Track
@@ -119,6 +120,39 @@ def main() -> int:
                 f"{target:.2f} -> {disabled:.2f}ms ({delta:+.1%}); "
                 f"glow=1 {enabled:.2f}ms"
             )
+
+    old_has_data = audio_mod.MONITOR._has_data
+    audio_mod.MONITOR._has_data = True
+    try:
+        settings.lyric_glow = 1.0
+        settings.lyric_effect = "word"
+        settings.chorus_boost = True
+        settings.beat_boost = True
+        settings.real_wave = True
+        for layout in ("list", "disc"):
+            settings.lyric_layout = layout
+            window._commit(resize=True)
+            layer = QPixmap(window.size())
+            for _ in range(6):
+                window.render(layer)
+            samples = []
+            for _ in range(50):
+                start = time.perf_counter()
+                window.render(layer)
+                samples.append((time.perf_counter() - start) * 1000.0)
+            average = statistics.mean(samples)
+            maximum = max(samples)
+            limit_avg = 8.0 if layout == "disc" else 5.0
+            paints = 1000.0 / max(0.001, average)
+            paint_limit = 20.0 if layout == "disc" else 28.0
+            ok = average <= limit_avg and maximum <= 10.0 and paints >= paint_limit
+            failures += 0 if ok else 1
+            print(
+                f"  {'OK  ' if ok else 'FAIL'} 副歌+拍点 {layout}/word "
+                f"avg={average:.2f}ms max={maximum:.2f}ms paints≈{paints:.0f}/s"
+            )
+    finally:
+        audio_mod.MONITOR._has_data = old_has_data
     print("全部通过" if not failures else f"{failures} 项失败")
     return 0 if not failures else 1
 

@@ -8,7 +8,7 @@
 
 **悬浮在桌面上的歌词组件** —— 不挑播放器，带歌词跳动动画，不改你的壁纸
 
-**当前版本 v1.7.5**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
+**当前版本 v1.7.6**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 镜像仓库：[GitHub](https://github.com/stuate-jz/LyricDesk)　·　发布页：[stuate-jz.github.io/LyricDesk](https://stuate-jz.github.io/LyricDesk/)
 
@@ -18,7 +18,7 @@
 
 ## ⬇ 下载
 
-### ⚙ [**LyricDesk-Setup-v1.7.5.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
+### ⚙ [**LyricDesk-Setup-v1.7.6.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 双击一路「下一步」装好即可（不需要管理员权限，不需要改任何系统设置）。
 
@@ -34,12 +34,13 @@
 
 ## 这个版本更新了什么
 
-- 随机错落拆成独立开关与强度滑块，默认关闭
-- 错落开启时按行槽长高并夹紧位移与旋转，100% 强度不再压字
-- 开关关闭与强度 0% 的画面和自动宽度完全一致
-- 圆盘继续保持规整布局并禁用错落
-- 入场模糊细分为 10px、5px、2.5px、原图四档
-- 入场泛光改为平滑渐亮
+- 新增纯文本副歌识别，重复句和四字前缀变体自动加强
+- 副歌增强光晕、弹簧幅度与扫光余辉，默认开启
+- 复用回环线程保存 48 帧低频能量，不新增线程
+- 新增中位数/MAD 拍点检测、120ms 不应期与 BPM 置信度
+- 新增跟着节拍闪设置，仅在真实音波有数据时计算
+- 正式发版新增安装包构建与版本元信息校验
+- 修复圆盘逐字节回归的时间依赖
 - 性能基线改为同机同批实测对照
 
 ![圆盘歌词](screenshots/disc.png)

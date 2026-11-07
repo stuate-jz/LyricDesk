@@ -1,4 +1,4 @@
-<#
+﻿<#
     正式发版打包脚本：生成 dist\LyricDesk.exe 与 Inno Setup 安装包。
 
     用法（项目根目录）：
@@ -35,7 +35,7 @@ $version = $versionMatch.Groups[1].Value
 $installerText = Get-Content -Raw -LiteralPath $installerFile
 $appVersionMatch = [regex]::Match($installerText, '#define\s+AppVersion\s+"([^"]+)"')
 $outputMatch = [regex]::Match($installerText, 'OutputBaseFilename\s*=\s*([^\r\n]+)')
-$jsonVersion = (Get-Content -Raw -LiteralPath $updateFile | ConvertFrom-Json).version
+$jsonVersion = (Get-Content -Raw -Encoding UTF8 -LiteralPath $updateFile | ConvertFrom-Json).version
 $expectedOutput = "LyricDesk-Setup-v$version"
 
 if (-not $appVersionMatch.Success -or $appVersionMatch.Groups[1].Value -ne $version) {
@@ -82,7 +82,7 @@ if (-not (Test-Path -LiteralPath $setup)) { throw "没有找到安装包：$setu
 $item = Get-Item -LiteralPath $setup
 $bytes = $item.Length
 $mib = [math]::Round($bytes / 1MB, 2)
-$declaredMb = [double](Get-Content -Raw -LiteralPath $updateFile | ConvertFrom-Json).size_mb
+$declaredMb = [double](Get-Content -Raw -Encoding UTF8 -LiteralPath $updateFile | ConvertFrom-Json).size_mb
 if ([math]::Abs($mib - $declaredMb) -gt 2) {
     throw "update.json size_mb=$declaredMb，实测 $mib MiB，相差超过 2"
 }
