@@ -466,24 +466,31 @@ def draw_line_art(
         painter.rotate(rotation)
     if scale != 1.0:
         painter.scale(scale, scale)
-    if glow_scale > 0.0 and entry_blur < 2.0 and art.highlight is not None:
+    glow_alpha = glow_scale * max(0.0, 1.0 - entry_blur / 10.0)
+    if glow_alpha > 0.01 and art.highlight is not None:
         near, far = glow_layers(art.highlight, art.font_size)
         painter.save()
-        painter.setOpacity(painter.opacity() * min(1.0, glow_scale * 0.28))
+        painter.setOpacity(painter.opacity() * min(1.0, glow_alpha * 0.28))
         painter.drawPixmap(
             QPointF(-art.offset_x, -art.baseline_y), far
         )
-        painter.setOpacity(painter.opacity() * min(1.0, glow_scale * 0.52))
+        painter.setOpacity(painter.opacity() * min(1.0, glow_alpha * 0.52))
         painter.drawPixmap(
             QPointF(-art.offset_x, -art.baseline_y), near
         )
         painter.restore()
     base_layer = art.base
     if entry_blur > 0.0:
-        base_layer = entry_blur_layer(
-            art.base,
-            10.0 if entry_blur >= 7.0 else 5.0,
-        )
+        if entry_blur >= 7.5:
+            radius = 10.0
+        elif entry_blur >= 3.5:
+            radius = 5.0
+        elif entry_blur >= 0.8:
+            radius = 2.5
+        else:
+            radius = 0.0
+        if radius > 0.0:
+            base_layer = entry_blur_layer(art.base, radius)
     painter.drawPixmap(QPointF(-art.offset_x, -art.baseline_y), base_layer)
 
     progress = max(0.0, min(1.0, float(progress)))

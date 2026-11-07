@@ -134,6 +134,7 @@ def main() -> int:
     # chaos 确定性。
     settings.lyric_effect = "off"
     settings.lyric_layout = "list"
+    settings.lyric_scatter = True
     settings.lyric_chaos = 0.0
     width0 = window._auto_width()
     settings.lyric_chaos = 0.5
