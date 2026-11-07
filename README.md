@@ -226,7 +226,7 @@ python -m PyInstaller desktop-lyric.spec --noconfirm
 想要启动更快的文件夹版（不用每次解压），先设置环境变量 `LD_ONEFILE=0`
 再执行同一条命令，输出在 `dist\LyricDesk\`。
 
-想直接分发给朋友：发送 `dist\LyricDesk-Setup-v1.7.1.exe` 即可，
+想直接分发给朋友：发送 `dist\LyricDesk-Setup-v1.7.2.exe` 即可，
 对方双击就能安装，后续版本也可以从程序里检查更新。
 
 ## 做成双击安装的安装包（推荐：Inno Setup）
@@ -238,7 +238,7 @@ python -m PyInstaller desktop-lyric.spec --noconfirm
 "%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe" installer.iss
 ```
 
-输出 `dist\LyricDesk-Setup-v1.7.1.exe`，双击即可安装：
+输出 `dist\LyricDesk-Setup-v1.7.2.exe`，双击即可安装：
 
 - 标准安装向导：欢迎 → **许可协议**（需同意才放行）→ 更新说明 → 选择位置 →
   附加任务 → 安装中 → 完成
