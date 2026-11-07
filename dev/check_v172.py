@@ -62,6 +62,8 @@ def main() -> int:
     settings.lyric_lines = 7
     engine = load_fake_engine()()
     window = LyricWindow(settings, engine)
+    out = ROOT / "dev" / "v172_shots"
+    out.mkdir(parents=True, exist_ok=True)
     window.show()
     app.processEvents()
 
@@ -122,11 +124,17 @@ def main() -> int:
     widget.ensurePolished()
     window._menu_update_widget = widget
     window._set_menu_update_state("downloading", done=42, total=100)
-    check("圆环下载状态可绘制", not widget.grab().isNull())
+    download_shot = widget.grab()
+    download_shot.save(str(out / "update-ring-downloading.png"))
+    check("圆环下载状态可绘制", not download_shot.isNull())
     window._set_menu_update_state("installing", done=100, total=100)
-    check("圆环安装状态可绘制", not widget.grab().isNull())
+    install_shot = widget.grab()
+    install_shot.save(str(out / "update-ring-installing.png"))
+    check("圆环安装状态可绘制", not install_shot.isNull())
     window._set_menu_update_state("failed", done=100, total=100)
-    check("圆环失败状态可绘制", not widget.grab().isNull())
+    failed_shot = widget.grab()
+    failed_shot.save(str(out / "update-ring-failed.png"))
+    check("圆环失败状态可绘制", not failed_shot.isNull())
 
     clicked = []
     original = window._start_menu_update

@@ -786,6 +786,11 @@ def _select_document(
     )
     winner = ranked[0][1]
     if len(ranked) < 2:
+        _lyric_log(
+            f"入选 provider={winner.provider or '-'} source={winner.source or '-'} "
+            f"lines={len(winner.lines)} duration={winner.track_duration:.1f} "
+            f"score={ranked[0][0]:.3f} reason=唯一通过时长与覆盖度校验"
+        )
         return winner
     runner_up = ranked[1][1]
     similarity = _text_similarity(winner, runner_up)

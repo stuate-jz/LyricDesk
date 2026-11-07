@@ -26,6 +26,7 @@ from PySide6.QtGui import (
     QLinearGradient,
     QPainter,
     QPainterPath,
+    QPalette,
     QPen,
     QPixmap,
     QPolygonF,
@@ -304,6 +305,7 @@ class UpdateRingActionWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         colors = self.owner.settings.colors
+        text_color = self.palette().color(QPalette.ColorRole.WindowText)
         state = getattr(self.owner, "_menu_update_state", "idle")
         done = float(getattr(self.owner, "_menu_update_done", 0))
         total = float(getattr(self.owner, "_menu_update_total", 0))
@@ -315,7 +317,9 @@ class UpdateRingActionWidget(QWidget):
 
         accent = QColor("#ef4444" if state == "failed" else colors["glow"])
         ring = QRectF(5.0, self.height() / 2.0 - 8.0, 16.0, 16.0)
-        pen = QPen(QColor(colors["dim"]))
+        ring_dim = QColor(text_color)
+        ring_dim.setAlpha(115)
+        pen = QPen(ring_dim)
         pen.setWidthF(2.0)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -340,7 +344,7 @@ class UpdateRingActionWidget(QWidget):
             text = "更新失败（点击重试）"
         else:
             text = f"发现新版本 v{version}（点击更新）"
-        painter.setPen(QColor(colors["base"]))
+        painter.setPen(text_color)
         font = QFont(self.owner.settings.font_family)
         font.setPixelSize(12)
         font.setWeight(QFont.Weight.Medium)
