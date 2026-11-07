@@ -421,6 +421,7 @@ class LyricWindow(QWidget):
         self._scrub_valid = False
         self._anim_t0 = 0.0
         self._display_idx = -1
+        self._intro_last_second = -1
         self._lyrics_ref = None
         self._bg_key: tuple | None = None
         self._bg_pixmap: QPixmap | None = None
@@ -1182,6 +1183,9 @@ class LyricWindow(QWidget):
             # 分批到达的歌词常常在几百毫秒内连续换几次文档；合并成一次重排。
             self._pending_width_timer.start()
         snapshot = self.engine.snapshot()
+        intro_second = self._intro_second(snapshot)
+        intro_changed = intro_second != self._intro_last_second
+        self._intro_last_second = intro_second
         if self.role == "player":
             audio_mod.MONITOR.update_client(
                 id(self),
@@ -1215,6 +1219,9 @@ class LyricWindow(QWidget):
                 self.update(rect)
             else:
                 self.update()
+        elif intro_changed:
+            # 前奏数字只按整秒变化，没必要把窗口拉回 30fps。
+            self.update()
 
     def _display_position(self, snapshot) -> float:
         if snapshot is None:
@@ -1222,6 +1229,21 @@ class LyricWindow(QWidget):
         if self._scrub_pos is not None:
             return float(self._scrub_pos)
         return float(snapshot.position)
+
+    def _intro_second(self, snapshot) -> int:
+        """前奏还剩几秒；不在前奏返回 -1。"""
+        lyrics = self.engine.lyrics
+        if (
+            lyrics is None
+            or not lyrics.lines
+            or snapshot is None
+            or not snapshot.is_playing
+            or not getattr(snapshot, "position_known", True)
+        ):
+            return -1
+        position = self._display_position(snapshot) + self._offset_ms() / 1000.0
+        remaining = float(lyrics.lines[0].time) - position
+        return int(remaining) if remaining > 0 else -1
 
     def _needs_redraw(self, snapshot, animating: bool) -> bool:
         """只在画面真的会变化时请求重绘；静止时仍保留低频轮询。"""
@@ -1251,7 +1273,7 @@ class LyricWindow(QWidget):
         position = self._display_position(snapshot) + self._offset_ms() / 1000.0
         index = lyrics.index_at(position)
         if index < 0:
-            # 前奏倒计时由 180ms 的低频轮询刷新就够，不必每帧全窗重画。
+            # 前奏倒计时由 _intro_second 按秒单独触发，不进入连续重绘。
             return False
         if index != self._display_idx:
             return True

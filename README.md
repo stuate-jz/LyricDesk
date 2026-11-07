@@ -84,6 +84,7 @@ pythonw run.pyw
 | 左右倾斜 | −0.80 ~ +0.80 | 正值「左窄右宽」、负值「右窄左宽」（默认 +0.32） |
 | 整体旋转 | −90° ~ +90° | 正值顺时针、负值逆时针 |
 | 封面大小 | 40 ~ 320 px | 播放器面板的封面 / 唱片尺寸 |
+| 圆心大小 | 0 ~ 260 px | 圆盘模式下独立外扩歌词环，封面和圆心不动 |
 | 歌词字号 | 12 ~ 200 px | |
 | 歌词列表行数 | 1 ~ 15 行 | |
 | 歌词行间距 | 0.50 ~ 3.00 倍 | |
@@ -235,7 +236,7 @@ python -m PyInstaller desktop-lyric.spec --noconfirm
 想要启动更快的文件夹版（不用每次解压），先设置环境变量 `LD_ONEFILE=0`
 再执行同一条命令，输出在 `dist\LyricDesk\`。
 
-想直接分发给朋友：发送 `dist\LyricDesk-Setup-v1.7.6.exe` 即可，
+想直接分发给朋友：发送 `dist\LyricDesk-Setup-v1.7.7.exe` 即可，
 对方双击就能安装，后续版本也可以从程序里检查更新。
 
 ## 做成双击安装的安装包（推荐：Inno Setup）
@@ -247,7 +248,7 @@ python -m PyInstaller desktop-lyric.spec --noconfirm
 "%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe" installer.iss
 ```
 
-输出 `dist\LyricDesk-Setup-v1.7.6.exe`，双击即可安装：
+输出 `dist\LyricDesk-Setup-v1.7.7.exe`，双击即可安装：
 
 - 标准安装向导：欢迎 → **许可协议**（需同意才放行）→ 更新说明 → 选择位置 →
   附加任务 → 安装中 → 完成
