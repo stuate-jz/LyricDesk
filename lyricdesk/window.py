@@ -736,7 +736,12 @@ class LyricWindow(QWidget):
                 )
         elif mode == "lyrics":
             fm_list = self._metrics["list"]
-            self._list_slot = fm_list.height() * 1.52 * settings.line_spacing
+            self._list_slot = (
+                fm_list.height()
+                * 1.52
+                * settings.line_spacing
+                * (1.0 + 0.12 * settings.scatter_amount())
+            )
             self._list_count = max(1, int(settings.lyric_lines))
             # 顶部还要给歌名 / 作者 / 热度留一块地方（分离面板不加）
             # 圆盘布局不显示歌名 / 作者 / 热度，也不为它们预留透明高度。
@@ -778,7 +783,12 @@ class LyricWindow(QWidget):
         else:
             # 兜底：按歌词面板的尺寸
             fm_list = self._metrics["list"]
-            self._list_slot = fm_list.height() * 1.52 * settings.line_spacing
+            self._list_slot = (
+                fm_list.height()
+                * 1.52
+                * settings.line_spacing
+                * (1.0 + 0.12 * settings.scatter_amount())
+            )
             self._list_count = max(1, int(settings.lyric_lines))
             content_h = PAD * 2 + self._list_slot * self._list_count
             self._overscan, self._overscan_v = self._tilt_overscan(
@@ -1912,15 +1922,32 @@ class LyricWindow(QWidget):
             line = lyrics.lines[line_index]
             if not line.text:
                 continue
-            chaos_x, chaos_y, chaos_scale, chaos_rotation = (
-                self._chaos_transform(line)
-            )
-            y = center_y + (line_index - visual) * slot + chaos_y
-
-            if line_index == index:
+            is_current = line_index == index
+            if is_current:
                 family, size, weight = self._fonts["list_cur"]
                 fitted = fit_size(line.text, family, weight, size, width)
                 sprite = make_sprite(line.text, family, fitted, weight)
+            else:
+                family, size, weight = self._fonts["list"]
+                font = _qt_font(family, size, weight)
+                if render_mod.letter_spacing():
+                    font.setLetterSpacing(
+                        QFont.SpacingType.AbsoluteSpacing,
+                        render_mod.letter_spacing(),
+                    )
+                line_fm = QFontMetricsF(font)
+                display = line.text
+                if line_fm.horizontalAdvance(display) > width:
+                    display = line_fm.elidedText(
+                        display, Qt.TextElideMode.ElideRight, width
+                    )
+                sprite = make_sprite(display, family, size, weight)
+            chaos_x, chaos_y, chaos_scale, chaos_rotation = (
+                self._chaos_transform(line, sprite.advance)
+            )
+            y = center_y + (line_index - visual) * slot + chaos_y
+
+            if is_current:
                 baseline = (
                     y - slot / 2.0
                     + (slot - (sprite.ascent + sprite.descent)) / 2.0
@@ -1961,20 +1988,6 @@ class LyricWindow(QWidget):
                 distance = abs(line_index - index)
                 opacity = max(0.10, 0.50 - 0.14 * distance)
                 fade = min(1.0, max(0.0, (y - (center_y - slot * (count / 2.0 + 1))) / slot))
-                family, size, weight = self._fonts["list"]
-                font = _qt_font(family, size, weight)
-                if render_mod.letter_spacing():
-                    font.setLetterSpacing(
-                        QFont.SpacingType.AbsoluteSpacing,
-                        render_mod.letter_spacing(),
-                    )
-                line_fm = QFontMetricsF(font)
-                display = line.text
-                if line_fm.horizontalAdvance(display) > width:
-                    display = line_fm.elidedText(
-                        display, Qt.TextElideMode.ElideRight, width
-                    )
-                sprite = make_sprite(display, family, size, weight)
                 top = y - fm.height() / 2.0
                 baseline = (
                     top
@@ -2006,11 +2019,21 @@ class LyricWindow(QWidget):
             return (left + right) / 2.0
         return right - advance / 2.0
 
-    def _chaos_transform(self, line) -> tuple[float, float, float, float]:
+    def _chaos_transform(
+        self, line, advance: float = 0.0
+    ) -> tuple[float, float, float, float]:
         """列表模式的确定性轻微错落；圆盘和 chaos=0 时完全恒等。"""
         chaos = self.settings.scatter_amount()
         if chaos <= 0.0:
             return 0.0, 0.0, 1.0, 0.0
+        slot = float(self._list_slot)
+        dy_max = 0.12 * slot
+        rot_max = min(
+            3.0,
+            math.degrees(
+                math.atan(0.15 * slot / max(1.0, advance / 2.0))
+            ),
+        )
         seed = float(getattr(line, "time", 0.0) or 0.0)
         seed += (
             sum(ord(char) for char in str(getattr(line, "text", "") or ""))
@@ -2023,9 +2046,9 @@ class LyricWindow(QWidget):
 
         return (
             (rnd(1.0) - 0.5) * 16.0 * chaos,
-            (rnd(2.0) - 0.5) * 16.0 * chaos,
-            1.0 + (rnd(3.0) - 0.5) * 0.12 * chaos,
-            (rnd(4.0) - 0.5) * 6.0 * chaos,
+            (rnd(2.0) - 0.5) * 2.0 * dy_max,
+            1.0 + (rnd(3.0) - 0.5) * 0.06 * chaos,
+            (rnd(4.0) - 0.5) * 2.0 * rot_max,
         )
 
     # ==================================================================
