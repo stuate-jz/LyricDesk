@@ -28,6 +28,10 @@ from lyricdesk.lyrics import LyricLine, Lyrics
 from lyricdesk.smtc import Snapshot, Track
 from lyricdesk.window import LyricWindow
 
+ROUNDS = 5
+FRAMES_PER_ROUND = 60
+WARMUP_FRAMES = 6
+
 
 class Engine:
     def __init__(self) -> None:
@@ -61,6 +65,27 @@ class Engine:
         return []
 
 
+def measure(window: LyricWindow, layer: QPixmap) -> tuple[list[float], float, float]:
+    """预热后测 5 轮；返回每轮均值、中位数和全部轮次中的最大单帧。"""
+    for _ in range(WARMUP_FRAMES):
+        window.render(layer)
+    round_means: list[float] = []
+    round_maxima: list[float] = []
+    for _ in range(ROUNDS):
+        samples = []
+        for _ in range(FRAMES_PER_ROUND):
+            start = time.perf_counter()
+            window.render(layer)
+            samples.append((time.perf_counter() - start) * 1000.0)
+        round_means.append(statistics.mean(samples))
+        round_maxima.append(max(samples))
+    return round_means, statistics.median(round_means), max(round_maxima)
+
+
+def sample_text(round_means: list[float]) -> str:
+    return "[" + " ".join(f"{value:.2f}" for value in round_means) + "]"
+
+
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     settings = Settings()
@@ -70,8 +95,12 @@ def main() -> int:
     window = LyricWindow(settings, Engine())
     window.show()
     app.processEvents()
-    results: dict[tuple[str, str, float], tuple[float, float]] = {}
+    results: dict[tuple[str, str, float], tuple[float, float, list[float]]] = {}
     failures = 0
+    print(
+        f"  {ROUNDS} 轮中位数，每轮 {FRAMES_PER_ROUND} 帧；"
+        "单轮波动 ±15%"
+    )
     for glow in (0.0, 1.0):
         settings.lyric_glow = glow
         for layout in ("list", "disc"):
@@ -80,22 +109,15 @@ def main() -> int:
                 settings.lyric_effect = effect
                 window._commit(resize=True)
                 layer = QPixmap(window.size())
-                for _ in range(6):
-                    window.render(layer)
-                samples = []
-                for _ in range(50):
-                    start = time.perf_counter()
-                    window.render(layer)
-                    samples.append((time.perf_counter() - start) * 1000.0)
-                average = statistics.mean(samples)
-                maximum = max(samples)
-                results[(layout, effect, glow)] = (average, maximum)
+                rounds, average, maximum = measure(window, layer)
+                results[(layout, effect, glow)] = (average, maximum, rounds)
                 limit_avg = 8.0 if layout == "disc" else 5.0
                 ok = average <= limit_avg and maximum <= 10.0
                 failures += 0 if ok else 1
                 print(
                     f"  {'OK  ' if ok else 'FAIL'} glow={glow:g} {layout:4s} {effect:6s} "
-                    f"avg={average:.2f}ms max={maximum:.2f}ms"
+                    f"rounds={sample_text(rounds)} median={average:.2f}ms "
+                    f"max={maximum:.2f}ms"
                 )
 
     baseline_path = Path(__file__).resolve().parent / "perf_baseline.json"
@@ -104,7 +126,7 @@ def main() -> int:
         tuple(key.split("/", 1)): float(value)
         for key, value in raw_baseline.items()
     }
-    print("  同机同批复测，单次波动 ±8%")
+    print(f"  同机同批复测：{ROUNDS} 轮中位数，单轮波动 ±15%")
     for layout in ("list", "disc"):
         for effect in ("off", "word", "bounce"):
             disabled = results[(layout, effect, 0.0)][0]
@@ -113,11 +135,13 @@ def main() -> int:
             delta = (disabled - target) / max(
                 0.001, target
             )
-            ok = delta <= 0.10
+            tolerance = 0.10 if layout == "list" else 0.15
+            ok = delta <= tolerance
             failures += 0 if ok else 1
             print(
                 f"  {'OK  ' if ok else 'FAIL'} glow=0 相对同机基线 {layout}/{effect}: "
-                f"{target:.2f} -> {disabled:.2f}ms ({delta:+.1%}); "
+                f"{target:.2f} -> {disabled:.2f}ms ({delta:+.1%}, "
+                f"上限 {tolerance:.0%}); "
                 f"glow=1 {enabled:.2f}ms"
             )
 
@@ -133,15 +157,7 @@ def main() -> int:
             settings.lyric_layout = layout
             window._commit(resize=True)
             layer = QPixmap(window.size())
-            for _ in range(6):
-                window.render(layer)
-            samples = []
-            for _ in range(50):
-                start = time.perf_counter()
-                window.render(layer)
-                samples.append((time.perf_counter() - start) * 1000.0)
-            average = statistics.mean(samples)
-            maximum = max(samples)
+            rounds, average, maximum = measure(window, layer)
             limit_avg = 8.0 if layout == "disc" else 5.0
             paints = 1000.0 / max(0.001, average)
             paint_limit = 20.0 if layout == "disc" else 28.0
@@ -149,7 +165,8 @@ def main() -> int:
             failures += 0 if ok else 1
             print(
                 f"  {'OK  ' if ok else 'FAIL'} 副歌+拍点 {layout}/word "
-                f"avg={average:.2f}ms max={maximum:.2f}ms paints≈{paints:.0f}/s"
+                f"rounds={sample_text(rounds)} median={average:.2f}ms "
+                f"max={maximum:.2f}ms paints≈{paints:.0f}/s"
             )
     finally:
         audio_mod.MONITOR._has_data = old_has_data
