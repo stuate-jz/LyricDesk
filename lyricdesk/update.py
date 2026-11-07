@@ -28,6 +28,7 @@ from pathlib import Path
 
 import requests
 
+from . import __version__
 from .fonts import proxy_candidates
 
 # 默认更新源：用户没自己配过时就用它，这样拿到程序就能自动检查更新。
@@ -437,7 +438,7 @@ def failed_installer() -> Path | None:
 
 
 def consume_updated_version() -> str:
-    """读取并删除一次性的更新成功标记；失败标记存在时不报告成功。"""
+    """读取并删除一次性更新标记；只接受与当前运行版本一致的记录。"""
     temp_dir = Path(tempfile.gettempdir())
     updated = temp_dir / UPDATED_MARKER
     failed = temp_dir / FAILED_MARKER
@@ -448,7 +449,11 @@ def consume_updated_version() -> str:
         version = updated.read_text(encoding="mbcs", errors="replace").strip()
     except OSError:
         return ""
-    updated.unlink(missing_ok=True)
+    finally:
+        # 空文件、损坏内容和旧版本标记都只能使用一次，读完一律删除。
+        updated.unlink(missing_ok=True)
+    if not version or parse_version(version) != parse_version(__version__):
+        return ""
     return version
 
 

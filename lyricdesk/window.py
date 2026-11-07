@@ -5480,11 +5480,12 @@ class LyricWindow(QWidget):
             # 等程序自己退干净（约 3 秒）。ping 不需要控制台，timeout 在无控制台时会直接报错
             "ping -n 4 127.0.0.1 >nul",
             f'del /q "{updated_arg}" >nul 2>nul',
+            # 先写成功标记，避免 Inno 的 [Run] 比批处理后半段更早拉起程序。
+            f'>"{updated_arg}" echo {version}',
             f'"{setup_arg}" /SILENT /SUPPRESSMSGBOXES /NORESTART /SP-',
             "if errorlevel 1 goto failed",
             f'del /q "{setup_arg}"',
             f'del /q "{marker_arg}"',
-            f'>"{updated_arg}" echo {version}',
             relaunch,
             'del "%~f0"',
             "exit /b 0",

@@ -87,6 +87,11 @@ def main() -> int:
         '>"%TEMP%\\lyricdesk-updated.txt" echo 1.7.7' in text,
     )
     check(
+        "成功标记先于安装器写入",
+        text.index('>"%TEMP%\\lyricdesk-updated.txt" echo 1.7.7')
+        < text.index('LyricDesk-Setup-1.7.7.exe" /SILENT'),
+    )
+    check(
         "成功路径清掉失败标记",
         'del /q "%TEMP%\\lyricdesk-update-failed.txt"' in text,
     )
@@ -103,8 +108,13 @@ def main() -> int:
     run_section = installer.split("[Run]", 1)[1].split("[UninstallDelete]", 1)[0]
     check(
         "Inno 静默安装后自动启动",
-        'Filename: "{app}\\{#AppExeName}"; Flags: nowait' in run_section,
+        'Filename: "{app}\\{#AppExeName}"; Flags: nowait; Check: WizardSilent'
+        in run_section,
         run_section.strip(),
+    )
+    check(
+        "交互式仍由可取消的完成页启动项控制",
+        "Flags: nowait postinstall skipifsilent" in run_section,
     )
 
     print("\n2) 退出前提示")
@@ -143,6 +153,22 @@ def main() -> int:
         second = update_mod.consume_updated_version()
     check("第一次读到 v1.7.7", first == "1.7.7")
     check("标记读后删除，第二次为空", second == "" and not updated.exists())
+
+    updated.write_text("9.9.9", encoding="mbcs")
+    with patch("lyricdesk.update.tempfile.gettempdir", return_value=str(temp_dir)):
+        wrong_version = update_mod.consume_updated_version()
+    check(
+        "标记版本与当前版本不符时静默删除",
+        wrong_version == "" and not updated.exists(),
+    )
+
+    updated.write_bytes(b"")
+    with patch("lyricdesk.update.tempfile.gettempdir", return_value=str(temp_dir)):
+        empty_version = update_mod.consume_updated_version()
+    check(
+        "空标记不提示且被删除",
+        empty_version == "" and not updated.exists(),
+    )
 
     updated.write_text("1.7.7", encoding="mbcs")
     failed.write_text("LyricDesk-Setup-1.7.7.exe", encoding="mbcs")
