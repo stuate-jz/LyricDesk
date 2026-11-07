@@ -76,12 +76,17 @@ class LineArt:
 
     base: QPixmap
     highlight: QPixmap | None
+    soft_highlight: QPixmap | None
     advance: float
     ascent: float
     descent: float
     offset_x: float
     baseline_y: float
     height: float
+
+
+_SOFT_BUFFER: QPixmap | None = None
+_SOFT_BUFFER_KEY: tuple[int, int, float] | None = None
 
 
 def clear_line_cache() -> None:
@@ -279,6 +284,7 @@ def make_line_art(
     painter.end()
 
     highlight = None
+    soft_highlight = None
     if grad_colors is not None and glow_color is not None:
         highlight = new_pixmap()
         painter = begin(highlight)
@@ -300,9 +306,34 @@ def make_line_art(
         _fill_path(painter, sprite, gradient)
         painter.end()
 
+        # 高光软边分两层：纵向上下 10% 慢慢淡出，横向向远端略微收光。
+        # 这一层跟着 LineArt 缓存在换行时生成一次，逐帧只做前沿遮罩。
+        soft_highlight = new_pixmap()
+        painter = QPainter(soft_highlight)
+        painter.drawPixmap(0, 0, highlight)
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_DestinationIn
+        )
+        vertical = QLinearGradient(0.0, 0.0, 0.0, logical_h)
+        vertical.setColorAt(0.0, QColor(255, 255, 255, 0))
+        vertical.setColorAt(0.10, QColor(255, 255, 255, 255))
+        vertical.setColorAt(0.90, QColor(255, 255, 255, 255))
+        vertical.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(vertical)
+        painter.drawRect(QRectF(0.0, 0.0, logical_w, logical_h))
+        horizontal = QLinearGradient(0.0, 0.0, logical_w, 0.0)
+        horizontal.setColorAt(0.0, QColor(255, 255, 255, 255))
+        horizontal.setColorAt(0.58, QColor(255, 255, 255, 235))
+        horizontal.setColorAt(1.0, QColor(255, 255, 255, 184))
+        painter.setBrush(horizontal)
+        painter.drawRect(QRectF(0.0, 0.0, logical_w, logical_h))
+        painter.end()
+
     art = LineArt(
         base=base,
         highlight=highlight,
+        soft_highlight=soft_highlight,
         advance=sprite.advance,
         ascent=sprite.ascent,
         descent=sprite.descent,
@@ -324,6 +355,7 @@ def draw_line_art(
     progress: float = 0.0,
     scale: float = 1.0,
     opacity: float = 1.0,
+    softness: float = 0.0,
 ) -> None:
     painter.save()
     painter.setOpacity(max(0.0, min(1.0, painter.opacity() * opacity)))
@@ -334,6 +366,16 @@ def draw_line_art(
 
     progress = max(0.0, min(1.0, float(progress)))
     if progress > 0.0 and art.highlight is not None:
+        if softness > 0.0 and art.soft_highlight is not None:
+            _draw_soft_highlight(
+                painter,
+                art,
+                progress=progress,
+                opacity=min(1.0, progress * 6.0),
+                softness=softness,
+            )
+            painter.restore()
+            return
         painter.save()
         painter.setClipRect(
             QRectF(
@@ -348,6 +390,48 @@ def draw_line_art(
             QPointF(-art.offset_x, -art.baseline_y), art.highlight
         )
         painter.restore()
+    painter.restore()
+
+
+def _draw_soft_highlight(
+    painter: QPainter,
+    art: LineArt,
+    *,
+    progress: float,
+    opacity: float,
+    softness: float,
+) -> None:
+    global _SOFT_BUFFER, _SOFT_BUFFER_KEY
+    dpr = max(1.0, art.soft_highlight.devicePixelRatio())
+    key = (art.soft_highlight.width(), art.soft_highlight.height(), dpr)
+    if _SOFT_BUFFER is None or _SOFT_BUFFER_KEY != key:
+        _SOFT_BUFFER = QPixmap(art.soft_highlight.size())
+        _SOFT_BUFFER.setDevicePixelRatio(dpr)
+        _SOFT_BUFFER_KEY = key
+    _SOFT_BUFFER.fill(Qt.GlobalColor.transparent)
+
+    buffer_painter = QPainter(_SOFT_BUFFER)
+    buffer_painter.drawPixmap(0, 0, art.soft_highlight)
+    buffer_painter.setCompositionMode(
+        QPainter.CompositionMode.CompositionMode_DestinationIn
+    )
+    logical_w = art.soft_highlight.width() / dpr
+    logical_h = art.soft_highlight.height() / dpr
+    front = art.offset_x - art.advance / 2.0 + art.advance * progress
+    softness = max(1.0, float(softness))
+    edge = QLinearGradient(front - softness, 0.0, front, 0.0)
+    edge.setColorAt(0.0, QColor(255, 255, 255, 255))
+    edge.setColorAt(1.0, QColor(255, 255, 255, 0))
+    buffer_painter.setPen(Qt.PenStyle.NoPen)
+    buffer_painter.setBrush(edge)
+    buffer_painter.drawRect(QRectF(0.0, 0.0, logical_w, logical_h))
+    buffer_painter.end()
+
+    painter.save()
+    painter.setOpacity(painter.opacity() * opacity)
+    painter.drawPixmap(
+        QPointF(-art.offset_x, -art.baseline_y), _SOFT_BUFFER
+    )
     painter.restore()
 
 

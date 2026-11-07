@@ -129,7 +129,7 @@ class Settings:
     disc_angle: float = 0.0
     # 扇形张角：按可见行数均分
     disc_spread: float = 30.0
-    # 歌词动效：off / word / bounce / sweep
+    # 歌词动效：off / word（软边点亮） / bounce（软边 + 逐字弹簧）
     lyric_effect: str = "off"
     album_shape: str = "disc"
     # 1.6.8 起合并进 album_shape，字段仅为老配置反序列化保留
@@ -371,7 +371,9 @@ class Settings:
             self.lyric_layout = "list"
         self.disc_angle = max(-90.0, min(90.0, float(self.disc_angle)))
         self.disc_spread = max(20.0, min(120.0, float(self.disc_spread)))
-        if self.lyric_effect not in ("off", "word", "bounce", "sweep"):
+        if self.lyric_effect == "sweep":
+            self.lyric_effect = "word"
+        if self.lyric_effect not in ("off", "word", "bounce"):
             self.lyric_effect = "off"
         if self.raise_style not in ("frost", "ambient", "outline"):
             self.raise_style = "frost"

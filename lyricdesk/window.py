@@ -2441,8 +2441,10 @@ class LyricWindow(QWidget):
         scale: float = 1.0,
         opacity: float = 1.0,
     ) -> None:
-        """绘制默认 K 歌填充，或逐字点亮 / 弹起 / 扫光。"""
+        """绘制默认 K 歌填充，或软边逐字点亮 / 逐字弹簧。"""
         effect = str(getattr(self.settings, "lyric_effect", "off") or "off")
+        if effect == "sweep":
+            effect = "word"
         words = list(getattr(line, "words", None) or [])
         if effect == "off" or len(words) < 2:
             render_mod.draw_line_art(
@@ -2456,40 +2458,8 @@ class LyricWindow(QWidget):
             )
             return
 
-        if effect == "sweep":
-            render_mod.draw_line_art(
-                painter,
-                art,
-                center_x,
-                baseline,
-                progress=progress,
-                scale=scale,
-                opacity=opacity,
-            )
-            width = max(1.0, render_mod.measure(line.text, family, fitted, weight))
-            glint_x = center_x + (progress - 0.5) * width * scale
-            radius = max(8.0, fitted * 0.62)
-            glow = QRadialGradient(QPointF(glint_x, baseline - fitted * 0.1), radius)
-            accent = QColor(colors["glow"])
-            glow.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 100))
-            glow.setColorAt(0.35, QColor(accent.red(), accent.green(), accent.blue(), 34))
-            glow.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
-            painter.save()
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(glow)
-            painter.drawEllipse(
-                QRectF(
-                    glint_x - radius,
-                    baseline - fitted * 0.1 - radius,
-                    radius * 2,
-                    radius * 2,
-                )
-            )
-            painter.restore()
-            return
-
-        # 先画低亮底字，再逐字叠加高光。已唱过的字常亮，当前字按自身时间
-        # 推进；弹起模式只让当前字短暂上浮，不会整行一起抖。
+        # 先画低亮底字，再逐字叠加高光。软边只作用于正在推进的那个字，
+        # 已唱完的字直接全亮，避免最后一个字边缘发虚。
         render_mod.draw_line_art(
             painter,
             art,
@@ -2506,7 +2476,8 @@ class LyricWindow(QWidget):
         total = sum(measured)
         cursor = center_x - total * scale / 2.0
         position = self._display_position(snapshot) + self._offset_ms() / 1000.0
-        for word, word_width in zip(words, measured):
+        softness = max(6.0, min(14.0, fitted * 0.32))
+        for word_index, (word, word_width) in enumerate(zip(words, measured)):
             word_center = cursor + word_width * scale / 2.0
             cursor += word_width * scale
             word_start = float(word.time)
@@ -2529,9 +2500,17 @@ class LyricWindow(QWidget):
             word_scale = scale
             rise = 0.0
             if effect == "bounce" and active:
-                pulse = math.sin(math.pi * word_progress)
-                rise = -fitted * 0.14 * pulse
-                word_scale *= 1.0 + 0.08 * pulse
+                elapsed = position - (word_start + word_index * 0.025)
+                enter = min(
+                    1.0,
+                    ease_out_back(max(0.0, min(1.0, elapsed / 0.20))),
+                )
+                leave = 1.0 - ease_out_cubic(
+                    max(0.0, min(1.0, (elapsed - 0.20) / 0.32))
+                )
+                pulse = max(0.0, enter * leave)
+                rise = -fitted * 0.13 * pulse
+                word_scale *= 1.0 + 0.16 * pulse
             elif active:
                 word_scale *= 1.04
             render_mod.draw_line_art(
@@ -2542,6 +2521,7 @@ class LyricWindow(QWidget):
                 progress=word_progress,
                 scale=word_scale,
                 opacity=opacity * (1.0 if active or word_progress >= 1.0 else 0.6),
+                softness=0.0 if word_progress >= 1.0 else softness,
             )
 
     def _lyric_progress(self, snapshot, current, next_line=None) -> float:
@@ -3709,7 +3689,6 @@ class LyricWindow(QWidget):
                 ("关闭", "off"),
                 ("逐字点亮", "word"),
                 ("逐字弹起", "bounce"),
-                ("扫光", "sweep"),
             ):
                 action = effect_menu.addAction(label)
                 action.setCheckable(True)
@@ -3918,8 +3897,10 @@ class LyricWindow(QWidget):
         self._apply_disc_change(before)
 
     def _set_lyric_effect(self, value: str) -> None:
+        if value == "sweep":
+            value = "word"
         self.settings.lyric_effect = (
-            value if value in ("off", "word", "bounce", "sweep") else "off"
+            value if value in ("off", "word", "bounce") else "off"
         )
         self._commit()
 

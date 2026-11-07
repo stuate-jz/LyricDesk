@@ -1428,7 +1428,6 @@ class SettingsDialog(QDialog):
                 ("lyrics.effect.off", "关闭", "off"),
                 ("lyrics.effect.word", "逐字点亮", "word"),
                 ("lyrics.effect.bounce", "逐字弹起", "bounce"),
-                ("lyrics.effect.sweep", "扫光", "sweep"),
             ],
             lambda: settings.lyric_effect,
             self.window._set_lyric_effect,
