@@ -1232,6 +1232,8 @@ class LyricWindow(QWidget):
                     outline_color=QColor(0, 0, 0, 150),
                     shadow=True,
                     dpr=self.devicePixelRatioF(),
+                    glow=self.settings.lyric_glow > 0
+                    and self.settings.lyric_effect != "off",
                 )
             else:
                 family, size, weight = self._fonts["list"]
@@ -1927,6 +1929,8 @@ class LyricWindow(QWidget):
                     outline_color=QColor(0, 0, 0, 150),
                     shadow=True,
                     dpr=self.devicePixelRatioF(),
+                    glow=self.settings.lyric_glow > 0
+                    and self.settings.lyric_effect != "off",
                 )
                 self._draw_lyric_effect(
                     painter,
@@ -2434,6 +2438,8 @@ class LyricWindow(QWidget):
                 outline_color=QColor(0, 0, 0, 145),
                 shadow=True,
                 dpr=self.devicePixelRatioF(),
+                glow=self.settings.lyric_glow > 0
+                and self.settings.lyric_effect != "off",
             )
             self._draw_lyric_effect(
                 painter,
@@ -2518,6 +2524,7 @@ class LyricWindow(QWidget):
         effect = str(getattr(self.settings, "lyric_effect", "off") or "off")
         if effect == "sweep":
             effect = "word"
+        glow_scale = max(0.0, min(2.0, float(self.settings.lyric_glow)))
         words = list(getattr(line, "words", None) or [])
         if effect == "off":
             render_mod.draw_line_art(
@@ -2555,6 +2562,7 @@ class LyricWindow(QWidget):
                     progress=visible,
                     scale=scale,
                     opacity=opacity,
+                    glow_scale=glow_scale,
                 )
                 return
             solid, tail, feather, exit_opacity = reveal_state(
@@ -2582,6 +2590,7 @@ class LyricWindow(QWidget):
                     opacity=opacity * exit_opacity,
                     softness=feather,
                     tail_progress=tail,
+                    glow_scale=glow_scale,
                 )
             return
         if not words:
@@ -2646,6 +2655,7 @@ class LyricWindow(QWidget):
                 outline_color=QColor(0, 0, 0, 145),
                 shadow=True,
                 dpr=self.devicePixelRatioF(),
+                glow=glow_scale > 0,
             )
             word_scale = scale
             rise = 0.0
@@ -2672,6 +2682,7 @@ class LyricWindow(QWidget):
                 scale=word_scale,
                 opacity=opacity * (1.0 if active or word_progress >= 1.0 else 0.6),
                 softness=0.0 if word_progress >= 1.0 else softness,
+                glow_scale=glow_scale,
             )
 
     def _lyric_progress(self, snapshot, current, next_line=None) -> float:
@@ -2938,6 +2949,8 @@ class LyricWindow(QWidget):
                     outline_color=QColor(0, 0, 0, 150),
                     shadow=True,
                     dpr=self.devicePixelRatioF(),
+                    glow=self.settings.lyric_glow > 0
+                    and self.settings.lyric_effect != "off",
                 )
                 self._draw_lyric_effect(
                     painter,
@@ -4055,6 +4068,14 @@ class LyricWindow(QWidget):
             value if value in ("off", "word", "bounce") else "off"
         )
         self._commit()
+
+    def _set_glow(self, value: float) -> None:
+        self.settings.lyric_glow = max(0.0, min(2.0, float(value)))
+        self._commit()
+
+    def _set_chaos(self, value: float) -> None:
+        self.settings.lyric_chaos = max(0.0, min(1.0, float(value)))
+        self._commit(resize=True)
 
     def _set_player(self, app_id: str) -> None:
         setter = getattr(self.engine, "set_preferred_player", None)

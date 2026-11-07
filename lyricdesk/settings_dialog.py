@@ -815,6 +815,8 @@ class SettingsDialog(QDialog):
         self._align_combo = None
         self._disc_angle_row = None
         self._disc_spread_row = None
+        self._glow_row = None
+        self._chaos_row = None
         self._line_spacing_row = None
         self._text3d_rows: list[QWidget] = []
         self._effect_hint = None
@@ -1420,6 +1422,32 @@ class SettingsDialog(QDialog):
             "lyrics.disc.hint",
             "圆盘下「歌词对齐」表示歌词在封面的左侧或右侧；居中会临时按右侧显示。",
         )
+        self._glow_row = self._slider(
+            layout,
+            "lyrics.glow",
+            "光晕强度",
+            getter=lambda: round(float(settings.lyric_glow) * 100),
+            apply=lambda value: self.window._set_glow(float(value) / 100),
+            minimum=0,
+            maximum=200,
+            step=5,
+            default=round(float(self._defaults.lyric_glow) * 100),
+            unit="%",
+            coalesce_ms=40,
+        )
+        self._chaos_row = self._slider(
+            layout,
+            "lyrics.chaos",
+            "随机错落",
+            getter=lambda: round(float(settings.lyric_chaos) * 100),
+            apply=lambda value: self.window._set_chaos(float(value) / 100),
+            minimum=0,
+            maximum=100,
+            step=5,
+            default=round(float(self._defaults.lyric_chaos) * 100),
+            unit="%",
+            coalesce_ms=40,
+        )
         self._combo(
             layout,
             "lyrics.effect",
@@ -1595,6 +1623,8 @@ class SettingsDialog(QDialog):
                 row.setEnabled(disc)
         for row in self._text3d_rows:
             row.setEnabled(not disc)
+        if self._chaos_row is not None:
+            self._chaos_row.setEnabled(not disc)
         if self._line_spacing_row is not None:
             self._line_spacing_row.setEnabled(not disc)
         if self._align_combo is not None:

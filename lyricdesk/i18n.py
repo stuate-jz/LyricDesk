@@ -107,6 +107,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "lyrics.effect.bounce": "逐字弹起",
         "lyrics.effect.sweep": "扫光",
         "lyrics.effect.hint": "优先使用歌词源的真实逐字时间；逐字时间缺失时按字宽估算，可能与实际演唱略有偏差。",
+        "lyrics.glow": "光晕强度",
+        "lyrics.chaos": "随机错落",
         "lyrics.effect.no_words": "当前歌词没有逐字时间，已自动按「关闭」显示；换到支持逐字的歌曲后会生效。",
         "lyrics.show_info": "显示歌名、歌手和热度",
         "lyrics.show_info.hint": "单窗歌词与分离面板的歌词列会一起显示或隐藏",
@@ -326,6 +328,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "lyrics.effect.bounce": "Word bounce",
         "lyrics.effect.sweep": "Sweep",
         "lyrics.effect.hint": "Uses real word timing when available; otherwise timing is estimated from character width and may differ slightly.",
+        "lyrics.glow": "Glow strength",
+        "lyrics.chaos": "Text scatter",
         "lyrics.effect.no_words": "This lyric has no word timing, so Off is used until a word-synced song is played.",
         "lyrics.show_info": "Show title, artist and popularity",
         "lyrics.show_info.hint": (

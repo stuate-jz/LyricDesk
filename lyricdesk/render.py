@@ -11,6 +11,7 @@ from PySide6.QtGui import (
     QColor,
     QFont,
     QFontMetricsF,
+    QImage,
     QLinearGradient,
     QPainter,
     QPainterPath,
@@ -23,6 +24,8 @@ _SPRITE_CACHE: "OrderedDict[tuple, TextSprite]" = OrderedDict()
 _CACHE_LIMIT = 256
 _LINE_CACHE: "OrderedDict[tuple, LineArt]" = OrderedDict()
 _LINE_CACHE_LIMIT = 160
+_GLOW_CACHE: "OrderedDict[tuple, tuple[QPixmap, QPixmap]]" = OrderedDict()
+_GLOW_CACHE_LIMIT = 12
 
 # 全局字间距（px）。歌词字体统一套这个值；图标 / 时间这类不走精灵的文字不受影响。
 _LETTER_SPACING = 0.0
@@ -83,6 +86,7 @@ class LineArt:
     offset_x: float
     baseline_y: float
     height: float
+    font_size: int = 0
     glow_near: QPixmap | None = None
     glow_far: QPixmap | None = None
 
@@ -94,6 +98,68 @@ _SOFT_MASK_STATE: tuple | None = None
 
 def clear_line_cache() -> None:
     _LINE_CACHE.clear()
+    _GLOW_CACHE.clear()
+
+
+def _blur_layers(
+    source: QPixmap,
+    radius: float,
+) -> QPixmap:
+    """三级降采样近似高斯模糊，结果与源图物理尺寸一致。"""
+    if source.isNull():
+        return source
+    levels = 2 if radius < source.height() * 0.18 else 3
+    image = source.toImage().convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+    sizes = [(image.width(), image.height())]
+    current = image
+    for _ in range(levels):
+        width = max(1, current.width() // 2)
+        height = max(1, current.height() // 2)
+        current = current.scaled(
+            width,
+            height,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        sizes.append((width, height))
+    for width, height in reversed(sizes[:-1]):
+        current = current.scaled(
+            width,
+            height,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+    result = QPixmap.fromImage(current)
+    result.setDevicePixelRatio(source.devicePixelRatio())
+    return result
+
+
+def glow_layers(
+    source: QPixmap,
+    font_size: int,
+) -> tuple[QPixmap, QPixmap]:
+    """取得近 / 远两层预模糊光晕；最多缓存 12 行。"""
+    dpr = round(float(source.devicePixelRatio()), 2)
+    near_radius = max(2.0, float(font_size) * 0.28)
+    far_radius = max(4.0, float(font_size) * 0.65)
+    key = (
+        source.cacheKey(),
+        round(near_radius, 2),
+        round(far_radius, 2),
+        dpr,
+    )
+    cached = _GLOW_CACHE.get(key)
+    if cached is not None:
+        _GLOW_CACHE.move_to_end(key)
+        return cached
+    value = (
+        _blur_layers(source, near_radius),
+        _blur_layers(source, far_radius),
+    )
+    _GLOW_CACHE[key] = value
+    if len(_GLOW_CACHE) > _GLOW_CACHE_LIMIT:
+        _GLOW_CACHE.popitem(last=False)
+    return value
 
 
 def _font(family: str, size: int, weight) -> QFont:
@@ -230,6 +296,7 @@ def make_line_art(
     outline_color: QColor | None = None,
     shadow: bool = True,
     dpr: float = 1.0,
+    glow: bool = False,
 ) -> LineArt:
     """把一行文字烘成普通层 + 高光层，绘制时只贴图。"""
     key = (
@@ -245,6 +312,7 @@ def make_line_art(
         _color_key(outline_color),
         bool(shadow),
         round(float(dpr), 2),
+        bool(glow),
     )
     cached = _LINE_CACHE.get(key)
     if cached is not None:
@@ -252,9 +320,15 @@ def make_line_art(
         return cached
 
     dpr = max(1.0, float(dpr))
-    pad_x = max(4.0, sprite.advance * 0.08, float(outline_width) * 1.5 + 2.0)
+    glow_pad = sprite.size * 0.8 if glow else 0.0
+    pad_x = max(
+        4.0,
+        sprite.advance * 0.08,
+        float(outline_width) * 1.5 + 2.0,
+        glow_pad,
+    )
     logical_w = max(1.0, sprite.advance + pad_x * 2.0)
-    logical_h = max(1.0, (sprite.ascent + sprite.descent) * 1.9)
+    logical_h = max(1.0, (sprite.ascent + sprite.descent) * 1.9 + glow_pad * 1.4)
     offset_x = pad_x + sprite.advance / 2.0
     baseline_y = logical_h / 2.0 + (sprite.ascent - sprite.descent) / 2.0
 
@@ -343,6 +417,7 @@ def make_line_art(
         offset_x=offset_x,
         baseline_y=baseline_y,
         height=logical_h,
+        font_size=sprite.size,
     )
     _LINE_CACHE[key] = art
     if len(_LINE_CACHE) > _LINE_CACHE_LIMIT:
@@ -361,12 +436,25 @@ def draw_line_art(
     softness: float = 0.0,
     tail_progress: float | None = None,
     tail_alpha: float = 0.72,
+    glow_scale: float = 0.0,
 ) -> None:
     painter.save()
     painter.setOpacity(max(0.0, min(1.0, painter.opacity() * opacity)))
     painter.translate(center_x, baseline)
     if scale != 1.0:
         painter.scale(scale, scale)
+    if glow_scale > 0.0 and art.highlight is not None:
+        near, far = glow_layers(art.highlight, art.font_size)
+        painter.save()
+        painter.setOpacity(painter.opacity() * min(1.0, glow_scale * 0.28))
+        painter.drawPixmap(
+            QPointF(-art.offset_x, -art.baseline_y), far
+        )
+        painter.setOpacity(painter.opacity() * min(1.0, glow_scale * 0.52))
+        painter.drawPixmap(
+            QPointF(-art.offset_x, -art.baseline_y), near
+        )
+        painter.restore()
     painter.drawPixmap(QPointF(-art.offset_x, -art.baseline_y), art.base)
 
     progress = max(0.0, min(1.0, float(progress)))

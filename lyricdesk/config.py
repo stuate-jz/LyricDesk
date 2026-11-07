@@ -131,6 +131,8 @@ class Settings:
     disc_spread: float = 30.0
     # 歌词动效：off / word（软边点亮） / bounce（软边 + 逐字弹簧）
     lyric_effect: str = "off"
+    lyric_glow: float = 1.0
+    lyric_chaos: float = 0.0
     album_shape: str = "disc"
     # 1.6.8 起合并进 album_shape，字段仅为老配置反序列化保留
     depth_album_style: str = "classic"
@@ -391,6 +393,8 @@ class Settings:
             self.lyric_effect = "word"
         if self.lyric_effect not in ("off", "word", "bounce"):
             self.lyric_effect = "off"
+        self.lyric_glow = max(0.0, min(2.0, float(self.lyric_glow)))
+        self.lyric_chaos = max(0.0, min(1.0, float(self.lyric_chaos)))
         if self.raise_style not in ("frost", "ambient", "outline"):
             self.raise_style = "frost"
         if self.album_shape not in ("disc", "square", "vinyl", "classic"):
