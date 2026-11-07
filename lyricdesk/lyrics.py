@@ -1091,6 +1091,12 @@ def fetch(
             )
             continue
         pool.append(local)
+        # 标题、歌手和时长都几乎完全一致时直接采用该平台；只有分数不够
+        # 才有必要多查一家做正文交叉校验，避免每首歌都发出三次请求。
+        if score >= 0.98:
+            break
+        if len(pool) >= 2:
+            break
 
     pool.sort(key=lambda item: -item[0])
     # 分数太低的直接不要，宁可不显示
@@ -1174,6 +1180,7 @@ def fetch_enhanced(
     cleaned_title = clean_title(title) or title
     cleaned_artist = clean_title(artist) or artist
     variant = is_variant_title(title)
+    official_result: Lyrics | None = None
 
     if isinstance(lock, dict) and lock:
         try:
@@ -1197,12 +1204,7 @@ def fetch_enhanced(
                 result.track_key = track_key or song_id
                 result.match_score = 1.0
                 result.track_duration = float(duration or 0.0)
-                _lyric_log(
-                    f"入选 provider=netease-official track={track_key or song_id} "
-                    f"lines={len(doc.lines)} words={doc.has_words} "
-                    "reason=播放器官方 songId"
-                )
-                return result
+                official_result = result
         except Exception:  # noqa: BLE001
             pass
 
@@ -1227,6 +1229,44 @@ def fetch_enhanced(
                 return result
         except Exception:  # noqa: BLE001
             pass
+
+    if official_result is not None:
+        official_words = sum(1 for line in official_result.lines if line.words)
+        official_ratio = official_words / max(1, len(official_result.lines))
+        try:
+            kdoc = kugou_source.fetch_doc(
+                cleaned_title,
+                cleaned_artist,
+                duration,
+                track_key or f"{cleaned_title}|{cleaned_artist}",
+            )
+            if kdoc is not None and validate(kdoc, duration)[0]:
+                kugou_result = Lyrics.from_doc(kdoc, cleaned_title, cleaned_artist)
+                kugou_result.track_key = track_key
+                kugou_result.match_score = 0.96
+                kugou_result.track_duration = duration
+                kugou_words = sum(1 for line in kdoc.lines if line.words)
+                kugou_ratio = kugou_words / max(1, len(kdoc.lines))
+                use_official = (
+                    official_result.lines
+                    and len(official_result.lines) >= len(kdoc.lines) * 0.9
+                    and official_ratio >= kugou_ratio
+                )
+                chosen = official_result if use_official else kugou_result
+                _lyric_log(
+                    f"入选 provider={chosen.provider} track={track_key} "
+                    f"lines={len(chosen.lines)} words={sum(1 for x in chosen.lines if x.words)} "
+                    f"reason={'官方行数与逐字覆盖足够' if use_official else '酷狗逐字覆盖更完整'}"
+                )
+                return chosen
+        except Exception:
+            pass
+        _lyric_log(
+            f"入选 provider=netease-official track={track_key} "
+            f"lines={len(official_result.lines)} words={official_words} "
+            "reason=播放器官方 songId"
+        )
+        return official_result
 
     result = fetch(title, artist, duration, prefer)
     if variant and not result.lines:

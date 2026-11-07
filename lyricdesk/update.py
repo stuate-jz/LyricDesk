@@ -174,7 +174,12 @@ def _candidate_urls(source: str) -> list[str]:
         return []
     if text.lower().startswith("gitee:"):
         repo = text[6:].strip().strip("/")
-        return [f"https://gitee.com/api/v5/repos/{repo}/releases/latest"]
+        # Gitee 的 releases/latest 偶尔会短暂缓存旧版本；完整列表接口
+        # 已能看到新 Release 时，从列表里选版本号最大的一份。
+        return [
+            f"https://gitee.com/api/v5/repos/{repo}/releases?per_page=100",
+            f"https://gitee.com/api/v5/repos/{repo}/releases/latest",
+        ]
     if _looks_like_repo(text):
         repo = text.strip("/")
         # 直连优先，后面才轮到镜像；_GITHUB_MIRRORS 为空时这里就是「只有直连」，不会出错
@@ -284,6 +289,16 @@ def pick_assets(payload: dict) -> tuple[str, str]:
 
 def _extract(payload) -> tuple[str, str, str]:
     """从各种长得不太一样的 JSON 里取出 (版本号, 更新说明, 下载页)。"""
+    if isinstance(payload, list):
+        releases = [item for item in payload if isinstance(item, dict)]
+        if not releases:
+            return "", "", ""
+        payload = max(
+            releases,
+            key=lambda item: parse_version(
+                str(item.get("tag_name") or item.get("name") or "")
+            ),
+        )
     if not isinstance(payload, dict):
         return "", "", ""
     flat = {str(key).lower(): value for key, value in payload.items()}

@@ -186,6 +186,8 @@ def _merge_yrc(lines: list[LyricLine], yrc: list[LyricLine]) -> None:
         for index, detail in enumerate(yrc):
             if index in used:
                 continue
+            if abs(line.time - detail.time) > 0.3:
+                continue
             text_score = difflib.SequenceMatcher(
                 None, _normalize(line.text), _normalize(detail.text)
             ).ratio()
@@ -196,6 +198,8 @@ def _merge_yrc(lines: list[LyricLine], yrc: list[LyricLine]) -> None:
         if best_index >= 0 and best_score >= 0.58:
             used.add(best_index)
             line.words = yrc[best_index].words
+            if line.words:
+                line.words[0].time = line.time
 def parse_payload(payload: dict, track_key: str = "") -> LyricDoc | None:
     lrc = str((payload.get("lrc") or {}).get("lyric") or "")
     yrc = str((payload.get("yrc") or {}).get("lyric") or "")
