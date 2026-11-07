@@ -211,9 +211,22 @@ READ_JS = f"""
               state.playing.curPlaying &&
               state.playing.curPlaying.track;
             if (track && track.id) {{
+              const artists = Array.isArray(track.artists)
+                ? track.artists
+                : (Array.isArray(track.ar) ? track.ar : []);
+              let artist = artists
+                .map((item) => item && (item.name || item.nickname))
+                .filter(Boolean)
+                .join(' / ');
+              if (!artist && track.artist) {{
+                artist = typeof track.artist === 'string'
+                  ? track.artist
+                  : String(track.artist.name || '');
+              }}
               found = {{
                 id: String(track.id),
                 name: String(track.name || ''),
+                artist: String(artist || ''),
                 ts: Date.now()
               }};
             }}
@@ -232,6 +245,9 @@ READ_JS = f"""
     title: title,
     artist: artist,
     song_id: songId,
+    store_name: window.__LD_STORE ? window.__LD_STORE.name : '',
+    store_artist: window.__LD_STORE ? window.__LD_STORE.artist : '',
+    store_ts: window.__LD_STORE ? window.__LD_STORE.ts : 0,
     position: Number.isFinite(position) ? position : null,
     duration: Number.isFinite(duration) ? duration : null,
     playing: playing,
@@ -299,6 +315,7 @@ class NeteaseState:
             is_playing=self.playing,
             status=4 if self.playing else 5,
             source="netease",
+            song_id=self.song_id,
             can_next=self.position_known,
             can_prev=self.position_known,
             can_seek=self.position_known,
@@ -329,6 +346,24 @@ def parse_state(raw: str | None, previous_playing: bool = False) -> NeteaseState
         return None
     artist = str(data.get("artist") or "").strip()
     song_id = str(data.get("song_id") or "").strip()
+    store_name = str(data.get("store_name") or "").strip()
+    store_artist = str(data.get("store_artist") or "").strip()
+    try:
+        store_ts = float(data.get("store_ts") or 0.0)
+    except (TypeError, ValueError):
+        store_ts = 0.0
+    # JS 只导出 2 秒内刷新过的 store。带时间戳时在 Python 侧再确认一次；
+    # store 不可用或过期就明确退回 DOM，这是兼容网易云改版的降级路径。
+    store_fresh = bool(store_name) and (
+        store_ts <= 0 or abs(time.time() * 1000.0 - store_ts) <= 2000.0
+    )
+    if store_fresh:
+        title = store_name
+        artist = store_artist or artist
+    elif store_name or store_ts:
+        # store 过期时不能继续使用它旧歌的 song_id，否则又会形成
+        #「DOM 新标题 + store 旧 ID」；此时整组身份都降级为 DOM。
+        song_id = ""
     raw_position = data.get("position")
     raw_duration = data.get("duration")
     position_known = raw_position is not None and _num(raw_position, -1.0) >= 0

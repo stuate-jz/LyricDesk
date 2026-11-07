@@ -63,6 +63,8 @@ def validate(doc: LyricDoc, duration: float) -> tuple[bool, list[str]]:
         coverage = lines[-1].time / duration
         if coverage < 0.6:
             errors.append(f"歌词覆盖率过低：{coverage:.0%}")
+        if coverage > 1.25:
+            errors.append(f"歌词比整首歌长出 {coverage:.0%}")
 
     previous = -1.0
     for line in lines:

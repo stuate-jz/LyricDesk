@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -11,6 +12,8 @@ from .bili_client import BiliBridge
 from .bili_launcher import BiliWatcher
 from .lyrics import (
     Lyrics,
+    _lyric_log,
+    _lyric_log_fetch,
     discover_candidates,
     fetch_enhanced,
     load_cached,
@@ -24,6 +27,9 @@ from .titles import variant_speed
 
 
 class Engine(QObject):
+    FETCH_DEADLINE_SECONDS = 20.0
+    FETCH_WATCHDOG_SECONDS = 8.0
+
     lyricsChanged = Signal(object)
     trackChanged = Signal(object)
     # 后台守护想给用户提个醒（标题, 正文）——托盘气泡
@@ -40,6 +46,9 @@ class Engine(QObject):
 
         self._lyrics: Lyrics | None = None
         self._key: str | None = None
+        self._fetch_key = ""
+        self._fetch_started = 0.0
+        self._fetch_retry = 0
         self._token = 0
         self._lock = threading.Lock()
 
@@ -236,6 +245,7 @@ class Engine(QObject):
 
         track = snapshot.track
         if track.key == self._key:
+            self._check_lyrics_fresh(snapshot)
             return
 
         self._key = track.key
@@ -243,9 +253,7 @@ class Engine(QObject):
         self.trackChanged.emit(track)
 
         provider = provider_for_player(snapshot.source)
-        song_id = ""
-        if provider == "netease" and self._netease is not None:
-            song_id = self._netease.song_id
+        song_id = snapshot.song_id
         speed = variant_speed(track.title)
         cached = load_cached(
             track.title,
@@ -276,6 +284,61 @@ class Engine(QObject):
             song_id=song_id,
             speed=speed,
             lock=self.settings.lyric_locks.get(track.key),
+        )
+
+    def _check_lyrics_fresh(self, snapshot: Snapshot) -> None:
+        """当前曲目迟迟没有对应歌词时重试，避免界面永久挂着上一首。"""
+        track = snapshot.track
+        if track is None:
+            return
+        key = track.key
+        if self._fetch_key != key or self._fetch_started <= 0:
+            return
+        lyrics = self._lyrics
+        if lyrics is not None and lyrics.track_key == key:
+            self._fetch_retry = 0
+            return
+        elapsed = time.monotonic() - self._fetch_started
+        if elapsed < self.FETCH_WATCHDOG_SECONDS:
+            return
+        if self._fetch_retry >= 3:
+            _lyric_log(
+                f"放弃 track={key} retries={self._fetch_retry} "
+                f"elapsed={elapsed:.2f}s reason=连续三次仍无当前曲目歌词"
+            )
+            self._fetch_started = 0.0
+            miss = Lyrics(
+                lines=[],
+                source="miss",
+                title=track.title,
+                artist=track.artist,
+                track_key=key,
+            )
+            self._deliver(miss, complete=True)
+            return
+        # 在第一次重试前先撤掉旧文档：后续网络再慢，界面也只显示
+        #「暂无歌词」，不会把上一首的句子继续留在桌面上。
+        self._lyrics = Lyrics(
+            lines=[],
+            source="miss",
+            title=track.title,
+            artist=track.artist,
+            track_key=key,
+        )
+        self.lyricsChanged.emit(self._lyrics)
+        self._fetch_retry += 1
+        provider = provider_for_player(snapshot.source)
+        self._start_fetch(
+            key,
+            track.title,
+            track.artist,
+            track.duration,
+            provider,
+            track_key=key,
+            song_id=snapshot.song_id,
+            speed=variant_speed(track.title),
+            lock=self.settings.lyric_locks.get(key),
+            retry=True,
         )
 
     def _stop_bili(self) -> None:
@@ -316,20 +379,33 @@ class Engine(QObject):
         song_id: str = "",
         speed: float = 1.0,
         lock: dict | None = None,
+        retry: bool = False,
     ) -> None:
+        started = time.monotonic()
         with self._lock:
             self._token += 1
             token = self._token
+            if not retry or self._fetch_key != key:
+                self._fetch_key = key
+                self._fetch_retry = 0
+            self._fetch_started = started
+        _lyric_log_fetch(
+            "请求",
+            track_key or key,
+            elapsed=0.0,
+            detail=f"retry={self._fetch_retry} provider={prefer or '-'}",
+        )
 
         def worker() -> None:
             def deliver_partial(result: Lyrics) -> None:
+                result.track_key = track_key or key
                 save_cached(
                     title, artist, result, prefer, track_key, duration, speed
                 )
                 with self._lock:
                     if token != self._token:
                         return
-                self._deliver(result)
+                self._deliver(result, complete=False)
 
             try:
                 result = fetch_enhanced(
@@ -342,19 +418,62 @@ class Engine(QObject):
                     partial=deliver_partial,
                     lock=lock,
                 )
-            except Exception:
-                result = Lyrics(lines=[], source="", title=title, artist=artist)
+                elapsed = time.monotonic() - started
+                if elapsed > self.FETCH_DEADLINE_SECONDS:
+                    _lyric_log_fetch(
+                        "超时",
+                        track_key or key,
+                        elapsed=elapsed,
+                        detail=(
+                            f"deadline={self.FETCH_DEADLINE_SECONDS:.2f}s "
+                            "result=discard"
+                        ),
+                    )
+                    result = Lyrics(
+                        lines=[], source="miss", title=title, artist=artist
+                    )
+                elif result.lines:
+                    _lyric_log_fetch(
+                        "成功",
+                        track_key or key,
+                        elapsed=elapsed,
+                        detail=f"lines={len(result.lines)}",
+                    )
+                else:
+                    _lyric_log_fetch(
+                        "成功",
+                        track_key or key,
+                        elapsed=elapsed,
+                        detail="lines=0",
+                    )
+            except Exception as exc:  # noqa: BLE001
+                elapsed = time.monotonic() - started
+                _lyric_log_fetch(
+                    "失败",
+                    track_key or key,
+                    elapsed=elapsed,
+                    detail=f"error={type(exc).__name__}: {exc}",
+                )
+                result = Lyrics(
+                    lines=[], source="miss", title=title, artist=artist
+                )
+            result.track_key = track_key or key
+            if not result.lines and not result.source:
+                result.source = "miss"
             save_cached(title, artist, result, prefer, track_key, duration, speed)
             with self._lock:
                 if token != self._token:
                     return
-            self._deliver(result)
+            self._deliver(result, complete=True)
 
         threading.Thread(target=worker, name="lyric-fetch", daemon=True).start()
 
-    def _deliver(self, result: Lyrics) -> None:
+    def _deliver(self, result: Lyrics, *, complete: bool = False) -> None:
         # 线程安全：Signal 会自动排队到主线程
         self._lyrics = result
+        if complete:
+            self._fetch_started = 0.0
+            self._fetch_key = ""
         self.lyricsChanged.emit(result)
 
     def reload(self) -> None:
@@ -390,9 +509,7 @@ class Engine(QObject):
 
         self._lyrics = None
         self.lyricsChanged.emit(None)
-        song_id = ""
-        if provider == "netease" and self._netease is not None:
-            song_id = self._netease.song_id
+        song_id = snapshot.song_id
         self._start_fetch(
             track.key,
             track.title,
@@ -413,9 +530,7 @@ class Engine(QObject):
             return
         track = snapshot.track
         provider = provider_for_player(snapshot.source)
-        song_id = ""
-        if provider == "netease" and self._netease is not None:
-            song_id = self._netease.song_id
+        song_id = snapshot.song_id
 
         def worker() -> None:
             try:

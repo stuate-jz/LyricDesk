@@ -43,8 +43,8 @@ NE_HEADERS = {"User-Agent": UA, "Referer": "https://music.163.com/"}
 KG_HEADERS = {"User-Agent": UA, "Referer": "https://www.kugou.com/"}
 
 MISS_TTL = 900.0
-# 4：缓存逐字、翻译、音译和来源信息；旧缓存统一重新获取
-CACHE_VERSION = 5
+# 6：作废旧版可能按错误曲目身份写下的歌词缓存
+CACHE_VERSION = 6
 TIMEOUT = 8.0
 
 _SESSION = requests.Session()
@@ -623,7 +623,13 @@ def load_cached(
         return None
     if data.get("kind") == "miss":
         if time.time() - data.get("ts", 0) < MISS_TTL:
-            return Lyrics(lines=[], source="miss", title=title, artist=artist)
+            return Lyrics(
+                lines=[],
+                source="miss",
+                title=title,
+                artist=artist,
+                track_key=data.get("track_key", track_key),
+            )
         return None
     if data.get("kind") != "lyrics":
         return None
@@ -755,6 +761,22 @@ def _lyric_log(message: str) -> None:
             handle.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
     except Exception:
         pass
+
+
+def _lyric_log_fetch(
+    event: str,
+    track: str,
+    *,
+    elapsed: float | None = None,
+    detail: str = "",
+) -> None:
+    """记录一次取词生命周期；track 与耗时是排查串词的最小现场信息。"""
+    parts = [event, f"track={track or '-'}"]
+    if elapsed is not None:
+        parts.append(f"elapsed={max(0.0, float(elapsed)):.2f}s")
+    if detail:
+        parts.append(detail)
+    _lyric_log(" ".join(parts))
 
 
 def _text_similarity(left: Lyrics, right: Lyrics) -> float:

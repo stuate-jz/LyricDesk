@@ -83,6 +83,7 @@ class Snapshot:
     is_playing: bool
     status: int
     source: str
+    song_id: str = ""
     can_next: bool = True
     can_prev: bool = True
     can_seek: bool = True
@@ -340,6 +341,7 @@ class SmtcReader:
                 is_playing=self._is_playing,
                 status=self._status,
                 source=self._source,
+                song_id="",
                 can_next=self._can_next,
                 can_prev=self._can_prev,
                 can_seek=self._can_seek,
