@@ -83,10 +83,13 @@ class LineArt:
     offset_x: float
     baseline_y: float
     height: float
+    glow_near: QPixmap | None = None
+    glow_far: QPixmap | None = None
 
 
 _SOFT_BUFFER: QPixmap | None = None
 _SOFT_BUFFER_KEY: tuple[int, int, float] | None = None
+_SOFT_MASK_STATE: tuple | None = None
 
 
 def clear_line_cache() -> None:
@@ -356,6 +359,8 @@ def draw_line_art(
     scale: float = 1.0,
     opacity: float = 1.0,
     softness: float = 0.0,
+    tail_progress: float | None = None,
+    tail_alpha: float = 0.72,
 ) -> None:
     painter.save()
     painter.setOpacity(max(0.0, min(1.0, painter.opacity() * opacity)))
@@ -373,6 +378,8 @@ def draw_line_art(
                 progress=progress,
                 opacity=min(1.0, progress * 6.0),
                 softness=softness,
+                tail_progress=tail_progress,
+                tail_alpha=tail_alpha,
             )
             painter.restore()
             return
@@ -400,32 +407,56 @@ def _draw_soft_highlight(
     progress: float,
     opacity: float,
     softness: float,
+    tail_progress: float | None,
+    tail_alpha: float,
 ) -> None:
-    global _SOFT_BUFFER, _SOFT_BUFFER_KEY
+    global _SOFT_BUFFER, _SOFT_BUFFER_KEY, _SOFT_MASK_STATE
     dpr = max(1.0, art.soft_highlight.devicePixelRatio())
     key = (art.soft_highlight.width(), art.soft_highlight.height(), dpr)
     if _SOFT_BUFFER is None or _SOFT_BUFFER_KEY != key:
         _SOFT_BUFFER = QPixmap(art.soft_highlight.size())
         _SOFT_BUFFER.setDevicePixelRatio(dpr)
         _SOFT_BUFFER_KEY = key
-    _SOFT_BUFFER.fill(Qt.GlobalColor.transparent)
-
-    buffer_painter = QPainter(_SOFT_BUFFER)
-    buffer_painter.drawPixmap(0, 0, art.soft_highlight)
-    buffer_painter.setCompositionMode(
-        QPainter.CompositionMode.CompositionMode_DestinationIn
+        _SOFT_MASK_STATE = None
+    mask_state = (
+        art.soft_highlight.cacheKey(),
+        round(float(progress), 4),
+        round(float(tail_progress if tail_progress is not None else progress), 4),
+        round(float(softness), 2),
+        round(float(tail_alpha), 3),
+        round(float(dpr), 2),
     )
-    logical_w = art.soft_highlight.width() / dpr
-    logical_h = art.soft_highlight.height() / dpr
-    front = art.offset_x - art.advance / 2.0 + art.advance * progress
-    softness = max(1.0, float(softness))
-    edge = QLinearGradient(front - softness, 0.0, front, 0.0)
-    edge.setColorAt(0.0, QColor(255, 255, 255, 255))
-    edge.setColorAt(1.0, QColor(255, 255, 255, 0))
-    buffer_painter.setPen(Qt.PenStyle.NoPen)
-    buffer_painter.setBrush(edge)
-    buffer_painter.drawRect(QRectF(0.0, 0.0, logical_w, logical_h))
-    buffer_painter.end()
+    if _SOFT_MASK_STATE != mask_state:
+        _SOFT_BUFFER.fill(Qt.GlobalColor.transparent)
+        buffer_painter = QPainter(_SOFT_BUFFER)
+        buffer_painter.drawPixmap(0, 0, art.soft_highlight)
+        buffer_painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_DestinationIn
+        )
+        logical_w = art.soft_highlight.width() / dpr
+        logical_h = art.soft_highlight.height() / dpr
+        left = art.offset_x - art.advance / 2.0
+        solid_x = left + art.advance * progress
+        tail = max(progress, float(tail_progress if tail_progress is not None else progress))
+        tail_x = left + art.advance * tail
+        feather_x = min(left + art.advance, tail_x + max(1.0, float(softness)))
+        width = max(0.01, feather_x - left)
+        edge = QLinearGradient(left, 0.0, feather_x, 0.0)
+        edge.setColorAt(0.0, QColor(255, 255, 255, 255))
+        edge.setColorAt(
+            max(0.0, min(1.0, (solid_x - left) / width)),
+            QColor(255, 255, 255, 255),
+        )
+        edge.setColorAt(
+            max(0.0, min(1.0, (tail_x - left) / width)),
+            QColor(255, 255, 255, int(max(0.0, min(1.0, tail_alpha)) * 255)),
+        )
+        edge.setColorAt(1.0, QColor(255, 255, 255, 0))
+        buffer_painter.setPen(Qt.PenStyle.NoPen)
+        buffer_painter.setBrush(edge)
+        buffer_painter.drawRect(QRectF(0.0, 0.0, logical_w, logical_h))
+        buffer_painter.end()
+        _SOFT_MASK_STATE = mask_state
 
     painter.save()
     painter.setOpacity(painter.opacity() * opacity)
