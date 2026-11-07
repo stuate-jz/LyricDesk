@@ -232,9 +232,9 @@
    下面的 FALLBACK 只在直接双击本地打开（file:// 读不到 json）或 fetch 失败时兜底，
    所以要跟当前版本保持一致：version / date / notes 跟 packaging/update.json 同步。 */
 const FALLBACK = {
-  version: "1.7.0",
-  date: "2026-11-06",
-  notes: "· 新增：圆盘歌词布局，支持左右方位、圆盘角度与扇形张角\n· 新增：逐字点亮、逐字弹起、扫光三种歌词动效，默认关闭\n· 新增：WASAPI 回环真实音波，关闭后采集线程完全退出\n· 提升：网易云优先按曲目 ID 获取官方 LRC / YRC\n· 提升：酷狗 KRC 逐字增强，严格匹配失败自动回落行级歌词\n· 提升：缓存保留逐字、翻译、音译，匹配阈值提高到 0.72\n· 改进：进度条真正拖动、时间气泡与滚轮 ±5 秒\n· 修复：播放控制压住歌名；开机后置顶状态被其它窗口覆盖",
+  version: "1.7.1",
+  date: "2026-11-07",
+  notes: "· 修复：列表模式同一歌名被绘制两次\n· 修复：圆盘隐藏歌名歌手热度并让透明窗口紧贴扇形内容\n· 修复：调整圆盘角度、张角或左右方位时圆心漂移\n· 修复：列表模式文字倾斜可用，圆盘模式三个倾斜项置灰\n· 改进：圆盘按纯角度均分，自动抬高安全张角并消除左侧叠字\n· 改进：重做软边逐字点亮与逐字弹簧动效",
   url: "https://gitee.com/pursue-studies/LyricDesk/releases",
   page_url: "https://gitee.com/pursue-studies/LyricDesk/releases",
   size_mb: 54,

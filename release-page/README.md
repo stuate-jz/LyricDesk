@@ -8,7 +8,7 @@
 
 **悬浮在桌面上的歌词组件** —— 不挑播放器，带歌词跳动动画，不改你的壁纸
 
-**当前版本 v1.7.0**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
+**当前版本 v1.7.1**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 镜像仓库：[GitHub](https://github.com/stuate-jz/LyricDesk)　·　发布页：[stuate-jz.github.io/LyricDesk](https://stuate-jz.github.io/LyricDesk/)
 
@@ -18,7 +18,7 @@
 
 ## ⬇ 下载
 
-### ⚙ [**LyricDesk-Setup-v1.7.0.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
+### ⚙ [**LyricDesk-Setup-v1.7.1.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 双击一路「下一步」装好即可（不需要管理员权限，不需要改任何系统设置）。
 
@@ -34,14 +34,12 @@
 
 ## 这个版本更新了什么
 
-- 新增：圆盘歌词布局，支持左右方位、圆盘角度与扇形张角
-- 新增：逐字点亮、逐字弹起、扫光三种歌词动效，默认关闭
-- 新增：WASAPI 回环真实音波，关闭后采集线程完全退出
-- 提升：网易云优先按曲目 ID 获取官方 LRC / YRC
-- 提升：酷狗 KRC 逐字增强，严格匹配失败自动回落行级歌词
-- 提升：缓存保留逐字、翻译、音译，匹配阈值提高到 0.72
-- 改进：进度条真正拖动、时间气泡与滚轮 ±5 秒
-- 修复：播放控制压住歌名；开机后置顶状态被其它窗口覆盖
+- 修复：列表模式同一歌名被绘制两次
+- 修复：圆盘隐藏歌名歌手热度并让透明窗口紧贴扇形内容
+- 修复：调整圆盘角度、张角或左右方位时圆心漂移
+- 修复：列表模式文字倾斜可用，圆盘模式三个倾斜项置灰
+- 改进：圆盘按纯角度均分，自动抬高安全张角并消除左侧叠字
+- 改进：重做软边逐字点亮与逐字弹簧动效
 
 ![圆盘歌词](screenshots/disc.png)
 
