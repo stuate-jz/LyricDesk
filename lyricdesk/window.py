@@ -205,6 +205,18 @@ def set_all_topmost_suspended(suspended: bool) -> None:
         window.set_topmost_suspended(suspended)
 
 
+def _any_settings_dialog_visible() -> bool:
+    """设置窗可能挂在任意一扇歌词窗上；任一扇可见时都不能抢回 Z 序。"""
+    for window in list(_LIVE_WINDOWS):
+        dialog = getattr(window, "_settings_dialog", None)
+        try:
+            if dialog is not None and dialog.isVisible():
+                return True
+        except RuntimeError:
+            continue
+    return False
+
+
 # 右键菜单里的极简播放控制图标：系统自带的图标字体（Windows 10/11 都有）
 ICON_PREV = "\ue892"
 ICON_NEXT = "\ue893"
@@ -507,11 +519,10 @@ class LyricWindow(QWidget):
         self._timer.timeout.connect(self._tick)
         self._timer.start()
 
-        # 开机自启时，其它随系统启动的置顶窗口可能晚于我们出现。
-        # 定时只读扩展样式，只有真的被盖下去才重设，不抢焦点。
+        # 其它置顶窗口随时可能后来居上；即使样式位还在，也定期强制重申。
         self._topmost_timer = QTimer(self)
-        self._topmost_timer.setInterval(10_000)
-        self._topmost_timer.timeout.connect(self._assert_topmost)
+        self._topmost_timer.setInterval(5_000)
+        self._topmost_timer.timeout.connect(self._periodic_topmost)
         self._topmost_timer.start()
 
         self._profile_paint_start = 0.0
@@ -545,7 +556,7 @@ class LyricWindow(QWidget):
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         self._last_tick = time.monotonic()
-        self._assert_topmost()
+        self._assert_topmost(force=True)
         QTimer.singleShot(3_000, self._assert_topmost)
         QTimer.singleShot(10_000, self._assert_topmost)
         self._prefetch_visible_lyric_art(self.engine.snapshot())
@@ -587,16 +598,23 @@ class LyricWindow(QWidget):
         self._apply_window_flags()
         self._bg_key = None
         self._update_cursor()
+        self._assert_topmost(force=True)
 
-    def _assert_topmost(self) -> None:
+    def _assert_topmost(self, force: bool = False) -> None:
         if (
             not self.isVisible()
             or not self.settings.always_on_top
             or self._suspend_topmost
-            or is_topmost(self)
         ):
             return
+        if not force and is_topmost(self):
+            return
         set_native_topmost(self, True)
+
+    def _periodic_topmost(self) -> None:
+        if self._suspend_topmost and not _any_settings_dialog_visible():
+            set_all_topmost_suspended(False)
+        self._assert_topmost(force=True)
 
     def set_topmost_suspended(self, suspended: bool) -> None:
         """把「置顶」临时挂起 / 恢复（设置窗口开关时由 set_all_topmost_suspended 调）。
@@ -839,6 +857,7 @@ class LyricWindow(QWidget):
         self._bg_key = None
         self._cover_cache.clear()
         self._prefetched_line_key = None
+        self._assert_topmost(force=True)
 
         if initial:
             self._apply_initial_position()

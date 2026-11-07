@@ -2507,8 +2507,19 @@ class SettingsDialog(QDialog):
         self._refresh()
         self._keep_on_screen()
 
+    def hideEvent(self, event) -> None:  # noqa: N802
+        # Windows 可能把 Qt 窗口藏到 (-32000,-32000) 而不发 finished；
+        # 只要设置窗不可见，就必须恢复所有歌词窗原来的置顶状态。
+        from .window import set_all_topmost_suspended
+
+        set_all_topmost_suspended(False)
+        super().hideEvent(event)
+
     def closeEvent(self, event) -> None:  # noqa: N802
         # 关之前把还没落地的那次滑动补上（拖着滑块顺手按关闭的边界情况）
         for row in self._slider_rows:
             row.flush()
+        from .window import set_all_topmost_suspended
+
+        set_all_topmost_suspended(False)
         super().closeEvent(event)
