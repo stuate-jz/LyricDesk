@@ -9,10 +9,18 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from .config import Settings
 from .bili_client import BiliBridge
 from .bili_launcher import BiliWatcher
-from .lyrics import Lyrics, fetch_enhanced, load_cached, provider_for_player, save_cached
+from .lyrics import (
+    Lyrics,
+    discover_candidates,
+    fetch_enhanced,
+    load_cached,
+    provider_for_player,
+    save_cached,
+)
 from .netease_client import NeteaseBridge, configure as configure_netease
 from .netease_launcher import NeteaseWatcher, find_ready_port
 from .smtc import SMTC_AVAILABLE, SmtcReader, Snapshot
+from .titles import variant_speed
 
 
 class Engine(QObject):
@@ -20,6 +28,7 @@ class Engine(QObject):
     trackChanged = Signal(object)
     # 后台守护想给用户提个醒（标题, 正文）——托盘气泡
     notice = Signal(str, str)
+    candidateResults = Signal(object)
 
     def __init__(self, settings: Settings) -> None:
         super().__init__()
@@ -237,7 +246,15 @@ class Engine(QObject):
         song_id = ""
         if provider == "netease" and self._netease is not None:
             song_id = self._netease.song_id
-        cached = load_cached(track.title, track.artist, provider, track.key)
+        speed = variant_speed(track.title)
+        cached = load_cached(
+            track.title,
+            track.artist,
+            provider,
+            track.key,
+            track.duration,
+            speed,
+        )
         if cached is not None:
             self._lyrics = cached
             self.lyricsChanged.emit(cached)
@@ -257,6 +274,8 @@ class Engine(QObject):
             provider,
             track_key=track.key,
             song_id=song_id,
+            speed=speed,
+            lock=self.settings.lyric_locks.get(track.key),
         )
 
     def _stop_bili(self) -> None:
@@ -295,6 +314,8 @@ class Engine(QObject):
         *,
         track_key: str = "",
         song_id: str = "",
+        speed: float = 1.0,
+        lock: dict | None = None,
     ) -> None:
         with self._lock:
             self._token += 1
@@ -302,7 +323,9 @@ class Engine(QObject):
 
         def worker() -> None:
             def deliver_partial(result: Lyrics) -> None:
-                save_cached(title, artist, result, prefer, track_key)
+                save_cached(
+                    title, artist, result, prefer, track_key, duration, speed
+                )
                 with self._lock:
                     if token != self._token:
                         return
@@ -317,10 +340,11 @@ class Engine(QObject):
                     track_key=track_key,
                     song_id=song_id,
                     partial=deliver_partial,
+                    lock=lock,
                 )
             except Exception:
                 result = Lyrics(lines=[], source="", title=title, artist=artist)
-            save_cached(title, artist, result, prefer, track_key)
+            save_cached(title, artist, result, prefer, track_key, duration, speed)
             with self._lock:
                 if token != self._token:
                     return
@@ -339,12 +363,25 @@ class Engine(QObject):
         if snapshot is None or snapshot.track is None:
             return
         track = snapshot.track
-        from .lyrics import _cache_path, _track_cache_key, provider_for_player
+        from .lyrics import (
+            _cache_path,
+            _track_cache_key,
+            provider_for_player,
+        )
+        from .titles import variant_speed
 
         provider = provider_for_player(snapshot.source)
+        speed = variant_speed(track.title)
         try:
             path = _cache_path(
-                _track_cache_key(track.title, track.artist, provider, track.key)
+                _track_cache_key(
+                    track.title,
+                    track.artist,
+                    provider,
+                    track.key,
+                    track.duration,
+                    speed,
+                )
             )
             if path.exists():
                 path.unlink()
@@ -364,4 +401,61 @@ class Engine(QObject):
             provider,
             track_key=track.key,
             song_id=song_id,
+            speed=speed,
+            lock=self.settings.lyric_locks.get(track.key),
         )
+
+    def discover_current_lyrics(self) -> None:
+        """后台查找约三个可手动选择的歌词候选。"""
+        snapshot = self.snapshot()
+        if snapshot is None or snapshot.track is None:
+            self.candidateResults.emit([])
+            return
+        track = snapshot.track
+        provider = provider_for_player(snapshot.source)
+        song_id = ""
+        if provider == "netease" and self._netease is not None:
+            song_id = self._netease.song_id
+
+        def worker() -> None:
+            try:
+                values = discover_candidates(
+                    track.title,
+                    track.artist,
+                    track.duration,
+                    prefer=provider,
+                    song_id=song_id,
+                )
+            except Exception:
+                values = []
+            self.candidateResults.emit(values)
+
+        threading.Thread(
+            target=worker, name="lyric-candidates", daemon=True
+        ).start()
+
+    def choose_lyric_candidate(self, candidate: dict) -> None:
+        """锁定用户手动选中的歌词；同一 track_key 以后优先使用它。"""
+        snapshot = self.snapshot()
+        if snapshot is None or snapshot.track is None:
+            return
+        track = snapshot.track
+        lock = dict(candidate.get("lock") or {})
+        if not lock:
+            return
+        self.settings.lyric_locks[track.key] = lock
+        self.settings.save()
+        result = candidate.get("lyrics")
+        if isinstance(result, Lyrics):
+            result.track_key = track.key
+            self._lyrics = result
+            save_cached(
+                track.title,
+                track.artist,
+                result,
+                provider_for_player(snapshot.source),
+                track.key,
+                track.duration,
+                variant_speed(track.title),
+            )
+            self.lyricsChanged.emit(result)

@@ -18,7 +18,7 @@ from .config import cache_dir
 from .lyricdoc import LyricDoc
 from .lyricdoc import LyricLine as DocLyricLine
 from .lyricdoc import LyricWord
-from .titles import clean_title
+from .titles import clean_title, is_variant_title, variant_speed
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -44,7 +44,7 @@ KG_HEADERS = {"User-Agent": UA, "Referer": "https://www.kugou.com/"}
 
 MISS_TTL = 900.0
 # 4：缓存逐字、翻译、音译和来源信息；旧缓存统一重新获取
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 TIMEOUT = 8.0
 
 _SESSION = requests.Session()
@@ -205,6 +205,9 @@ def score_candidate(candidate: dict, title: str, artist: str, duration: float) -
 
     cand_dur = float(candidate.get("duration") or 0.0)
     if duration > 5 and cand_dur > 5:
+        ratio = abs(duration - cand_dur) / max(duration, 1.0)
+        if ratio > 0.08:
+            return 0.0
         # 时长是最能区分「同一首歌的不同版本」的线索：
         # Live / 抖音剪辑 / 翻唱 的时间轴对不上，多半是因为选错了版本。
         delta = abs(duration - cand_dur)
@@ -583,11 +586,19 @@ def _cache_path(key: str) -> Path:
     return cache_dir() / f"{digest}.json"
 
 
-def _track_cache_key(title: str, artist: str, provider: str, track_key: str) -> str:
+def _track_cache_key(
+    title: str,
+    artist: str,
+    provider: str,
+    track_key: str,
+    duration: float = 0.0,
+    speed: float = 1.0,
+) -> str:
     # track_key 区分同一播放器里的不同版本；provider 区分不同曲库的歌词。
     return (
         f"{normalize(title)}|{normalize(artist)}|"
-        f"{provider or '-'}|{track_key or '-'}"
+        f"{provider or '-'}|{track_key or '-'}|"
+        f"{int(round(float(duration or 0.0)))}|{round(float(speed or 1.0), 2):.2f}"
     )
 
 
@@ -596,8 +607,12 @@ def load_cached(
     artist: str,
     provider: str = "",
     track_key: str = "",
+    duration: float = 0.0,
+    speed: float = 1.0,
 ) -> Lyrics | None:
-    path = _cache_path(_track_cache_key(title, artist, provider, track_key))
+    path = _cache_path(
+        _track_cache_key(title, artist, provider, track_key, duration, speed)
+    )
     if not path.exists():
         return None
     try:
@@ -658,10 +673,14 @@ def save_cached(
     lyrics: Lyrics,
     provider: str = "",
     track_key: str = "",
+    duration: float = 0.0,
+    speed: float = 1.0,
 ) -> None:
     provider = lyrics.provider or provider
     track_key = lyrics.track_key or track_key
-    path = _cache_path(_track_cache_key(title, artist, provider, track_key))
+    path = _cache_path(
+        _track_cache_key(title, artist, provider, track_key, duration, speed)
+    )
     try:
         if not lyrics.lines:
             payload = {"v": CACHE_VERSION, "kind": "miss", "ts": time.time()}
@@ -728,6 +747,79 @@ def _coverage(lines: list[LyricLine], duration: float) -> float:
     return min(1.0, max(0.0, lines[-1].time / duration))
 
 
+def _lyric_log(message: str) -> None:
+    """把选源结果写到缓存目录的 lyrics.log，方便现场排查串词。"""
+    try:
+        path = cache_dir() / "lyrics.log"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+    except Exception:
+        pass
+
+
+def _text_similarity(left: Lyrics, right: Lyrics) -> float:
+    a = "".join(normalize(line.text) for line in left.lines[:20])
+    b = "".join(normalize(line.text) for line in right.lines[:20])
+    return _ratio(a, b)
+
+
+def _duration_closeness(lyrics: Lyrics, duration: float) -> float:
+    candidate = float(lyrics.track_duration or 0.0)
+    if duration <= 5.0 or candidate <= 5.0:
+        return 0.7
+    return max(0.0, 1.0 - abs(candidate - duration) / max(duration, 1.0))
+
+
+def _select_document(
+    outcomes: list[tuple[float, Lyrics]], duration: float
+) -> Lyrics | None:
+    """在多个候选文档之间按时长、正文和行数做一次交叉校验。"""
+    if not outcomes:
+        return None
+    ranked = sorted(
+        outcomes,
+        key=lambda item: (
+            item[0] * (0.72 + 0.28 * _duration_closeness(item[1], duration)),
+            len(item[1].lines),
+        ),
+        reverse=True,
+    )
+    winner = ranked[0][1]
+    if len(ranked) < 2:
+        return winner
+    runner_up = ranked[1][1]
+    similarity = _text_similarity(winner, runner_up)
+    first_gap = 0.0
+    if winner.lines and runner_up.lines:
+        first_gap = abs(winner.lines[0].time - runner_up.lines[0].time)
+    ratio = len(winner.lines) / max(1, len(runner_up.lines))
+
+    if first_gap > 5.0 or similarity < 0.60:
+        winner = max(
+            (winner, runner_up),
+            key=lambda item: _duration_closeness(item, duration),
+        )
+        reason = (
+            f"正文相似度 {similarity:.2f}，首行差 {first_gap:.1f}s，"
+            "按时长接近度选择"
+        )
+    elif ratio < 0.70 or ratio > 1.43:
+        winner = max((winner, runner_up), key=lambda item: len(item.lines))
+        reason = f"行数比 {ratio:.2f}，选择歌词更完整的一份"
+    else:
+        reason = f"正文相似度 {similarity:.2f}，综合分最高"
+
+    for weight, lyrics in ranked:
+        verdict = "入选" if lyrics is winner else "被拒"
+        _lyric_log(
+            f"{verdict} provider={lyrics.provider or '-'} "
+            f"source={lyrics.source or '-'} lines={len(lyrics.lines)} "
+            f"duration={lyrics.track_duration:.1f} score={weight:.3f} "
+            f"reason={reason if lyrics is winner else '综合校验未胜出'}"
+        )
+    return winner
+
+
 def _provider_of(key: str) -> tuple[str, callable]:
     for item_key, label, _search, resolver in _PROVIDERS:
         if item_key == key:
@@ -784,6 +876,153 @@ def _try_candidate(
     return weight, lyrics
 
 
+def _lyrics_for_lock(
+    lock: dict,
+    title: str,
+    artist: str,
+    duration: float,
+    track_key: str,
+) -> Lyrics | None:
+    provider = str(lock.get("provider") or "")
+    if provider == "netease-official":
+        from .lyricdoc import validate
+        from .sources import netease as netease_source
+
+        song_id = str(lock.get("song_id") or "")
+        doc = netease_source.fetch_doc(song_id, track_key or song_id)
+        if doc is None or not validate(doc, duration)[0]:
+            return None
+        result = Lyrics.from_doc(doc, title, artist)
+        result.track_key = track_key
+        result.match_score = 1.0
+        result.track_duration = duration
+        return result
+
+    candidate = {
+        "title": lock.get("title") or title,
+        "artist": lock.get("artist") or artist,
+        "duration": float(lock.get("duration") or duration or 0.0),
+        "extra": dict(lock.get("extra") or {}),
+    }
+    outcome = _try_candidate(
+        (1.0, provider, candidate), title, artist, duration
+    )
+    if outcome is None:
+        return None
+    result = outcome[1]
+    result.track_key = track_key
+    return result
+
+
+def discover_candidates(
+    title: str,
+    artist: str,
+    duration: float,
+    prefer: str = "",
+    song_id: str = "",
+    limit: int = 3,
+) -> list[dict]:
+    """列出可供手动选择的歌词候选，带上行数、首句和文档。"""
+    title = clean_title(title) or title
+    artist = clean_title(artist) or artist
+    variant = is_variant_title(title)
+    entries: list[tuple[float, str, dict]] = []
+    if prefer == "netease" and song_id:
+        from .lyricdoc import validate
+        from .sources import netease as netease_source
+
+        try:
+            doc = netease_source.fetch_doc(song_id, song_id)
+        except Exception:
+            doc = None
+        if doc is not None and validate(doc, duration)[0]:
+            lyrics = Lyrics.from_doc(doc, title, artist)
+            lyrics.match_score = 1.0
+            lyrics.track_duration = duration
+            entries.append(
+                (
+                    1.0,
+                    "netease-official",
+                    {
+                        "title": title,
+                        "artist": artist,
+                        "duration": duration,
+                        "extra": {"song_id": song_id},
+                        "_lyrics": lyrics,
+                    },
+                )
+            )
+
+    queries = [f"{title} {artist}".strip(), title]
+    for key, _label, search, _resolver in _PROVIDERS:
+        if variant and key != prefer:
+            continue
+        candidates: list[dict] = []
+        for query in queries:
+            try:
+                candidates = search(query)
+            except Exception:
+                candidates = []
+            if candidates:
+                break
+        best: tuple[float, dict] | None = None
+        for candidate in candidates:
+            score = score_candidate(candidate, title, artist, duration)
+            if score < MIN_MATCH:
+                continue
+            if best is None or score > best[0]:
+                best = (score, candidate)
+        if best is not None:
+            entries.append((best[0], key, best[1]))
+
+    results: list[dict] = []
+    seen: set[tuple[str, str, int]] = set()
+    for score, key, candidate in sorted(entries, key=lambda item: -item[0]):
+        lyrics = candidate.pop("_lyrics", None)
+        if lyrics is None:
+            outcome = _try_candidate((score, key, candidate), title, artist, duration)
+            if outcome is None:
+                continue
+            lyrics = outcome[1]
+        signature = (
+            lyrics.provider,
+            normalize(lyrics.title),
+            int(round(lyrics.track_duration or duration or 0.0)),
+        )
+        if signature in seen:
+            continue
+        seen.add(signature)
+        results.append(
+            {
+                "provider": key,
+                "label": lyrics.source or key,
+                "title": lyrics.title,
+                "artist": lyrics.artist,
+                "duration": float(lyrics.track_duration or duration or 0.0),
+                "lines": len(lyrics.lines),
+                "first": lyrics.lines[0].text if lyrics.lines else "",
+                "lyrics": lyrics,
+                "lock": {
+                    "provider": key,
+                    "title": candidate.get("title") or title,
+                    "artist": candidate.get("artist") or artist,
+                    "duration": float(candidate.get("duration") or duration or 0.0),
+                    "extra": dict(candidate.get("extra") or {}),
+                    "song_id": str(
+                        (candidate.get("extra") or {}).get("song_id")
+                        or (candidate.get("extra") or {}).get("songid")
+                        or song_id
+                        if key == "netease-official"
+                        else ""
+                    ),
+                },
+            }
+        )
+        if len(results) >= limit:
+            break
+    return results
+
+
 def fetch(
     title: str, artist: str, duration: float = 0.0, prefer: str = ""
 ) -> Lyrics:
@@ -797,6 +1036,7 @@ def fetch(
     """
     title = clean_title(title) or (title or "")
     artist = clean_title(artist) or (artist or "")
+    variant = is_variant_title(title)
 
     queries = []
     if artist:
@@ -809,6 +1049,14 @@ def fetch(
         providers = [item for item in providers if item[0] == prefer] + [
             item for item in providers if item[0] != prefer
         ]
+    if variant:
+        # 变速 / remix 等版本只能相信正在播放的平台；跨库原版一定会错位。
+        providers = [item for item in providers if item[0] == prefer][:1]
+        if not providers:
+            _lyric_log(
+                f"被拒 title={title!r} reason=版本标题但没有同平台歌词源"
+            )
+            return Lyrics(lines=[], source="", title=title, artist=artist)
 
     def best_of(key: str, search) -> tuple[float, str, dict] | None:
         """在这个曲库里搜一遍，返回分数最高的候选。"""
@@ -829,20 +1077,26 @@ def fetch(
                 local = (score, key, candidate)
         return local
 
-    # 第一轮：按优先级找，遇到高分就停（省时间，绝大多数歌在这一步就够了）
     pool: list[tuple[float, str, dict]] = []
     for key, _label, search, _resolver in providers:
         local = best_of(key, search)
         if local is None:
             continue
+        score, _entry_key, candidate = local
+        if score <= 0.0:
+            _lyric_log(
+                f"被拒 provider={key} title={candidate.get('title')!r} "
+                f"duration={float(candidate.get('duration') or 0):.1f} "
+                f"reason=时长比例超过 8%"
+            )
+            continue
         pool.append(local)
-        if local[0] >= GOOD_MATCH:
-            break
 
     pool.sort(key=lambda item: -item[0])
     # 分数太低的直接不要，宁可不显示
     pool = [item for item in pool if item[0] >= MIN_MATCH]
 
+    outcomes: list[tuple[float, Lyrics]] = []
     best_effort: tuple[float, Lyrics] | None = None
     tried = 0
     for entry in pool:
@@ -855,7 +1109,8 @@ def fetch(
         weight, lyrics = outcome
         coverage = _coverage(lyrics.lines, duration)
         if coverage >= MIN_COVERAGE:
-            return lyrics
+            outcomes.append((weight, lyrics))
+            continue
         # 歌词明显不全（或者根本不是这首歌），先记着，继续看别的源
         if best_effort is None or weight > best_effort[0]:
             best_effort = (weight, lyrics)
@@ -873,18 +1128,28 @@ def fetch(
             continue
         weight, lyrics = outcome
         if _coverage(lyrics.lines, duration) >= MIN_COVERAGE:
-            return lyrics
+            outcomes.append((weight, lyrics))
+            continue
         if best_effort is None or weight > best_effort[0]:
             best_effort = (weight, lyrics)
 
+    chosen = _select_document(outcomes, duration)
+    if chosen is not None:
+        return chosen
     if best_effort is not None:
+        _lyric_log(
+            f"入选 provider={best_effort[1].provider or '-'} "
+            f"reason=所有候选覆盖不足，使用最佳尽力候选"
+        )
         return best_effort[1]
 
     raw = search_lrclib(title, artist, duration)
     lines = parse_lrc(raw or "", title, duration, artist)
     if lines:
+        _lyric_log(f"入选 provider=lrclib lines={len(lines)} reason=曲库无结果")
         return Lyrics(lines=lines, source="LRCLIB", title=title, artist=artist)
 
+    _lyric_log(f"被拒 title={title!r} reason=没有通过时长与内容校验的候选")
     return Lyrics(lines=[], source="", title=title, artist=artist)
 
 
@@ -896,6 +1161,7 @@ def fetch_enhanced(
     track_key: str = "",
     song_id: str = "",
     partial=None,
+    lock: dict | None = None,
 ) -> Lyrics:
     """优先用播放器自己的曲库 ID/逐字源，再回落到严格跨库匹配。
 
@@ -907,6 +1173,21 @@ def fetch_enhanced(
 
     cleaned_title = clean_title(title) or title
     cleaned_artist = clean_title(artist) or artist
+    variant = is_variant_title(title)
+
+    if isinstance(lock, dict) and lock:
+        try:
+            locked = _lyrics_for_lock(
+                lock, cleaned_title, cleaned_artist, duration, track_key
+            )
+        except Exception:
+            locked = None
+        if locked is not None and locked.lines:
+            _lyric_log(
+                f"入选 provider={locked.provider} track={track_key} "
+                f"lines={len(locked.lines)} reason=用户手动锁定"
+            )
+            return locked
 
     if prefer == "netease" and song_id:
         try:
@@ -916,6 +1197,11 @@ def fetch_enhanced(
                 result.track_key = track_key or song_id
                 result.match_score = 1.0
                 result.track_duration = float(duration or 0.0)
+                _lyric_log(
+                    f"入选 provider=netease-official track={track_key or song_id} "
+                    f"lines={len(doc.lines)} words={doc.has_words} "
+                    "reason=播放器官方 songId"
+                )
                 return result
         except Exception:  # noqa: BLE001
             pass
@@ -933,11 +1219,21 @@ def fetch_enhanced(
                 result.track_key = track_key
                 result.match_score = 1.0
                 result.track_duration = float(duration or 0.0)
+                _lyric_log(
+                    f"入选 provider=kugou-official track={track_key or title} "
+                    f"lines={len(doc.lines)} words={doc.has_words} "
+                    "reason=同平台严格三重匹配"
+                )
                 return result
         except Exception:  # noqa: BLE001
             pass
 
     result = fetch(title, artist, duration, prefer)
+    if variant and not result.lines:
+        _lyric_log(
+            f"被拒 title={title!r} reason=变速/remix 未取得同平台版本歌词"
+        )
+        return Lyrics(lines=[], source="", title=cleaned_title, artist=cleaned_artist)
     if result.lines:
         result.track_key = track_key
         result.to_doc()

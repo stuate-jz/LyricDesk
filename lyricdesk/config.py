@@ -182,9 +182,11 @@ class Settings:
     # 有的歌歌词是另一个版本的（整体差几秒），调好之后不该影响别的歌，
     # 所以按歌记；没记过的歌用上面的 offset_ms 当默认值。
     song_offsets: dict = field(default_factory=dict)
+    # 用户手动锁定的歌词候选：{track_key: {provider,title,artist,duration,extra}}
+    lyric_locks: dict = field(default_factory=dict)
     # 设置文件的格式版本：2 起偏移才是「一歌一记」。
     # 老文件没有这个字段，用来判断要不要把遗留的全局偏移清掉。
-    settings_version: int = 5
+    settings_version: int = 6
     preferred_player: str = ""
     # 检查更新的来源：owner/repo、gitee:owner/repo、http(s) 链接或本地 json 路径
     update_source: str = ""
@@ -208,6 +210,7 @@ class Settings:
         "player_pos",
         "lyrics_pos",
         "song_offsets",
+        "lyric_locks",
         "tray_hint_shown",
         "settings_version",
         "update_source",
@@ -338,6 +341,19 @@ class Settings:
         self.offset_ms = max(-30000, min(30000, int(self.offset_ms)))
         if not isinstance(self.song_offsets, dict):
             self.song_offsets = {}
+        if not isinstance(self.lyric_locks, dict):
+            self.lyric_locks = {}
+        cleaned_locks: dict[str, dict] = {}
+        for key, value in self.lyric_locks.items():
+            if not isinstance(value, dict):
+                continue
+            provider = str(value.get("provider") or "").strip()
+            if provider not in ("qq", "kugou", "netease", "netease-official"):
+                continue
+            cleaned_locks[str(key)[:300]] = value
+        while len(cleaned_locks) > 300:
+            cleaned_locks.pop(next(iter(cleaned_locks)))
+        self.lyric_locks = cleaned_locks
         cleaned: dict[str, int] = {}
         for key, value in self.song_offsets.items():
             try:

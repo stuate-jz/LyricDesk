@@ -365,6 +365,8 @@ class LyricWindow(QWidget):
         self.updateDownloaded.connect(self._on_update_downloaded)
         self.updateProgress.connect(self._on_update_progress)
         self.heatReady.connect(self._on_heat_ready)
+        if self.role != "player" and hasattr(self.engine, "candidateResults"):
+            self.engine.candidateResults.connect(self._show_lyric_candidates)
 
         self.setWindowTitle("桌面歌词")
         # 先设窗口标志，再设透明属性
@@ -3825,6 +3827,7 @@ class LyricWindow(QWidget):
 
         menu.addSeparator()
         menu.addAction("重新获取歌词", self.requestReload.emit)
+        menu.addAction("手动选歌词…", self._request_manual_lyrics)
         menu.addAction("回到默认位置", self._reset_position)
 
         # 「设置…」放在菜单靠下的位置（跟「检查更新…」挨着），常用操作在上面
@@ -4532,6 +4535,57 @@ class LyricWindow(QWidget):
             return ""
         version = str(pending.latest or "").strip()
         return version if version and is_newer(version, __version__) else ""
+
+    def _request_manual_lyrics(self) -> None:
+        getter = getattr(self.engine, "discover_current_lyrics", None)
+        if getter is None:
+            return
+        snapshot = self.engine.snapshot()
+        if snapshot is None or snapshot.track is None:
+            self.requestNotify.emit("手动选歌词", "当前没有正在播放的歌曲。")
+            return
+        self.requestNotify.emit("手动选歌词", "正在查找可用歌词，请稍候…")
+        getter()
+
+    def _show_lyric_candidates(self, values) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        values = list(values or [])
+        box = self._update_box(
+            QMessageBox.Icon.Information,
+            "手动选歌词",
+            "选择一个歌词版本",
+            "会按当前歌曲记住，下次播放会继续使用这个来源。",
+        )
+        buttons = []
+        for candidate in values[:4]:
+            first = str(candidate.get("first") or "").replace("\n", " ")
+            if len(first) > 28:
+                first = first[:28] + "…"
+            label = (
+                f"{candidate.get('label') or candidate.get('provider')} · "
+                f"{int(candidate.get('lines') or 0)} 行 · "
+                f"{float(candidate.get('duration') or 0):.0f}s\n{first}"
+            )
+            button = box.addButton(label, QMessageBox.ButtonRole.ActionRole)
+            buttons.append((button, candidate))
+        if not buttons:
+            box.addButton("知道了", QMessageBox.ButtonRole.AcceptRole)
+            box.exec()
+            return
+        cancel = box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is None or clicked is cancel:
+            return
+        for button, candidate in buttons:
+            if clicked is button:
+                self.engine.choose_lyric_candidate(candidate)
+                self.requestNotify.emit(
+                    "歌词已锁定",
+                    f"当前歌曲改用 {candidate.get('label') or candidate.get('provider')}。",
+                )
+                return
 
     def _store_pending(self, info) -> None:
         if info is None or not info.ok or not is_newer(info.latest, __version__):

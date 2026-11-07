@@ -38,6 +38,37 @@ _NOISE_PATTERNS = (
     r"\s*[-–—|]\s*AcFun.*$",
 )
 
+_SPEED_RE = re.compile(
+    r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:x|倍)(?![\w])",
+    re.IGNORECASE,
+)
+_VARIANT_RE = re.compile(
+    r"(?:"
+    r"加速版?|降速版?|伴奏版?|翻自|翻唱版|"
+    r"dj(?:\s*版)?|remix|"
+    r"sped\s*up|slowed(?:\s*\+\s*reverb)?|nightcore"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def variant_speed(text: str) -> float:
+    """返回标题里显式写出的倍速；没有写时返回 1.0。"""
+    match = _SPEED_RE.search(text or "")
+    if not match:
+        return 1.0
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return 1.0
+    return value if 0.5 <= value <= 2.0 else 1.0
+
+
+def is_variant_title(text: str) -> bool:
+    """标题是否明确指向变速 / remix / 伴奏这类独立时间轴版本。"""
+    value = text or ""
+    return bool(_VARIANT_RE.search(value) or variant_speed(value) != 1.0)
+
 
 def clean_title(text: str) -> str:
     """去掉视频标题里的平台噪声，返回干净的关键词（可能为空字符串）。"""
