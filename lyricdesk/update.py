@@ -289,16 +289,7 @@ def pick_assets(payload: dict) -> tuple[str, str]:
 
 def _extract(payload) -> tuple[str, str, str]:
     """从各种长得不太一样的 JSON 里取出 (版本号, 更新说明, 下载页)。"""
-    if isinstance(payload, list):
-        releases = [item for item in payload if isinstance(item, dict)]
-        if not releases:
-            return "", "", ""
-        payload = max(
-            releases,
-            key=lambda item: parse_version(
-                str(item.get("tag_name") or item.get("name") or "")
-            ),
-        )
+    payload = _select_payload(payload)
     if not isinstance(payload, dict):
         return "", "", ""
     flat = {str(key).lower(): value for key, value in payload.items()}
@@ -330,6 +321,21 @@ def _extract(payload) -> tuple[str, str, str]:
     return version, notes, url
 
 
+def _select_payload(payload):
+    """版本列表选出版本号最大的 Release；普通 JSON 原样返回。"""
+    if isinstance(payload, list):
+        releases = [item for item in payload if isinstance(item, dict)]
+        if not releases:
+            return {}
+        return max(
+            releases,
+            key=lambda item: parse_version(
+                str(item.get("tag_name") or item.get("name") or "")
+            ),
+        )
+    return payload
+
+
 def releases_page(source: str) -> str:
     """更新源是仓库时，兜底给出一个「Releases 页面」地址。"""
     text = (source or "").strip()
@@ -359,11 +365,12 @@ def check(source: str, on_done, timeout: float = 8.0) -> None:
                 except Exception as exc:  # noqa: BLE001
                     error = type(exc).__name__
                     continue
-                version, notes, link = _extract(payload)
+                selected = _select_payload(payload)
+                version, notes, link = _extract(selected)
                 if not version:
                     error = "返回内容里没有版本号"
                     continue
-                installer, portable = pick_assets(payload)
+                installer, portable = pick_assets(selected)
                 on_done(
                     UpdateInfo(
                         True,
