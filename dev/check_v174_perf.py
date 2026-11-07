@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import statistics
 import sys
 import tempfile
@@ -96,26 +97,26 @@ def main() -> int:
                     f"avg={average:.2f}ms max={maximum:.2f}ms"
                 )
 
-    v173 = {
-        ("list", "off"): 1.80,
-        ("list", "word"): 2.26,
-        ("list", "bounce"): 2.22,
-        ("disc", "off"): 1.88,
-        ("disc", "word"): 1.71,
-        ("disc", "bounce"): 1.60,
+    baseline_path = Path(__file__).resolve().parent / "perf_baseline.json"
+    raw_baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    baseline = {
+        tuple(key.split("/", 1)): float(value)
+        for key, value in raw_baseline.items()
     }
+    print("  同机同批复测，单次波动 ±8%")
     for layout in ("list", "disc"):
         for effect in ("off", "word", "bounce"):
             disabled = results[(layout, effect, 0.0)][0]
             enabled = results[(layout, effect, 1.0)][0]
-            delta = (disabled - v173[(layout, effect)]) / max(
-                0.001, v173[(layout, effect)]
+            target = baseline[(layout, effect)]
+            delta = (disabled - target) / max(
+                0.001, target
             )
             ok = delta <= 0.10
             failures += 0 if ok else 1
             print(
-                f"  {'OK  ' if ok else 'FAIL'} glow=0 相对 v1.7.3 {layout}/{effect}: "
-                f"{v173[(layout, effect)]:.2f} -> {disabled:.2f}ms ({delta:+.1%}); "
+                f"  {'OK  ' if ok else 'FAIL'} glow=0 相对同机基线 {layout}/{effect}: "
+                f"{target:.2f} -> {disabled:.2f}ms ({delta:+.1%}); "
                 f"glow=1 {enabled:.2f}ms"
             )
     print("全部通过" if not failures else f"{failures} 项失败")
