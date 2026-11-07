@@ -22,7 +22,25 @@ HEADERS = {
 TIMEOUT = 10
 _TIME_RE = re.compile(r"\[(\d+):(\d+(?:[.:]\d+)?)\]")
 _YRC_LINE = re.compile(r"^\[(\d+),(\d+)\](.*)$")
-_YRC_WORD = re.compile(r"\((\d+),(\d+),\d+\)")
+_YRC_WORD = re.compile(r"[\(<](\d+),(\d+),\d+[\)>]")
+_CREDIT_RE = re.compile(
+    r"^\s*(?:"
+    r"作词|作曲|编曲|演唱|原唱|制作人|制作|监制|出品人?|统筹|视觉|封面|策划|发行|词曲|词|曲|"
+    r"录音(?:师|棚|室)?|混音(?:师|室)?|母带(?:师|室)?|和声|吉他|贝斯|鼓|键盘|弦乐|"
+    r"lyrics?\s*(?:by|edit\w*)?|music\s*by|written\s*by|composed\s*by|arranged\s*by|"
+    r"produced\s*by|mixed\s*by|mastered\s*by|vocal\s*(?:edit\w*|by)?|"
+    r"lyricist|composer|arranger|producer|mixing|mastering|recording|label"
+    r")\s*[:：]",
+    re.IGNORECASE,
+)
+_BRACKET_ONLY = re.compile(r"^[\[【(（].*[\]】)）]$")
+_COLON_LABEL = re.compile(r"^.{0,20}?[:：]")
+_CREDIT_HEAD_RE = re.compile(
+    r"^\s*(?:版权|录音制品|音乐制作|制作公司|发行公司|出品公司|"
+    r"OP|SP|©|℗)",
+    re.IGNORECASE,
+)
+_CREDIT_WINDOW = 30.0
 
 
 def _normalize(text: str) -> str:
@@ -30,38 +48,78 @@ def _normalize(text: str) -> str:
     return re.sub(r"[\s\-_·、,，.。!！?？'\"“”‘’()（）\[\]【】]", "", value)
 
 
+def _parse_json_lrc(text: str) -> list[LyricLine]:
+    values: list[LyricLine] = []
+    for raw in text.splitlines():
+        try:
+            item = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(item, dict):
+            continue
+        timestamp = max(0.0, float(item.get("t") or 0.0) / 1000.0)
+        content = "".join(
+            str(part.get("tx") or "")
+            for part in item.get("c") or []
+            if isinstance(part, dict)
+        ).strip()
+        if content:
+            values.append(LyricLine(timestamp, 0.0, content))
+    return values
+
+
+def _parse_text_lrc(text: str) -> list[LyricLine]:
+    values: list[LyricLine] = []
+    for raw in text.replace("\r", "\n").splitlines():
+        stamps = list(_TIME_RE.finditer(raw))
+        if not stamps:
+            continue
+        content = raw[stamps[-1].end():].strip()
+        for stamp in stamps:
+            minute = int(stamp.group(1))
+            second = float(stamp.group(2).replace(":", "."))
+            values.append(LyricLine(minute * 60 + second, 0.0, content))
+    return values
+
+
+def _clean_lrc_lines(values: list[LyricLine]) -> list[LyricLine]:
+    cleaned: list[LyricLine] = []
+    seen: set[tuple[int, str]] = set()
+    for line in sorted(values, key=lambda item: item.time):
+        text = line.text.strip()
+        if not text:
+            continue
+        key = (round(line.time * 1000), _normalize(text))
+        if key in seen:
+            continue
+        if line.time < _CREDIT_WINDOW and (
+            _CREDIT_RE.match(text)
+            or _CREDIT_HEAD_RE.match(text)
+            or _BRACKET_ONLY.match(text)
+            or (len(text) <= 48 and _COLON_LABEL.match(text))
+        ):
+            continue
+        seen.add(key)
+        cleaned.append(
+            LyricLine(
+                time=line.time,
+                end=line.end,
+                text=text,
+                words=list(line.words),
+                trans=line.trans,
+                roma=line.roma,
+            )
+        )
+    return cleaned
+
+
 def parse_lrc(text: str) -> list[LyricLine]:
     if not text:
         return []
-    values: list[LyricLine] = []
-    if text.lstrip().startswith("{"):
-        for raw in text.splitlines():
-            try:
-                item = json.loads(raw)
-            except Exception:
-                continue
-            if not isinstance(item, dict):
-                continue
-            timestamp = float(item.get("t") or 0.0) / 1000.0
-            content = "".join(
-                str(part.get("tx") or "")
-                for part in item.get("c") or []
-                if isinstance(part, dict)
-            ).strip()
-            if content:
-                values.append(LyricLine(timestamp, 0.0, content))
-    else:
-        for raw in text.replace("\r", "\n").splitlines():
-            stamps = list(_TIME_RE.finditer(raw))
-            if not stamps:
-                continue
-            content = raw[stamps[-1].end():].strip()
-            for stamp in stamps:
-                minute = int(stamp.group(1))
-                second = float(stamp.group(2).replace(":", "."))
-                values.append(LyricLine(minute * 60 + second, 0.0, content))
-    values.sort(key=lambda line: line.time)
-    return values
+    # 网易云部分曲目把 JSON 制作信息和普通 [mm:ss] 歌词混在同一个字段里。
+    # 两种格式必须一起解析，不能因为首字符是 "{" 就把后面的正文全部丢掉。
+    values = _parse_json_lrc(text) + _parse_text_lrc(text)
+    return _clean_lrc_lines(values)
 
 
 def parse_yrc(text: str) -> list[LyricLine]:
@@ -74,13 +132,18 @@ def parse_yrc(text: str) -> list[LyricLine]:
         body = match.group(3)
         markers = list(_YRC_WORD.finditer(body))
         words: list[LyricWord] = []
+        relative_offsets = bool(
+            markers and int(markers[0].group(1)) < max(1, start_ms // 2)
+        )
         for index, marker in enumerate(markers):
             text_end = markers[index + 1].start() if index + 1 < len(markers) else len(body)
             content = body[marker.end():text_end]
             if content:
+                offset_ms = int(marker.group(1))
+                word_time = offset_ms if not relative_offsets else start_ms + offset_ms
                 words.append(
                     LyricWord(
-                        time=int(marker.group(1)) / 1000.0,
+                        time=word_time / 1000.0,
                         dur=int(marker.group(2)) / 1000.0,
                         text=content,
                     )
@@ -95,6 +158,11 @@ def parse_yrc(text: str) -> list[LyricLine]:
                 )
             )
     return values
+
+
+def parse_krc(text: str) -> list[LyricLine]:
+    """解析网易云 KRC 家族的 klyric；字偏移相对行首。"""
+    return parse_yrc(text)
 
 
 def _merge_timed_track(lines: list[LyricLine], raw: str, field: str) -> None:
@@ -128,17 +196,12 @@ def _merge_yrc(lines: list[LyricLine], yrc: list[LyricLine]) -> None:
         if best_index >= 0 and best_score >= 0.58:
             used.add(best_index)
             line.words = yrc[best_index].words
-    for index, detail in enumerate(yrc):
-        if index not in used:
-            lines.append(detail)
-    lines.sort(key=lambda line: line.time)
-
-
 def parse_payload(payload: dict, track_key: str = "") -> LyricDoc | None:
     lrc = str((payload.get("lrc") or {}).get("lyric") or "")
     yrc = str((payload.get("yrc") or {}).get("lyric") or "")
+    klyric = str((payload.get("klyric") or {}).get("lyric") or "")
     lines = parse_lrc(lrc)
-    detailed = parse_yrc(yrc)
+    detailed = _clean_lrc_lines(parse_yrc(yrc) or parse_krc(klyric))
     if not lines and detailed:
         lines = detailed
     if not lines:
