@@ -21,6 +21,7 @@ FFT_SIZE = 1024
 BAND_COUNT = 24
 HISTORY_FRAMES = 48
 FRAME_SECONDS = 0.025
+LOW_BANDS = 5
 
 
 def _fft(values: list[complex]) -> list[complex]:
@@ -134,6 +135,10 @@ class AudioMonitor:
             ([0.0] * BAND_COUNT for _ in range(HISTORY_FRAMES)),
             maxlen=HISTORY_FRAMES,
         )
+        self._low: deque[float] = deque(
+            (0.0 for _ in range(HISTORY_FRAMES)),
+            maxlen=HISTORY_FRAMES,
+        )
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._status = "未启动"
@@ -201,8 +206,10 @@ class AudioMonitor:
                 else:
                     mono = list(samples)
                 levels = _spectrum(mono, sample_rate)
+                low = sum(levels[:LOW_BANDS]) / LOW_BANDS
                 with self._lock:
                     self._levels.append(levels)
+                    self._low.append(low)
                     self._has_data = True
         except Exception as exc:  # noqa: BLE001
             self._status = f"回环不可用：{exc}"
@@ -243,6 +250,10 @@ class AudioMonitor:
             frames = list(self._levels)
         band = max(0, min(BAND_COUNT - 1, int(band)))
         return [frame[band] for frame in frames]
+
+    def low_energy(self) -> list[float]:
+        with self._lock:
+            return list(self._low)
 
     @property
     def status(self) -> str:
