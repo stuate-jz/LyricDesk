@@ -129,6 +129,8 @@ class Settings:
     disc_angle: float = 0.0
     # 扇形张角：按可见行数均分
     disc_spread: float = 30.0
+    # 圆盘歌词环相对封面的额外半径，0 = 保持 v1.7.6 的观感
+    disc_radius: float = 0.0
     # 歌词动效：off / word（软边点亮） / bounce（软边 + 逐字弹簧）
     lyric_effect: str = "off"
     lyric_glow: float = 1.0
@@ -401,6 +403,7 @@ class Settings:
             self.lyric_layout = "list"
         self.disc_angle = max(-90.0, min(90.0, float(self.disc_angle)))
         self.disc_spread = max(20.0, min(120.0, float(self.disc_spread)))
+        self.disc_radius = max(0.0, min(260.0, float(self.disc_radius)))
         if self.lyric_effect == "sweep":
             self.lyric_effect = "word"
         if self.lyric_effect not in ("off", "word", "bounce"):

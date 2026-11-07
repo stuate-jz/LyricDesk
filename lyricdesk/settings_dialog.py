@@ -815,6 +815,7 @@ class SettingsDialog(QDialog):
         self._align_combo = None
         self._disc_angle_row = None
         self._disc_spread_row = None
+        self._disc_radius_row = None
         self._glow_row = None
         self._scatter_box = None
         self._chaos_row = None
@@ -1421,6 +1422,19 @@ class SettingsDialog(QDialog):
             unit="°",
             coalesce_ms=60,
         )
+        self._disc_radius_row = self._slider(
+            layout,
+            "lyrics.disc.radius",
+            "圆心大小",
+            getter=lambda: settings.disc_radius,
+            apply=self.window._set_disc_radius,
+            minimum=0.0,
+            maximum=260.0,
+            step=1.0,
+            default=self._defaults.disc_radius,
+            unit="px",
+            coalesce_ms=60,
+        )
         self._disc_hint = self._hint(
             layout,
             "lyrics.disc.hint",
@@ -1647,7 +1661,7 @@ class SettingsDialog(QDialog):
     def _sync_layout_controls(self) -> None:
         settings = self.window.settings
         disc = settings.lyric_layout == "disc"
-        for row in (self._disc_angle_row, self._disc_spread_row):
+        for row in (self._disc_angle_row, self._disc_spread_row, self._disc_radius_row):
             if row is not None:
                 row.setEnabled(disc)
         for row in self._text3d_rows:

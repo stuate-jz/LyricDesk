@@ -778,6 +778,33 @@ class LyricWindow(QWidget):
                     self._disc_line_width,
                     max(fm_list.height(), self._metrics["list_cur"].height()),
                 )
+                screen = self.screen() or QApplication.primaryScreen()
+                room = (
+                    float(screen.availableGeometry().width())
+                    - 2 * (PAD + MARGIN)
+                    if screen is not None
+                    else float(WIDTH_MAX)
+                )
+                width_cap = max(float(WIDTH_MIN), min(float(WIDTH_MAX), room))
+                if bound_w > width_cap and float(settings.disc_radius) > 0.0:
+                    line_height = max(
+                        fm_list.height(), self._metrics["list_cur"].height()
+                    )
+                    base_extent = (
+                        self._disc_size / 2.0
+                        + 26.0
+                        + float(self._disc_line_width)
+                        + line_height / 2.0
+                    )
+                    usable_gap = max(0.0, width_cap / 2.0 - base_extent)
+                    actual = min(float(settings.disc_radius), usable_gap)
+                    settings.disc_radius = max(0.0, actual)
+                    settings.save()
+                    bound_w, bound_h = self._disc_bounds(
+                        self._disc_size,
+                        self._disc_line_width,
+                        line_height,
+                    )
                 window_w = max(float(WIDTH_MIN), bound_w)
                 content_h = PAD * 2 + bound_h
                 self._overscan = 0
@@ -900,12 +927,17 @@ class LyricWindow(QWidget):
         self._auto_width_cache = (key, value)
         return value
 
+    def _disc_start_radius(self, disc: float | None = None) -> float:
+        """歌词环起始半径：封面半径 + 固定间距 + 用户额外半径。"""
+        value = self._disc_size if disc is None else float(disc)
+        return value / 2.0 + 26.0 + float(self.settings.disc_radius)
+
     def _disc_bounds(
         self, disc: float, line_width: float, line_height: float
     ) -> tuple[float, float]:
         """圆盘在全部允许角度下的固定正方形包络。"""
         radius = disc / 2.0
-        start = radius + 26.0
+        start = self._disc_start_radius(disc)
         center_radius = start + line_width / 2.0
         extent = max(radius, center_radius + line_width / 2.0 + line_height / 2.0)
         size = extent * 2.0
@@ -920,7 +952,7 @@ class LyricWindow(QWidget):
         requested = max(20.0, min(120.0, float(self.settings.disc_spread)))
         # 张角只控制角度；字号始终由 font_size 决定。为了不让 20° 时
         # 多行完全糊在一起，保留一个“轻微重叠”的可用下限，但绝不再缩字。
-        start_radius = self._disc_size / 2.0 + 26.0
+        start_radius = self._disc_start_radius()
         base_step = max(5.0, min(16.0, 18.0 - start_radius * 0.04))
         min_step = base_step * max(0.65, min(1.35, line_height / 36.0)) ** 0.5
         effective = max(requested, min_step * max(1, count - 1))
@@ -2941,7 +2973,7 @@ class LyricWindow(QWidget):
         center_y = card.center().y() + self._disc_center_offset.y()
         disc = self._disc_size
         radius = disc / 2.0
-        start_radius = radius + 26.0
+        start_radius = self._disc_start_radius()
         cover_key = self._cover_key(lyrics)
 
         if settings.show_cover:
@@ -4200,6 +4232,11 @@ class LyricWindow(QWidget):
         self.settings.save()
         self.update()
         self.settingsChanged.emit()
+
+    def _set_disc_radius(self, value: float) -> None:
+        before = self._disc_center_on_screen()
+        self.settings.disc_radius = max(0.0, min(260.0, float(value)))
+        self._apply_disc_change(before)
 
     def _set_lyric_effect(self, value: str) -> None:
         if value == "sweep":
