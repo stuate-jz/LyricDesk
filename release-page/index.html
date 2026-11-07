@@ -232,9 +232,9 @@
    下面的 FALLBACK 只在直接双击本地打开（file:// 读不到 json）或 fetch 失败时兜底，
    所以要跟当前版本保持一致：version / date / notes 跟 packaging/update.json 同步。 */
 const FALLBACK = {
-  version: "1.7.1",
+  version: "1.7.2",
   date: "2026-11-07",
-  notes: "· 修复：列表模式同一歌名被绘制两次\n· 修复：圆盘隐藏歌名歌手热度并让透明窗口紧贴扇形内容\n· 修复：调整圆盘角度、张角或左右方位时圆心漂移\n· 修复：列表模式文字倾斜可用，圆盘模式三个倾斜项置灰\n· 改进：圆盘按纯角度均分，自动抬高安全张角并消除左侧叠字\n· 改进：重做软边逐字点亮与逐字弹簧动效",
+  notes: "· 修复：混合格式官方歌词只解析制作信息、丢失正文\n· 修复：变速/remix 版本串到原版时间轴\n· 改进：候选增加时长比例、正文、首句与行数交叉校验\n· 新增：手动选歌词并按键位版本记忆\n· 改进：网易云 YRC/klyric 逐字合并与酷狗覆盖竞争\n· 改进：无逐字歌词也支持点亮与弹簧估算\n· 改进：圆盘调张角不缩字、旋转不移动圆心\n· 改进：右键更新改为可直接点击的进度圆环\n· 修复：Gitee latest 缓存旧版本时改读完整 Release 列表",
   url: "https://gitee.com/pursue-studies/LyricDesk/releases",
   page_url: "https://gitee.com/pursue-studies/LyricDesk/releases",
   size_mb: 54,
