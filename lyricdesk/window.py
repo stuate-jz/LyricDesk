@@ -71,6 +71,7 @@ from .update import (
 )
 from .win_util import is_topmost, set_native_topmost
 from .lyrics import normalize
+from .lyricfx import build_char_timeline, render_budget, reveal_state
 from .render import (
     draw_sprite,
     ease_out_back,
@@ -300,6 +301,21 @@ class UpdateRingActionWidget(QWidget):
             self.owner._start_menu_update(self.info)
         event.accept()
 
+    def status_text(self) -> str:
+        state = getattr(self.owner, "_menu_update_state", "idle")
+        done = float(getattr(self.owner, "_menu_update_done", 0))
+        total = float(getattr(self.owner, "_menu_update_total", 0))
+        version = str(getattr(self.info, "latest", "") or "")
+        if state == "downloading":
+            if total <= 0:
+                return "正在下载更新…"
+            return f"正在下载 {int(max(0.0, min(1.0, done / total)) * 100)}%"
+        if state == "installing":
+            return "正在安装…"
+        if state == "failed":
+            return "更新失败（点击重试）"
+        return f"发现新版本 v{version}（点击更新）"
+
     def paintEvent(self, event) -> None:  # noqa: N802
         del event
         painter = QPainter(self)
@@ -335,15 +351,7 @@ class UpdateRingActionWidget(QWidget):
             painter.setPen(pen)
             painter.drawArc(ring, 90 * 16, int(-360 * progress * 16))
 
-        version = str(getattr(self.info, "latest", "") or "")
-        if state == "downloading":
-            text = f"正在下载 {int(progress * 100)}%" if total > 0 else "正在下载更新…"
-        elif state == "installing":
-            text = "正在安装…"
-        elif state == "failed":
-            text = "更新失败（点击重试）"
-        else:
-            text = f"发现新版本 v{version}（点击更新）"
+        text = self.status_text()
         painter.setPen(text_color)
         font = QFont(self.owner.settings.font_family)
         font.setPixelSize(12)
@@ -2521,6 +2529,60 @@ class LyricWindow(QWidget):
                 scale=scale,
                 opacity=opacity,
             )
+            return
+        if effect == "word":
+            budget = render_budget(float(line.end or 0.0) - float(line.time or 0.0))
+            timings = build_char_timeline(line, family, fitted, weight, art.advance)
+            position = self._display_position(snapshot) + self._offset_ms() / 1000.0
+            if not timings:
+                render_mod.draw_line_art(
+                    painter,
+                    art,
+                    center_x,
+                    baseline,
+                    progress=progress,
+                    scale=scale,
+                    opacity=opacity,
+                )
+                return
+            if budget.reveal == "instant":
+                visible = 1.0 if position >= timings[0].start else 0.0
+                render_mod.draw_line_art(
+                    painter,
+                    art,
+                    center_x,
+                    baseline,
+                    progress=visible,
+                    scale=scale,
+                    opacity=opacity,
+                )
+                return
+            solid, tail, feather, exit_opacity = reveal_state(
+                timings,
+                position,
+                exit_duration=budget.exit,
+            )
+            render_mod.draw_line_art(
+                painter,
+                art,
+                center_x,
+                baseline,
+                progress=0.0,
+                scale=scale,
+                opacity=opacity * 0.24 * exit_opacity,
+            )
+            if solid > 0.0 and exit_opacity > 0.0:
+                render_mod.draw_line_art(
+                    painter,
+                    art,
+                    center_x,
+                    baseline,
+                    progress=solid,
+                    scale=scale,
+                    opacity=opacity * exit_opacity,
+                    softness=feather,
+                    tail_progress=tail,
+                )
             return
         if not words:
             # 没有字级时间时按每个字的实际宽度均分整行时长。它不是“真实演唱

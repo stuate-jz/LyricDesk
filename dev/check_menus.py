@@ -16,10 +16,13 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 from PySide6.QtCore import QPoint  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMenu, QWidgetAction  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 
 from lyricdesk import config  # noqa: E402
 from lyricdesk.config import Settings  # noqa: E402
+from lyricdesk.update import UpdateInfo  # noqa: E402
 from lyricdesk.window import LyricWindow, log_error  # noqa: E402
 
 config.SETTINGS_PATH = Path(os.environ["APPDATA"]) / "LyricDesk" / "settings.json"
@@ -57,6 +60,13 @@ class FakeEngine:
 
 def action_texts(menu: QMenu) -> list[str]:
     return [action.text() for action in menu.actions()]
+
+
+def update_widget(menu: QMenu):
+    for action in menu.actions():
+        if isinstance(action, QWidgetAction):
+            return action.defaultWidget()
+    return None
 
 
 def main() -> int:
@@ -100,6 +110,73 @@ def main() -> int:
         check(f"{label} 没有重复隐藏入口", not any("隐藏歌词" in text for text in right_texts))
         right_menu.deleteLater()
         tray_menu.deleteLater()
+
+    print("\n更新圆环跨菜单生命周期：")
+    lifecycle = windows[0]
+    lifecycle._update_pending = UpdateInfo(
+        ok=True,
+        latest="9.9.9",
+        notes="",
+        url="https://example.com",
+        installer="https://example.com/setup.exe",
+    )
+    lifecycle._set_menu_update_state("downloading", done=40, total=100)
+    first_menu = lifecycle.build_menu()
+    first_widget = lifecycle._menu_update_widget
+    check(
+        "关菜单前显示约 40%",
+        bool(first_widget and "40%" in first_widget.status_text()),
+        first_widget.status_text() if first_widget else "",
+    )
+    first_menu.close()
+    first_menu.deleteLater()
+
+    second_menu = lifecycle.build_menu()
+    second_widget = lifecycle._menu_update_widget
+    check(
+        "重新打开菜单不回到 0%",
+        bool(second_widget and "40%" in second_widget.status_text()),
+        second_widget.status_text() if second_widget else "",
+    )
+    second_menu.close()
+    second_menu.deleteLater()
+
+    lifecycle._set_menu_update_state("installing", done=100, total=100)
+    third_menu = lifecycle.build_menu()
+    third_widget = lifecycle._menu_update_widget
+    check(
+        "下载完成后再开菜单显示正在安装",
+        bool(third_widget and third_widget.status_text() == "正在安装…"),
+        third_widget.status_text() if third_widget else "",
+    )
+    third_menu.close()
+    third_menu.deleteLater()
+
+    lifecycle._set_menu_update_state("failed", done=100, total=100)
+    failed_menu = lifecycle.build_menu()
+    failed_widget = lifecycle._menu_update_widget
+    retried = []
+    original_start = lifecycle._start_menu_update
+    lifecycle._start_menu_update = lambda info: retried.append(info)
+    try:
+        check(
+            "失败后重开菜单显示点击重试",
+            bool(failed_widget and "点击重试" in failed_widget.status_text()),
+            failed_widget.status_text() if failed_widget else "",
+        )
+        failed_menu.show()
+        app.processEvents()
+        QTest.mouseClick(
+            failed_widget,
+            Qt.MouseButton.LeftButton,
+            pos=QPoint(20, 20),
+        )
+        app.processEvents()
+        check("失败状态点圆环可以重试", len(retried) == 1)
+    finally:
+        lifecycle._start_menu_update = original_start
+        failed_menu.close()
+        failed_menu.deleteLater()
 
     print("\n兜底路径：")
     broken = windows[0]

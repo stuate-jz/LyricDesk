@@ -224,6 +224,7 @@ def reveal_state(
     position: float,
     *,
     micro: bool = False,
+    exit_duration: float = 0.32,
 ) -> tuple[float, float, float, float]:
     """返回（实心前沿、拖尾前沿、羽化像素、透明度）。
 
@@ -251,7 +252,10 @@ def reveal_state(
     line_width = max(1.0, timings[-1].x + timings[-1].width)
     opacity = 1.0
     if position > timings[-1].end:
-        opacity = max(0.0, 1.0 - (position - timings[-1].end) / 0.32)
+        opacity = max(
+            0.0,
+            1.0 - (position - timings[-1].end) / max(0.001, exit_duration),
+        )
     return (
         max(0.0, min(1.0, solid_x / line_width)),
         max(0.0, min(1.0, tail_x / line_width)),
