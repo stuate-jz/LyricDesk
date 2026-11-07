@@ -5,6 +5,7 @@ from __future__ import annotations
 import unicodedata
 import math
 from collections import OrderedDict
+from collections import Counter
 from dataclasses import dataclass
 
 from PySide6.QtGui import QFont, QFontMetricsF
@@ -14,6 +15,8 @@ SHORT_LINE = 0.18
 
 _TIMELINE_CACHE: "OrderedDict[tuple, tuple[CharTiming, ...]]" = OrderedDict()
 _TIMELINE_CACHE_LIMIT = 192
+_CHORUS_CACHE: "OrderedDict[tuple, tuple[float, ...]]" = OrderedDict()
+_CHORUS_CACHE_LIMIT = 4
 
 
 @dataclass(frozen=True)
@@ -280,6 +283,7 @@ class WordSpring:
         position: float,
         budget: Budget,
         dt: float,
+        active_target: float = 1.16,
     ) -> list[SpringState]:
         states: list[SpringState] = []
         for index, timing in enumerate(timings):
@@ -290,7 +294,7 @@ class WordSpring:
                 alpha_target = 1.0
             elif position < timing.end:
                 mode = "active"
-                target = 1.16
+                target = active_target
                 alpha_target = 1.0
             else:
                 mode = "passed"
@@ -351,3 +355,55 @@ def reveal_state(
 
 def clear_timeline_cache() -> None:
     _TIMELINE_CACHE.clear()
+
+
+def _chorus_text(text: str) -> str:
+    remove = set("，。！？、,.!?…～~　 \t\r\n")
+    return "".join(char for char in str(text or "") if char not in remove)
+
+
+def chorus_weights(lines) -> list[float]:
+    """重复整句权重 1.0，前四个字相同权重 0.5；无明显副歌时全 0。"""
+    values = list(lines or [])
+    if not values:
+        return []
+    first = values[0]
+    key = (
+        len(values),
+        round(float(getattr(first, "time", 0.0) or 0.0), 3),
+        round(float(getattr(values[-1], "end", 0.0) or 0.0), 3),
+        str(getattr(first, "text", "") or ""),
+    )
+    cached = _CHORUS_CACHE.get(key)
+    if cached is not None:
+        _CHORUS_CACHE.move_to_end(key)
+        return list(cached)
+
+    normalized = [_chorus_text(getattr(line, "text", "")) for line in values]
+    counts = Counter(text for text in normalized if text)
+    highest = max(counts.values(), default=0)
+    if highest < 2 or highest / max(1, len(normalized)) < 0.05:
+        result = [0.0] * len(normalized)
+    else:
+        prefixes = {
+            text[:4]
+            for text, count in counts.items()
+            if len(text) >= 4 and count >= 2
+        }
+        result = []
+        for text in normalized:
+            if text and counts[text] >= 2:
+                result.append(1.0)
+            elif len(text) >= 4 and text[:4] in prefixes:
+                result.append(0.5)
+            else:
+                result.append(0.0)
+    frozen = tuple(result)
+    _CHORUS_CACHE[key] = frozen
+    if len(_CHORUS_CACHE) > _CHORUS_CACHE_LIMIT:
+        _CHORUS_CACHE.popitem(last=False)
+    return list(frozen)
+
+
+def clear_chorus_cache() -> None:
+    _CHORUS_CACHE.clear()

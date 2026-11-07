@@ -70,7 +70,13 @@ from .update import (
 )
 from .win_util import is_topmost, set_native_topmost
 from .lyrics import normalize
-from .lyricfx import WordSpring, build_char_timeline, render_budget, reveal_state
+from .lyricfx import (
+    WordSpring,
+    build_char_timeline,
+    chorus_weights,
+    render_budget,
+    reveal_state,
+)
 from .render import (
     draw_sprite,
     ease_out_back,
@@ -443,6 +449,8 @@ class LyricWindow(QWidget):
         self._spring_line_key = None
         self._spring_last_time = 0.0
         self._spring_last_position = -1.0
+        self._chorus_key = None
+        self._chorus_map: dict[int, float] = {}
 
         self._hit_prev = QRectF()
         self._hit_play = QRectF()
@@ -2019,6 +2027,18 @@ class LyricWindow(QWidget):
             return (left + right) / 2.0
         return right - advance / 2.0
 
+    def _chorus_for_line(self, line) -> float:
+        lyrics = getattr(self.engine, "lyrics", None)
+        lines = list(getattr(lyrics, "lines", []) or [])
+        key = (id(lyrics), len(lines))
+        if key != self._chorus_key:
+            weights = chorus_weights(lines)
+            self._chorus_map = {
+                id(item): weight for item, weight in zip(lines, weights)
+            }
+            self._chorus_key = key
+        return self._chorus_map.get(id(line), 0.0)
+
     def _chaos_transform(
         self, line, advance: float = 0.0
     ) -> tuple[float, float, float, float]:
@@ -2596,6 +2616,8 @@ class LyricWindow(QWidget):
                 rotation=rotation,
             )
             return
+        chorus = self._chorus_for_line(line)
+        glow_scale = min(2.0, glow_scale * (1.0 + 0.60 * chorus))
         budget = render_budget(float(line.end or 0.0) - float(line.time or 0.0))
         position = self._display_position(snapshot) + self._offset_ms() / 1000.0
         if budget.reveal == "instant":
@@ -2681,6 +2703,7 @@ class LyricWindow(QWidget):
                     opacity=draw_opacity * exit_opacity,
                     softness=feather,
                     tail_progress=tail,
+                    tail_alpha=0.72 + 0.13 * chorus,
                     glow_scale=glow_scale,
                     entry_blur=entry_blur,
                     rotation=rotation,
@@ -2719,7 +2742,13 @@ class LyricWindow(QWidget):
         dt = min(0.08, max(0.0, now - self._spring_last_time))
         self._spring_last_time = now
         self._spring_last_position = position
-        states = self._word_spring.update(timings, position, budget, dt)
+        states = self._word_spring.update(
+            timings,
+            position,
+            budget,
+            dt,
+            active_target=1.16 + 0.04 * chorus,
+        )
         softness = max(6.0, min(14.0, fitted * 0.32))
         for timing, state in zip(timings, states):
             if state.mode == "waiting":
@@ -2765,6 +2794,7 @@ class LyricWindow(QWidget):
                 opacity=draw_opacity * state.alpha,
                 softness=softness if active else 0.0,
                 tail_progress=char_progress,
+                tail_alpha=0.72 + 0.13 * chorus,
                 glow_scale=glow_scale * (1.15 if active else 0.55),
                 entry_blur=entry_blur,
                 rotation=rotation,
