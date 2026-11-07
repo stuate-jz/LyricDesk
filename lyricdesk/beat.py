@@ -59,19 +59,23 @@ class BeatTracker:
         if flux:
             median = _median(flux)
             mad = _median([abs(value - median) for value in flux])
-            threshold = max(0.004, median + 1.5 * mad)
-            last = flux[-1]
-            previous = flux[-2] if len(flux) > 1 else 0.0
-            local_max = last > 0.0 and last >= previous
+            peak = max(flux)
+            # 稀疏频谱下 median/MAD 会退化成 0，必须再挂一个峰值相对门限。
+            threshold = max(0.004, median + 1.5 * mad, 0.40 * peak)
+            tail = flux[-3:]
+            candidate = max(tail)
+            candidate_index = len(tail) - 1 - tail[::-1].index(candidate)
+            candidate_time = now - (len(tail) - 1 - candidate_index) * FRAME_SECONDS
+            loud = max(values[-12:]) >= 0.15
             if (
-                last > threshold
-                and local_max
+                loud
+                and candidate > threshold
                 and now - self._last_onset >= REFRACTORY
             ):
-                strength = min(1.0, max(0.0, last / threshold - 1.0))
+                strength = min(1.0, max(0.0, candidate / threshold - 1.0))
                 self.pulse = max(self.pulse, strength)
-                self._last_onset = now
-                self._onsets.append(now)
+                self._last_onset = candidate_time
+                self._onsets.append(candidate_time)
                 self._onset_count += 1
                 onset = True
 

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import math
 import importlib.util
 import os
+import random
 import sys
 import tempfile
 import time
@@ -47,7 +47,7 @@ class ProbeBeat(BeatTracker):
         return super().update(low, now)
 
 
-def run_click(bpm: float, seconds: float = 10.0) -> tuple[BeatTracker, BeatTracker]:
+def run_click(bpm: float, seconds: float = 20.0) -> tuple[BeatTracker, BeatTracker]:
     tracker = BeatTracker()
     history = [0.0] * 48
     interval_frames = max(1, int(round((60.0 / bpm) / 0.025)))
@@ -56,6 +56,40 @@ def run_click(bpm: float, seconds: float = 10.0) -> tuple[BeatTracker, BeatTrack
         value = 1.0 if frame > 8 and (frame - 8) % interval_frames == 0 else 0.0
         history = history[1:] + [value]
         state = tracker.update(history, frame * 0.025)
+    return tracker, state
+
+
+def run_jitter(
+    bpm: float,
+    jitter: float,
+    seconds: float = 20.0,
+    poll: float = 30.0,
+    *,
+    base: float = 0.32,
+    click: bool = True,
+) -> tuple[BeatTracker, object]:
+    """真实频谱的帧间抖动是随机的，不是平滑正弦。"""
+    rng = random.Random(5)
+    frames = int(seconds / 0.025)
+    period = 60.0 / bpm / 0.025
+    low = []
+    for index in range(frames):
+        value = base + rng.uniform(-jitter, jitter)
+        if click:
+            for beat in range(int(frames / period) + 1):
+                if abs(index - beat * period) < 0.5:
+                    value = 0.9
+        low.append(max(0.0, value))
+    tracker = BeatTracker()
+    state = None
+    ticks = int(seconds * poll)
+    for tick in range(ticks):
+        now = tick / poll
+        frame = int(now / 0.025)
+        history = low[max(0, frame - 47):frame + 1]
+        if len(history) < 48:
+            history = [0.0] * (48 - len(history)) + history
+        state = tracker.update(history, now)
     return tracker, state
 
 
@@ -71,15 +105,41 @@ def main() -> int:
 
     tracker120, state120 = run_click(120)
     check("120 BPM 落在 ±4", abs(state120.bpm - 120) <= 4, str(state120))
-    expected = 19
+    expected = 40
     check(
-        "120 BPM 起音计数误差 ≤1",
+        "零抖动 120 BPM 起音 40 次",
         abs(tracker120._onset_count - expected) <= 1,
         str(tracker120._onset_count),
     )
 
     tracker90, state90 = run_click(90)
     check("90 BPM 落在 ±4", abs(state90.bpm - 90) <= 4, str(state90))
+
+    for bpm, jitter, expected_count, tolerance in (
+        (100, 0.005, 33, 0.10),
+        (100, 0.02, 33, 0.10),
+        (120, 0.005, 40, 0.10),
+        (120, 0.02, 40, 0.10),
+        (60, 0.02, 20, 0.15),
+    ):
+        tracker, state = run_jitter(bpm, jitter)
+        low = expected_count * (1.0 - tolerance)
+        high = expected_count * (1.0 + tolerance)
+        detail = (
+            f"onsets={tracker._onset_count}, bpm={state.bpm:.0f}, "
+            f"confidence={state.confidence:.2f}"
+        )
+        check(
+            f"{bpm}BPM 抖动 ±{jitter:g} 起音数在范围内",
+            low <= tracker._onset_count <= high,
+            detail,
+        )
+        if bpm in (100, 120):
+            check(
+                f"{bpm}BPM 抖动 ±{jitter:g} confidence ≥0.5",
+                state.confidence >= 0.5,
+                f"{state.confidence:.2f}",
+            )
 
     silent = BeatTracker()
     history = [0.0] * 48
@@ -89,16 +149,14 @@ def main() -> int:
     check("静音 3 秒没有起音", silent._onset_count == 0, str(silent._onset_count))
     check("静音脉冲归零", state.pulse < 0.02, str(state.pulse))
 
-    noisy = BeatTracker()
-    history = [0.0] * 48
-    onsets = 0
-    for frame in range(400):
-        # 0.12 是持续底噪幅度；叠加 ±1% 的缓慢起伏模拟室内噪声。
-        value = 0.12 + 0.01 * (0.5 + 0.5 * math.sin(frame * 0.2))
-        history = history[1:] + [value]
-        state = noisy.update(history, frame * 0.025)
-    onset_count = noisy._onset_count
-    check("噪声误报 ≤2 次/10 秒", onset_count <= 2, str(onset_count))
+    quiet, _quiet_state = run_jitter(
+        120,
+        0.01,
+        seconds=10.0,
+        base=0.05,
+        click=False,
+    )
+    check("安静段抖动不产生起音", quiet._onset_count == 0, str(quiet._onset_count))
     perf_tracker = BeatTracker()
     started = time.perf_counter()
     for index in range(10000):
