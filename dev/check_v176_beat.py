@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import os
 import random
 import sys
@@ -67,6 +68,7 @@ def run_jitter(
     *,
     base: float = 0.32,
     click: bool = True,
+    peak: float = 0.9,
 ) -> tuple[BeatTracker, object]:
     """真实频谱的帧间抖动是随机的，不是平滑正弦。"""
     rng = random.Random(5)
@@ -78,7 +80,7 @@ def run_jitter(
         if click:
             for beat in range(int(frames / period) + 1):
                 if abs(index - beat * period) < 0.5:
-                    value = 0.9
+                    value = peak
         low.append(max(0.0, value))
     tracker = BeatTracker()
     state = None
@@ -87,8 +89,6 @@ def run_jitter(
         now = tick / poll
         frame = int(now / 0.025)
         history = low[max(0, frame - 47):frame + 1]
-        if len(history) < 48:
-            history = [0.0] * (48 - len(history)) + history
         state = tracker.update(history, now)
     return tracker, state
 
@@ -157,6 +157,50 @@ def main() -> int:
         click=False,
     )
     check("安静段抖动不产生起音", quiet._onset_count == 0, str(quiet._onset_count))
+
+    sustained, _ = run_jitter(
+        120,
+        0.05,
+        seconds=10.0,
+        base=0.72,
+        click=False,
+    )
+    check(
+        "持续低音+0.05 抖动无起音",
+        sustained._onset_count == 0,
+        str(sustained._onset_count),
+    )
+
+    slow = BeatTracker()
+    rng = random.Random(176)
+    history = [0.0] * 48
+    for frame in range(int(12.0 / 0.025)):
+        now = frame * 0.025
+        value = (
+            0.55
+            + 0.12 * math.sin(2.0 * math.pi * 0.7 * now)
+            + rng.uniform(-0.03, 0.03)
+        )
+        history = history[1:] + [max(0.0, value)]
+        slow.update(history, now)
+    check(
+        "慢速起伏起音 ≤2",
+        slow._onset_count <= 2,
+        str(slow._onset_count),
+    )
+
+    light_tracker, light_state = run_jitter(
+        120,
+        0.02,
+        seconds=20.0,
+        base=0.32,
+        peak=0.45,
+    )
+    check(
+        "轻鼓点至少检出 36/40",
+        light_tracker._onset_count >= 36,
+        f"onsets={light_tracker._onset_count}, confidence={light_state.confidence:.2f}",
+    )
     perf_tracker = BeatTracker()
     started = time.perf_counter()
     for index in range(10000):

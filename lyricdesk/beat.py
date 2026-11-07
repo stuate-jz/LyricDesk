@@ -10,6 +10,9 @@ REFRACTORY = 0.12
 DECAY = 0.82
 MIN_BPM = 60.0
 MAX_BPM = 180.0
+# 低音带均值在 25~75ms 内的最小跳变。极安静、鼓点不足一格时宁可
+# 不脉动，也不要让持续低音和长音 pad 一直误闪。
+MIN_ONSET_FLUX = 0.10
 
 
 def _median(values: list[float]) -> float:
@@ -70,6 +73,7 @@ class BeatTracker:
             if (
                 loud
                 and candidate > threshold
+                and candidate >= MIN_ONSET_FLUX + 1e-6
                 and now - self._last_onset >= REFRACTORY
             ):
                 strength = min(1.0, max(0.0, candidate / threshold - 1.0))
