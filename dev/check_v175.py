@@ -136,12 +136,20 @@ def main() -> int:
     window._scroll_ready = True
     window._scroll_from = window._scroll_target = 8.0
     render(window)
+    # 呼吸描边依赖 time.monotonic；先暂停播放，才能稳定比较错落开关本身。
+    engine._snapshot.is_playing = False
     disc_off = render(window)
     settings.lyric_scatter = True
     disc_on = render(window)
+    engine._snapshot.is_playing = True
     check(
         "圆盘 scatter_amount 恒为 0",
         settings.scatter_amount() == 0.0,
+    )
+    check(
+        "圆盘下 _chaos_transform 恒为恒等元组",
+        window._chaos_transform(engine.lyrics.lines[8], 300.0)
+        == (0.0, 0.0, 1.0, 0.0),
     )
     disc_equal = bytes_of(disc_off) == bytes_of(disc_on)
     disc_off.save(str(ROOT / "dev" / "v175_disc-off.png"))
