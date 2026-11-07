@@ -133,8 +133,12 @@ def main() -> int:
 
     # chaos 确定性。
     settings.lyric_effect = "off"
-    settings.lyric_chaos = 0.5
     settings.lyric_layout = "list"
+    settings.lyric_chaos = 0.0
+    width0 = window._auto_width()
+    settings.lyric_chaos = 0.5
+    width1 = window._auto_width()
+    check("chaos 为自动宽度预留空间", width1 >= width0, f"{width0} -> {width1}")
     window._commit(resize=True)
     a = window._chaos_transform(line)
     b = window._chaos_transform(line)
