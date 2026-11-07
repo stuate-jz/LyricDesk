@@ -8,7 +8,7 @@
 
 **悬浮在桌面上的歌词组件** —— 不挑播放器，带歌词跳动动画，不改你的壁纸
 
-**当前版本 v1.7.2**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
+**当前版本 v1.7.3**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 镜像仓库：[GitHub](https://github.com/stuate-jz/LyricDesk)　·　发布页：[stuate-jz.github.io/LyricDesk](https://stuate-jz.github.io/LyricDesk/)
 
@@ -18,7 +18,7 @@
 
 ## ⬇ 下载
 
-### ⚙ [**LyricDesk-Setup-v1.7.2.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
+### ⚙ [**LyricDesk-Setup-v1.7.3.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 双击一路「下一步」装好即可（不需要管理员权限，不需要改任何系统设置）。
 
@@ -34,15 +34,12 @@
 
 ## 这个版本更新了什么
 
-- 修复：混合格式官方歌词只解析制作信息、丢失正文
-- 修复：变速/remix 版本串到原版时间轴
-- 改进：候选增加时长比例、正文、首句与行数交叉校验
-- 新增：手动选歌词并按键位版本记忆
-- 改进：网易云 YRC/klyric 逐字合并与酷狗覆盖竞争
-- 改进：无逐字歌词也支持点亮与弹簧估算
-- 改进：圆盘调张角不缩字、旋转不移动圆心
-- 改进：右键更新改为可直接点击的进度圆环
-- 修复：Gitee latest 缓存旧版本时改读完整 Release 列表
+- 新增 Unicode 字素时间轴，emoji/组合音标/国旗不会被拆开
+- 有词级时间时展开到字素，无逐字时按字宽分配
+- 逐字点亮改为软边扫光与 4 字余辉拖尾
+- 新增 micro/short/normal 动画预算，极短行整行直亮
+- 高光遮罩按进度缓存，off 与 bounce 保持原行为
+- 补齐更新圆环跨菜单状态与失败重试回归
 
 ![圆盘歌词](screenshots/disc.png)
 
