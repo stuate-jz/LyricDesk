@@ -456,6 +456,10 @@ class LyricWindow(QWidget):
         # 自动宽度：记录上一次算宽度用的歌词对象 / 缓存
         self._auto_lyrics_ref = None
         self._auto_width_cache = None
+        self._pending_width_timer = QTimer(self)
+        self._pending_width_timer.setSingleShot(True)
+        self._pending_width_timer.setInterval(400)
+        self._pending_width_timer.timeout.connect(self._flush_pending_width)
         self._offset_sig = None
         self._prefetched_line_key = None
         self._word_spring = WordSpring()
@@ -1175,7 +1179,8 @@ class LyricWindow(QWidget):
         lyrics = self.engine.lyrics
         if lyrics is not self._auto_lyrics_ref:
             self._auto_lyrics_ref = lyrics
-            self._apply_new_width(QRect(self.geometry()), self.settings.lyric_align)
+            # 分批到达的歌词常常在几百毫秒内连续换几次文档；合并成一次重排。
+            self._pending_width_timer.start()
         snapshot = self.engine.snapshot()
         if self.role == "player":
             audio_mod.MONITOR.update_client(
@@ -4484,6 +4489,9 @@ class LyricWindow(QWidget):
         self.settings.clamp()
         self.settings.save()
         self.recalculate()
+        if abs(self.width() - before.width()) < 2:
+            self.update()
+            return
         self._clamp_if_fully_offscreen()
         if anchor == "right":
             self.move(before.right() - self.width() + 1, self.y())
@@ -4491,10 +4499,12 @@ class LyricWindow(QWidget):
             self.move(before.center().x() - self.width() // 2, self.y())
         else:
             self.move(before.x(), self.y())
-        self._remember_position()
         self.settings.save()
         self.update()
-        self.settingsChanged.emit()
+
+    def _flush_pending_width(self) -> None:
+        """内容变化只重排几何，不把内容算出的坐标写回用户位置。"""
+        self._apply_new_width(QRect(self.geometry()), self.settings.lyric_align)
 
     def _nudge_width(self, delta: int) -> None:
         self.settings.width += delta
