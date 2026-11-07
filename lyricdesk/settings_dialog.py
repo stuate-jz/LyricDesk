@@ -816,6 +816,7 @@ class SettingsDialog(QDialog):
         self._disc_angle_row = None
         self._disc_spread_row = None
         self._glow_row = None
+        self._scatter_box = None
         self._chaos_row = None
         self._line_spacing_row = None
         self._text3d_rows: list[QWidget] = []
@@ -1435,10 +1436,19 @@ class SettingsDialog(QDialog):
             unit="%",
             coalesce_ms=40,
         )
+        self._scatter_box = self._check(
+            layout,
+            "lyrics.scatter",
+            "随机错落",
+            getter=lambda: bool(settings.lyric_scatter),
+            apply=self.window._set_scatter,
+            hint_key="lyrics.scatter.hint",
+            hint="按歌词时间给每行一点位移、旋转和缩放；关掉就完全规整。",
+        )
         self._chaos_row = self._slider(
             layout,
-            "lyrics.chaos",
-            "随机错落",
+            "lyrics.scatter.strength",
+            "错落强度",
             getter=lambda: round(float(settings.lyric_chaos) * 100),
             apply=lambda value: self.window._set_chaos(float(value) / 100),
             minimum=0,
@@ -1623,8 +1633,10 @@ class SettingsDialog(QDialog):
                 row.setEnabled(disc)
         for row in self._text3d_rows:
             row.setEnabled(not disc)
+        if self._scatter_box is not None:
+            self._scatter_box.setEnabled(not disc)
         if self._chaos_row is not None:
-            self._chaos_row.setEnabled(not disc)
+            self._chaos_row.setEnabled(not disc and bool(settings.lyric_scatter))
         if self._line_spacing_row is not None:
             self._line_spacing_row.setEnabled(not disc)
         if self._align_combo is not None:

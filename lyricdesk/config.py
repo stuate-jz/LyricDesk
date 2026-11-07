@@ -132,7 +132,8 @@ class Settings:
     # 歌词动效：off / word（软边点亮） / bounce（软边 + 逐字弹簧）
     lyric_effect: str = "off"
     lyric_glow: float = 1.0
-    lyric_chaos: float = 0.0
+    lyric_scatter: bool = False
+    lyric_chaos: float = 0.35
     album_shape: str = "disc"
     # 1.6.8 起合并进 album_shape，字段仅为老配置反序列化保留
     depth_album_style: str = "classic"
@@ -303,8 +304,11 @@ class Settings:
                 and legacy_first("player_pos") < 0
             ):
                 obj.player_pos = [-1, -1]
+        if version < 6 and "lyric_scatter" not in raw:
+            # 已经把强度调过的老用户，不能被新开关一刀关掉。
+            obj.lyric_scatter = float(raw.get("lyric_chaos", 0) or 0) > 0.0
         # 迁移完之后写回当前格式号，否则每次启动都会再迁移一次
-        obj.settings_version = 5
+        obj.settings_version = 6
         obj.clamp()
         return obj
 
@@ -317,6 +321,12 @@ class Settings:
             )
         except Exception:
             pass
+
+    def scatter_amount(self) -> float:
+        """当前实际生效的错落强度；关掉或圆盘时恒为 0。"""
+        if not self.lyric_scatter or self.lyric_layout == "disc":
+            return 0.0
+        return max(0.0, min(1.0, float(self.lyric_chaos)))
 
     def clamp(self) -> None:
         # 这些范围要和「设置」窗口里的滑动条一一对应（见 settings_dialog.py），
@@ -395,6 +405,7 @@ class Settings:
             self.lyric_effect = "off"
         self.lyric_glow = max(0.0, min(2.0, float(self.lyric_glow)))
         self.lyric_chaos = max(0.0, min(1.0, float(self.lyric_chaos)))
+        self.lyric_scatter = bool(self.lyric_scatter)
         if self.raise_style not in ("frost", "ambient", "outline"):
             self.raise_style = "frost"
         if self.album_shape not in ("disc", "square", "vinyl", "classic"):

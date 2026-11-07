@@ -853,7 +853,7 @@ class LyricWindow(QWidget):
             self.settings.font_family,
             mode,
             int(self.settings.cover_size),
-            round(float(self.settings.lyric_chaos), 2),
+            round(self.settings.scatter_amount(), 2),
         )
         cached = getattr(self, "_auto_width_cache", None)
         if cached is not None and cached[0] == key:
@@ -869,7 +869,8 @@ class LyricWindow(QWidget):
         if widest <= 0:
             return int(self.settings.width)
 
-        value = int(widest + 48 + float(self.settings.lyric_chaos) * 16.0)
+        scatter = self.settings.scatter_amount()
+        value = int(widest + 48 + scatter * 16.0)
 
         screen = self.screen() or QApplication.primaryScreen()
         if screen is not None:
@@ -2007,8 +2008,8 @@ class LyricWindow(QWidget):
 
     def _chaos_transform(self, line) -> tuple[float, float, float, float]:
         """列表模式的确定性轻微错落；圆盘和 chaos=0 时完全恒等。"""
-        chaos = max(0.0, min(1.0, float(self.settings.lyric_chaos)))
-        if chaos <= 0.0 or self.settings.lyric_layout == "disc":
+        chaos = self.settings.scatter_amount()
+        if chaos <= 0.0:
             return 0.0, 0.0, 1.0, 0.0
         seed = float(getattr(line, "time", 0.0) or 0.0)
         seed += (
@@ -4137,6 +4138,11 @@ class LyricWindow(QWidget):
     def _set_chaos(self, value: float) -> None:
         self.settings.lyric_chaos = max(0.0, min(1.0, float(value)))
         self._commit(resize=True)
+
+    def _set_scatter(self, value: bool) -> None:
+        self.settings.lyric_scatter = bool(value)
+        self._commit(resize=True)
+        self.settingsChanged.emit()
 
     def _set_player(self, app_id: str) -> None:
         setter = getattr(self.engine, "set_preferred_player", None)
