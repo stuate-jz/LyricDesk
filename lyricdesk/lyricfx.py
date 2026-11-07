@@ -146,6 +146,15 @@ def build_char_timeline(
     end = float(getattr(line, "end", 0.0) or 0.0)
     if end <= start:
         end = start + max(0.9, 0.185 * max(1, len(text)) + 0.4)
+    words = list(getattr(line, "words", None) or [])
+    word_key = tuple(
+        (
+            round(float(getattr(word, "time", 0.0) or 0.0), 3),
+            round(float(getattr(word, "dur", 0.0) or 0.0), 3),
+            str(getattr(word, "text", "") or ""),
+        )
+        for word in words
+    )
     key = (
         round(start, 3),
         round(end, 3),
@@ -155,6 +164,7 @@ def build_char_timeline(
         int(weight),
         round(float(max_width), 2),
         round(letter_spacing(), 2),
+        word_key,
     )
     cached = _TIMELINE_CACHE.get(key)
     if cached is not None:
@@ -163,7 +173,6 @@ def build_char_timeline(
 
     font = _font(family, size, weight)
     metrics = QFontMetricsF(font)
-    words = list(getattr(line, "words", None) or [])
     values: list[tuple[str, float, float, float]] = []
     if words:
         for word in words:
