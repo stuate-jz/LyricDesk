@@ -195,7 +195,7 @@ def _merge_yrc(lines: list[LyricLine], yrc: list[LyricLine]) -> None:
             score = text_score * 0.75 + time_score * 0.25
             if score > best_score:
                 best_score, best_index = score, index
-        if best_index >= 0 and best_score >= 0.58:
+        if best_index >= 0 and best_score >= 0.42:
             used.add(best_index)
             line.words = yrc[best_index].words
             if line.words:
