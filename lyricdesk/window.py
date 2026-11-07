@@ -621,7 +621,8 @@ class LyricWindow(QWidget):
             self._list_slot = fm_list.height() * 1.52 * settings.line_spacing
             self._list_count = max(1, int(settings.lyric_lines))
             # 顶部还要给歌名 / 作者 / 热度留一块地方（分离面板不加）
-            want_info = self._want_song_info()
+            # 圆盘布局不显示歌名 / 作者 / 热度，也不为它们预留透明高度。
+            want_info = self._want_song_info() and settings.lyric_layout != "disc"
             self._head_h = self._metrics["head"].height() if want_info else 0.0
             self._head_sub_h = (
                 self._metrics["head_sub"].height() if want_info else 0.0
@@ -644,8 +645,8 @@ class LyricWindow(QWidget):
                     self._disc_line_width,
                     fm_list.height(),
                 )
-                window_w = max(float(WIDTH_MIN), bound_w + PAD * 2.0)
-                content_h = PAD * 2 + self._head_block + bound_h
+                window_w = max(float(WIDTH_MIN), bound_w)
+                content_h = PAD * 2 + bound_h
                 self._overscan = 0
                 self._overscan_v = 0
             else:
@@ -2494,6 +2495,8 @@ class LyricWindow(QWidget):
         right = card.right() - PAD
 
         show_info = bool(
+            settings.lyric_layout != "disc"
+            and
             self._want_song_info()
             and snapshot is not None
             and snapshot.track is not None
