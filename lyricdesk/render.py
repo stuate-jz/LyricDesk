@@ -26,6 +26,8 @@ _LINE_CACHE: "OrderedDict[tuple, LineArt]" = OrderedDict()
 _LINE_CACHE_LIMIT = 160
 _GLOW_CACHE: "OrderedDict[tuple, tuple[QPixmap, QPixmap]]" = OrderedDict()
 _GLOW_CACHE_LIMIT = 12
+_ENTRY_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
+_ENTRY_CACHE_LIMIT = 12
 
 # 全局字间距（px）。歌词字体统一套这个值；图标 / 时间这类不走精灵的文字不受影响。
 _LETTER_SPACING = 0.0
@@ -89,6 +91,7 @@ class LineArt:
     font_size: int = 0
     glow_near: QPixmap | None = None
     glow_far: QPixmap | None = None
+    blur_steps: tuple[QPixmap, ...] = ()
 
 
 _SOFT_BUFFER: QPixmap | None = None
@@ -99,6 +102,7 @@ _SOFT_MASK_STATE: tuple | None = None
 def clear_line_cache() -> None:
     _LINE_CACHE.clear()
     _GLOW_CACHE.clear()
+    _ENTRY_CACHE.clear()
 
 
 def _blur_layers(
@@ -159,6 +163,21 @@ def glow_layers(
     _GLOW_CACHE[key] = value
     if len(_GLOW_CACHE) > _GLOW_CACHE_LIMIT:
         _GLOW_CACHE.popitem(last=False)
+    return value
+
+
+def entry_blur_layer(source: QPixmap, radius: float) -> QPixmap:
+    """取得入场用的固定模糊档，最多缓存 12 张。"""
+    dpr = round(float(source.devicePixelRatio()), 2)
+    key = (source.cacheKey(), round(float(radius), 2), dpr)
+    cached = _ENTRY_CACHE.get(key)
+    if cached is not None:
+        _ENTRY_CACHE.move_to_end(key)
+        return cached
+    value = _blur_layers(source, radius)
+    _ENTRY_CACHE[key] = value
+    if len(_ENTRY_CACHE) > _ENTRY_CACHE_LIMIT:
+        _ENTRY_CACHE.popitem(last=False)
     return value
 
 
@@ -437,13 +456,17 @@ def draw_line_art(
     tail_progress: float | None = None,
     tail_alpha: float = 0.72,
     glow_scale: float = 0.0,
+    entry_blur: float = 0.0,
+    rotation: float = 0.0,
 ) -> None:
     painter.save()
     painter.setOpacity(max(0.0, min(1.0, painter.opacity() * opacity)))
     painter.translate(center_x, baseline)
+    if rotation:
+        painter.rotate(rotation)
     if scale != 1.0:
         painter.scale(scale, scale)
-    if glow_scale > 0.0 and art.highlight is not None:
+    if glow_scale > 0.0 and entry_blur < 2.0 and art.highlight is not None:
         near, far = glow_layers(art.highlight, art.font_size)
         painter.save()
         painter.setOpacity(painter.opacity() * min(1.0, glow_scale * 0.28))
@@ -455,10 +478,16 @@ def draw_line_art(
             QPointF(-art.offset_x, -art.baseline_y), near
         )
         painter.restore()
-    painter.drawPixmap(QPointF(-art.offset_x, -art.baseline_y), art.base)
+    base_layer = art.base
+    if entry_blur > 0.0:
+        base_layer = entry_blur_layer(
+            art.base,
+            10.0 if entry_blur >= 7.0 else 5.0,
+        )
+    painter.drawPixmap(QPointF(-art.offset_x, -art.baseline_y), base_layer)
 
     progress = max(0.0, min(1.0, float(progress)))
-    if progress > 0.0 and art.highlight is not None:
+    if progress > 0.0 and art.highlight is not None and entry_blur < 7.0:
         if softness > 0.0 and art.soft_highlight is not None:
             _draw_soft_highlight(
                 painter,

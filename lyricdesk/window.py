@@ -11,7 +11,6 @@ import time
 import traceback
 import weakref
 from pathlib import Path
-from types import SimpleNamespace
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
@@ -71,7 +70,7 @@ from .update import (
 )
 from .win_util import is_topmost, set_native_topmost
 from .lyrics import normalize
-from .lyricfx import build_char_timeline, render_budget, reveal_state
+from .lyricfx import WordSpring, build_char_timeline, render_budget, reveal_state
 from .render import (
     draw_sprite,
     ease_out_back,
@@ -440,6 +439,10 @@ class LyricWindow(QWidget):
         self._auto_width_cache = None
         self._offset_sig = None
         self._prefetched_line_key = None
+        self._word_spring = WordSpring()
+        self._spring_line_key = None
+        self._spring_last_time = 0.0
+        self._spring_last_position = -1.0
 
         self._hit_prev = QRectF()
         self._hit_play = QRectF()
@@ -850,6 +853,7 @@ class LyricWindow(QWidget):
             self.settings.font_family,
             mode,
             int(self.settings.cover_size),
+            round(float(self.settings.lyric_chaos), 2),
         )
         cached = getattr(self, "_auto_width_cache", None)
         if cached is not None and cached[0] == key:
@@ -865,7 +869,7 @@ class LyricWindow(QWidget):
         if widest <= 0:
             return int(self.settings.width)
 
-        value = int(widest + 48)
+        value = int(widest + 48 + float(self.settings.lyric_chaos) * 16.0)
 
         screen = self.screen() or QApplication.primaryScreen()
         if screen is not None:
@@ -1907,7 +1911,10 @@ class LyricWindow(QWidget):
             line = lyrics.lines[line_index]
             if not line.text:
                 continue
-            y = center_y + (line_index - visual) * slot
+            chaos_x, chaos_y, chaos_scale, chaos_rotation = (
+                self._chaos_transform(line)
+            )
+            y = center_y + (line_index - visual) * slot + chaos_y
 
             if line_index == index:
                 family, size, weight = self._fonts["list_cur"]
@@ -1937,15 +1944,17 @@ class LyricWindow(QWidget):
                     art,
                     line,
                     snapshot,
-                    self._align_center_x(left, right, sprite.advance * scale),
+                    self._align_center_x(left, right, sprite.advance * scale)
+                    + chaos_x,
                     baseline,
                     colors,
                     family,
                     fitted,
                     weight,
                     progress=self._lyric_progress(snapshot, line, next_line),
-                    scale=scale,
+                    scale=scale * chaos_scale,
                     opacity=0.6 + 0.4 * ease_out_cubic(min(1.0, anim * 1.6)),
+                    rotation=chaos_rotation,
                 )
             else:
                 distance = abs(line_index - index)
@@ -1980,9 +1989,11 @@ class LyricWindow(QWidget):
                 render_mod.draw_line_art(
                     painter,
                     art,
-                    self._align_center_x(left, right, sprite.advance),
+                    self._align_center_x(left, right, sprite.advance) + chaos_x,
                     baseline,
                     opacity=opacity * (0.35 + 0.65 * fade),
+                    scale=chaos_scale,
+                    rotation=chaos_rotation,
                 )
 
     def _align_center_x(self, left, right, advance: float) -> float:
@@ -1993,6 +2004,28 @@ class LyricWindow(QWidget):
         if alignment == "center":
             return (left + right) / 2.0
         return right - advance / 2.0
+
+    def _chaos_transform(self, line) -> tuple[float, float, float, float]:
+        """列表模式的确定性轻微错落；圆盘和 chaos=0 时完全恒等。"""
+        chaos = max(0.0, min(1.0, float(self.settings.lyric_chaos)))
+        if chaos <= 0.0 or self.settings.lyric_layout == "disc":
+            return 0.0, 0.0, 1.0, 0.0
+        seed = float(getattr(line, "time", 0.0) or 0.0)
+        seed += (
+            sum(ord(char) for char in str(getattr(line, "text", "") or ""))
+            * 0.001371
+        )
+
+        def rnd(offset: float) -> float:
+            value = math.sin(seed * 12.9898 + offset * 78.233) * 43758.5453
+            return value - math.floor(value)
+
+        return (
+            (rnd(1.0) - 0.5) * 16.0 * chaos,
+            (rnd(2.0) - 0.5) * 16.0 * chaos,
+            1.0 + (rnd(3.0) - 0.5) * 0.12 * chaos,
+            (rnd(4.0) - 0.5) * 6.0 * chaos,
+        )
 
     # ==================================================================
     # 唱片 / 专辑模式
@@ -2519,6 +2552,7 @@ class LyricWindow(QWidget):
         progress: float,
         scale: float = 1.0,
         opacity: float = 1.0,
+        rotation: float = 0.0,
     ) -> None:
         """绘制默认 K 歌填充，或软边逐字点亮 / 逐字弹簧。"""
         effect = str(getattr(self.settings, "lyric_effect", "off") or "off")
@@ -2535,12 +2569,39 @@ class LyricWindow(QWidget):
                 progress=progress,
                 scale=scale,
                 opacity=opacity,
+                rotation=rotation,
             )
             return
+        budget = render_budget(float(line.end or 0.0) - float(line.time or 0.0))
+        position = self._display_position(snapshot) + self._offset_ms() / 1000.0
+        if budget.reveal == "instant":
+            entry_scale = 1.0
+            entry_alpha = 1.0
+            entry_blur = 0.0
+        else:
+            entry_progress = max(
+                0.0,
+                min(
+                    1.0,
+                    (position - float(line.time))
+                    / max(0.001, budget.enter),
+                ),
+            )
+            entry_alpha = ease_out_cubic(entry_progress)
+            entry_scale = (
+                0.9 + 0.1 * ease_out_cubic(entry_progress)
+                if budget.reveal == "normal"
+                else 1.0
+            )
+            entry_blur = (
+                (1.0 - entry_progress) * 10.0
+                if budget.reveal == "normal"
+                else 0.0
+            )
+        draw_scale = scale * entry_scale
+        draw_opacity = opacity * entry_alpha
         if effect == "word":
-            budget = render_budget(float(line.end or 0.0) - float(line.time or 0.0))
             timings = build_char_timeline(line, family, fitted, weight, art.advance)
-            position = self._display_position(snapshot) + self._offset_ms() / 1000.0
             if not timings:
                 render_mod.draw_line_art(
                     painter,
@@ -2548,8 +2609,10 @@ class LyricWindow(QWidget):
                     center_x,
                     baseline,
                     progress=progress,
-                    scale=scale,
-                    opacity=opacity,
+                    scale=draw_scale,
+                    opacity=draw_opacity,
+                    entry_blur=entry_blur,
+                    rotation=rotation,
                 )
                 return
             if budget.reveal == "instant":
@@ -2560,9 +2623,11 @@ class LyricWindow(QWidget):
                     center_x,
                     baseline,
                     progress=visible,
-                    scale=scale,
-                    opacity=opacity,
+                    scale=draw_scale,
+                    opacity=draw_opacity,
+                    entry_blur=entry_blur,
                     glow_scale=glow_scale,
+                    rotation=rotation,
                 )
                 return
             solid, tail, feather, exit_opacity = reveal_state(
@@ -2576,8 +2641,10 @@ class LyricWindow(QWidget):
                 center_x,
                 baseline,
                 progress=0.0,
-                scale=scale,
-                opacity=opacity * 0.24 * exit_opacity,
+                scale=draw_scale,
+                opacity=draw_opacity * 0.24 * exit_opacity,
+                entry_blur=entry_blur,
+                rotation=rotation,
             )
             if solid > 0.0 and exit_opacity > 0.0:
                 render_mod.draw_line_art(
@@ -2586,66 +2653,73 @@ class LyricWindow(QWidget):
                     center_x,
                     baseline,
                     progress=solid,
-                    scale=scale,
-                    opacity=opacity * exit_opacity,
+                    scale=draw_scale,
+                    opacity=draw_opacity * exit_opacity,
                     softness=feather,
                     tail_progress=tail,
                     glow_scale=glow_scale,
+                    entry_blur=entry_blur,
+                    rotation=rotation,
                 )
             return
-        if not words:
-            # 没有字级时间时按每个字的实际宽度均分整行时长。它不是“真实演唱
-            # 时间”，但能保证用户选了点亮 / 弹簧后确实看得到逐字推进。
-            chars = list(line.text)
-            widths = [
-                max(0.01, render_mod.measure(char, family, fitted, weight))
-                for char in chars
-            ]
-            total_width = sum(widths) or 1.0
-            start = float(line.time)
-            span = max(0.9, float(line.end or 0.0) - start)
-            cursor_time = start
-            words = []
-            for char, width in zip(chars, widths):
-                duration = span * width / total_width
-                words.append(
-                    SimpleNamespace(
-                        time=cursor_time,
-                        dur=max(0.01, duration),
-                        text=char,
-                    )
-                )
-                cursor_time += duration
-
-        # 先画低亮底字，再逐字叠加高光。软边只作用于正在推进的那个字，
-        # 已唱完的字直接全亮，避免最后一个字边缘发虚。
+        # bounce：每个字素独立二阶弹簧。底字保持清晰，高光按状态逐字叠加。
         render_mod.draw_line_art(
             painter,
             art,
             center_x,
             baseline,
             progress=0.0,
-            scale=scale,
-            opacity=opacity * 0.28,
+            scale=draw_scale,
+            opacity=draw_opacity * 0.28,
+            entry_blur=entry_blur,
+            rotation=rotation,
         )
-        measured = [
-            max(0.01, render_mod.measure(word.text, family, fitted, weight))
-            for word in words
-        ]
-        total = sum(measured)
-        cursor = center_x - total * scale / 2.0
-        position = self._display_position(snapshot) + self._offset_ms() / 1000.0
+        timings = build_char_timeline(line, family, fitted, weight, art.advance)
+        if not timings:
+            return
+        now = time.monotonic()
+        line_key = (
+            float(line.time),
+            float(line.end or 0.0),
+            line.text,
+            fitted,
+            round(float(art.advance), 2),
+        )
+        if (
+            line_key != self._spring_line_key
+            or position + 0.05 < self._spring_last_position
+        ):
+            self._word_spring.reset()
+            self._spring_line_key = line_key
+            self._spring_last_time = now
+        dt = min(0.08, max(0.0, now - self._spring_last_time))
+        self._spring_last_time = now
+        self._spring_last_position = position
+        states = self._word_spring.update(timings, position, budget, dt)
         softness = max(6.0, min(14.0, fitted * 0.32))
-        for word_index, (word, word_width) in enumerate(zip(words, measured)):
-            word_center = cursor + word_width * scale / 2.0
-            cursor += word_width * scale
-            word_start = float(word.time)
-            word_end = max(word_start + 0.001, word_start + float(word.dur))
-            if position < word_start:
+        for timing, state in zip(timings, states):
+            if state.mode == "waiting":
                 continue
-            word_progress = min(1.0, (position - word_start) / (word_end - word_start))
-            active = word_progress < 1.0
-            sprite = make_sprite(word.text, family, fitted, weight)
+            active = state.mode == "active"
+            char_progress = (
+                max(
+                    0.0,
+                    min(
+                        1.0,
+                        (position - timing.start)
+                        / max(0.001, timing.end - timing.start),
+                    ),
+                )
+                if active
+                else 1.0
+            )
+            char_center = (
+                center_x
+                + timing.x
+                + timing.width / 2.0
+                - art.advance / 2.0
+            )
+            sprite = make_sprite(timing.char, family, fitted, weight)
             highlight = render_mod.make_line_art(
                 sprite,
                 QColor(255, 255, 255, 120),
@@ -2657,32 +2731,19 @@ class LyricWindow(QWidget):
                 dpr=self.devicePixelRatioF(),
                 glow=glow_scale > 0,
             )
-            word_scale = scale
-            rise = 0.0
-            if effect == "bounce" and active:
-                elapsed = position - (word_start + word_index * 0.025)
-                enter = min(
-                    1.0,
-                    ease_out_back(max(0.0, min(1.0, elapsed / 0.20))),
-                )
-                leave = 1.0 - ease_out_cubic(
-                    max(0.0, min(1.0, (elapsed - 0.20) / 0.32))
-                )
-                pulse = max(0.0, enter * leave)
-                rise = -fitted * 0.13 * pulse
-                word_scale *= 1.0 + 0.16 * pulse
-            elif active:
-                word_scale *= 1.04
             render_mod.draw_line_art(
                 painter,
                 highlight,
-                word_center,
-                baseline + rise,
-                progress=word_progress,
-                scale=word_scale,
-                opacity=opacity * (1.0 if active or word_progress >= 1.0 else 0.6),
-                softness=0.0 if word_progress >= 1.0 else softness,
-                glow_scale=glow_scale,
+                char_center,
+                baseline,
+                progress=char_progress,
+                scale=draw_scale * state.value,
+                opacity=draw_opacity * state.alpha,
+                softness=softness if active else 0.0,
+                tail_progress=char_progress,
+                glow_scale=glow_scale * (1.15 if active else 0.55),
+                entry_blur=entry_blur,
+                rotation=rotation,
             )
 
     def _lyric_progress(self, snapshot, current, next_line=None) -> float:

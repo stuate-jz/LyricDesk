@@ -15,7 +15,14 @@ except Exception:
 from PySide6.QtWidgets import QApplication
 
 from lyricdesk.lyricdoc import LyricLine, LyricWord
-from lyricdesk.lyricfx import build_char_timeline, graphemes, render_budget, reveal_state
+from lyricdesk.lyricfx import (
+    WordSpring,
+    build_char_timeline,
+    graphemes,
+    render_budget,
+    reveal_state,
+    spring_step,
+)
 
 
 def main() -> int:
@@ -102,6 +109,24 @@ def main() -> int:
     )
     failed += 0 if budget_ok else 1
     print(f"  {'OK  ' if budget_ok else 'FAIL'} 动画预算 {budgets!r}")
+
+    spring = WordSpring()
+    states = []
+    for frame in range(30):
+        states = spring.update(timings, 10.8 + frame * 0.033, budgets[2], 0.033)
+    scales = [state.value for state in states]
+    spring_ok = (
+        len(set(round(value, 4) for value in scales)) >= 2
+        and max(scales) > 1.0
+        and all(1.0 <= value <= 1.25 for value in scales)
+    )
+    failed += 0 if spring_ok else 1
+    print(f"  {'OK  ' if spring_ok else 'FAIL'} 逐字弹簧错峰 {scales!r}")
+
+    state = spring_step(states[0], 0.5, 1.16)
+    bounded = 1.0 <= state.value <= 1.25
+    failed += 0 if bounded else 1
+    print(f"  {'OK  ' if bounded else 'FAIL'} 极端 dt 弹簧仍夹紧 {state.value:.3f}")
 
     print(f"\n字素样例：{len(cases)} 个；失败 {failed} 项")
     return 0 if failed == 0 else 1

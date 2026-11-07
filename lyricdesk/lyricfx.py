@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unicodedata
+import math
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -30,6 +31,17 @@ class Budget:
     enter: float
     exit: float
     reveal: str
+    lookahead: float
+
+
+@dataclass
+class SpringState:
+    value: float = 1.0
+    velocity: float = 0.0
+    target: float = 1.0
+    alpha: float = 1.0
+    alpha_target: float = 1.0
+    mode: str = "waiting"
 
 
 def _is_regional_indicator(char: str) -> bool:
@@ -217,15 +229,79 @@ def render_budget(duration: float) -> Budget:
     """根据行时长给出动画预算。"""
     duration = max(0.0, float(duration or 0.0))
     if duration < MICRO_LINE:
-        return Budget("micro", 0.0, 0.0, "instant")
+        return Budget("micro", 0.0, 0.0, "instant", 0.03)
     if duration < SHORT_LINE:
-        return Budget("short", 0.055, 0.035, "fast")
+        return Budget("short", 0.055, 0.035, "fast", 0.08)
     return Budget(
         "normal",
         max(0.22, min(0.42, duration * 0.18)),
         max(0.18, min(0.32, duration * 0.15)),
         "normal",
+        0.15,
     )
+
+
+def spring_step(
+    state: SpringState,
+    dt: float,
+    target: float,
+    *,
+    stiffness: float = 200.0,
+    damping: float = 20.0,
+) -> SpringState:
+    """8ms 子步进的二阶弹簧积分，数值夹紧防止极端帧间隔爆炸。"""
+    dt = max(0.0, min(0.08, float(dt)))
+    state.target = target
+    if dt <= 0.0:
+        return state
+    steps = max(1, int(math.ceil(dt / 0.008)))
+    step = dt / steps
+    for _ in range(steps):
+        acceleration = stiffness * (target - state.value) - damping * state.velocity
+        state.velocity += acceleration * step
+        state.value += state.velocity * step
+        state.value = max(1.0, min(1.25, state.value))
+    state.alpha += (state.alpha_target - state.alpha) * min(1.0, dt * 18.0)
+    return state
+
+
+class WordSpring:
+    """一行歌词内每个字素的 waiting / active / passed 弹簧状态。"""
+
+    def __init__(self) -> None:
+        self.states: dict[int, SpringState] = {}
+
+    def reset(self) -> None:
+        self.states.clear()
+
+    def update(
+        self,
+        timings: list[CharTiming],
+        position: float,
+        budget: Budget,
+        dt: float,
+    ) -> list[SpringState]:
+        states: list[SpringState] = []
+        for index, timing in enumerate(timings):
+            state = self.states.setdefault(index, SpringState())
+            if position < timing.start - budget.lookahead:
+                mode = "waiting"
+                target = 1.0
+                alpha_target = 1.0
+            elif position < timing.end:
+                mode = "active"
+                target = 1.16
+                alpha_target = 1.0
+            else:
+                mode = "passed"
+                target = 1.0
+                alpha_target = 0.88
+            if mode != state.mode:
+                state.mode = mode
+                state.alpha_target = alpha_target
+            spring_step(state, dt, target)
+            states.append(state)
+        return states
 
 
 def reveal_state(
