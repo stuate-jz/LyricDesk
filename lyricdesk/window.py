@@ -11,8 +11,9 @@ import time
 import traceback
 import weakref
 from pathlib import Path
+from types import SimpleNamespace
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -257,6 +258,100 @@ def _fast_blur(pixmap: QPixmap, factor: int = 8) -> QPixmap:
 
 
 
+class UpdateRingActionWidget(QWidget):
+    """右键菜单里的更新入口：自绘进度圆环，点击后菜单不关闭。"""
+
+    def __init__(self, owner: "LyricWindow", info) -> None:
+        super().__init__()
+        self.owner = owner
+        self.info = info
+        self._angle = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(30)
+        self._timer.timeout.connect(self._spin)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(360, 40)
+
+    def _spin(self) -> None:
+        self._angle = (self._angle + 12) % 360
+        self.update()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if getattr(self.owner, "_menu_update_state", "idle") == "installing":
+            self._timer.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self.owner._menu_update_state in (
+            "idle",
+            "failed",
+        ):
+            self.owner._start_menu_update(self.info)
+        event.accept()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        colors = self.owner.settings.colors
+        state = getattr(self.owner, "_menu_update_state", "idle")
+        done = float(getattr(self.owner, "_menu_update_done", 0))
+        total = float(getattr(self.owner, "_menu_update_total", 0))
+        progress = max(0.0, min(1.0, done / total)) if total > 0 else 0.0
+        if state == "idle":
+            progress = 0.0
+        elif state in ("installing", "failed"):
+            progress = 1.0
+
+        accent = QColor("#ef4444" if state == "failed" else colors["glow"])
+        ring = QRectF(5.0, self.height() / 2.0 - 8.0, 16.0, 16.0)
+        pen = QPen(QColor(colors["dim"]))
+        pen.setWidthF(2.0)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(ring)
+        if state == "installing":
+            pen.setColor(accent)
+            painter.setPen(pen)
+            painter.drawArc(ring, int(self._angle * 16), int(110 * 16))
+            if not self._timer.isActive():
+                self._timer.start()
+        elif progress > 0.0:
+            pen.setColor(accent)
+            painter.setPen(pen)
+            painter.drawArc(ring, 90 * 16, int(-360 * progress * 16))
+
+        version = str(getattr(self.info, "latest", "") or "")
+        if state == "downloading":
+            text = f"正在下载 {int(progress * 100)}%" if total > 0 else "正在下载更新…"
+        elif state == "installing":
+            text = "正在安装…"
+        elif state == "failed":
+            text = "更新失败（点击重试）"
+        else:
+            text = f"发现新版本 v{version}（点击更新）"
+        painter.setPen(QColor(colors["base"]))
+        font = QFont(self.owner.settings.font_family)
+        font.setPixelSize(12)
+        font.setWeight(QFont.Weight.Medium)
+        painter.setFont(font)
+        painter.drawText(
+            QRectF(28.0, 0.0, self.width() - 32.0, self.height()),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            text,
+        )
+
+
 class LyricWindow(QWidget):
     requestQuit = Signal()
     requestAutostart = Signal(bool)
@@ -304,6 +399,11 @@ class LyricWindow(QWidget):
         self._update_busy = False
         self._update_silent = False
         self._update_pending: UpdateInfo | None = None
+        self._menu_update_widget: UpdateRingActionWidget | None = None
+        self._menu_update_state = "idle"
+        self._menu_update_done = 0
+        self._menu_update_total = 0
+        self._menu_update_active = False
         self._load_pending_update()
         self._spin_angle = 0.0
         self._last_tick = time.monotonic()
@@ -766,77 +866,29 @@ class LyricWindow(QWidget):
     def _disc_bounds(
         self, disc: float, line_width: float, line_height: float
     ) -> tuple[float, float]:
-        """圆盘 + 扇形歌词的精确包围盒与圆心偏移。"""
+        """圆盘在全部允许角度下的固定正方形包络。"""
         radius = disc / 2.0
         start = radius + 26.0
         center_radius = start + line_width / 2.0
-        angle = float(self.settings.disc_angle)
-        side = "left" if self.settings.lyric_align == "left" else "right"
-        count = max(1, int(self.settings.lyric_lines))
-        step, _spread, _scale = self._disc_layout_metrics(
-            count, line_width, line_height
-        )
-        half = (count - 1) / 2.0
-        min_x, max_x = -radius, radius
-        min_y, max_y = -radius, radius
-        base_angle = 180.0 - angle if side == "left" else angle
-        for line_index in range(count):
-            theta = base_angle + (line_index - half) * step
-            radians = math.radians(theta)
-            radial_x, radial_y = math.cos(radians), math.sin(radians)
-            tangent_x, tangent_y = -radial_y, radial_x
-            x = radial_x * center_radius
-            y = radial_y * center_radius
-            extent_x = (
-                abs(radial_x) * line_width / 2.0
-                + abs(tangent_x) * line_height / 2.0
-            )
-            extent_y = (
-                abs(radial_y) * line_width / 2.0
-                + abs(tangent_y) * line_height / 2.0
-            )
-            min_x = min(min_x, x - extent_x)
-            max_x = max(max_x, x + extent_x)
-            min_y = min(min_y, y - extent_y)
-            max_y = max(max_y, y + extent_y)
-        self._disc_center_offset = QPointF(
-            -(min_x + max_x) / 2.0, -(min_y + max_y) / 2.0
-        )
-        return max_x - min_x, max_y - min_y
+        extent = max(radius, center_radius + line_width / 2.0 + line_height / 2.0)
+        size = extent * 2.0
+        self._disc_center_offset = QPointF()
+        return size, size
 
     def _disc_layout_metrics(
         self, count: int, line_width: float, line_height: float
     ) -> tuple[float, float, float]:
-        """返回（单行角步长、实际张角、极端排版下的字号缩放）。"""
+        """返回（单行角步长、实际张角、字号缩放）。"""
         count = max(1, int(count))
         requested = max(20.0, min(120.0, float(self.settings.disc_spread)))
+        # 张角只控制角度；字号始终由 font_size 决定。为了不让 20° 时
+        # 多行完全糊在一起，保留一个“轻微重叠”的可用下限，但绝不再缩字。
         start_radius = self._disc_size / 2.0 + 26.0
-        # 所有行都在同一内端半径收口；按行中心半径算会让短句和长句在
-        # 靠近封面处相撞。这里按内端的最坏角宽留 4% 包围盒余量。
-        half_angle = math.asin(
-            min(0.78, max(1.0, line_height * 0.52) / max(1.0, start_radius))
-        )
-        min_step = math.degrees(half_angle * 2.0)
-        font_scale = 1.0
-        raw_spread = min_step * max(1, count - 1)
-        if raw_spread > requested and count > 1:
-            target_step = requested / (count - 1)
-            target_height = (
-                start_radius * math.sin(math.radians(target_step) / 2.0) / 0.52
-            )
-            font_scale = max(0.55, min(1.0, target_height / line_height))
-            scaled_half_angle = math.asin(
-                min(
-                    0.78,
-                    max(1.0, line_height * font_scale * 0.52)
-                    / max(1.0, start_radius),
-                )
-            )
-            min_step = math.degrees(scaled_half_angle * 2.0)
-            raw_spread = min_step * (count - 1)
-        effective = max(requested, raw_spread)
+        base_step = max(5.0, min(16.0, 18.0 - start_radius * 0.04))
+        min_step = base_step * max(0.65, min(1.35, line_height / 36.0)) ** 0.5
+        effective = max(requested, min_step * max(1, count - 1))
         step = effective / max(1, count - 1)
-        return step, effective, font_scale
+        return step, effective, 1.0
 
     def _disc_render_layout(self) -> tuple[float, float, float]:
         """当前设置下圆盘实际使用的角步长、张角与字号缩放。"""
@@ -886,7 +938,7 @@ class LyricWindow(QWidget):
         self.settings.clamp()
         self.settings.save()
         self.recalculate()
-        self.keep_on_screen()
+        self._clamp_if_fully_offscreen()
         after = self._disc_center_on_screen()
         screen_before = (
             QApplication.screenAt(before.toPoint()) if before is not None else None
@@ -997,6 +1049,13 @@ class LyricWindow(QWidget):
         if (x, y) != (self.x(), self.y()):
             self.move(x, y)
             self._remember_position()
+
+    def _clamp_if_fully_offscreen(self) -> None:
+        """只在窗口完全离开屏幕时拉回；露出一部分时保持用户摆放。"""
+        for screen in QApplication.screens():
+            if screen.availableGeometry().intersects(self.frameGeometry()):
+                return
+        self.keep_on_screen()
 
     def _position_slot(self) -> str:
         """这扇窗口的位置该记到哪个槽位。"""
@@ -2448,7 +2507,7 @@ class LyricWindow(QWidget):
         if effect == "sweep":
             effect = "word"
         words = list(getattr(line, "words", None) or [])
-        if effect == "off" or len(words) < 2:
+        if effect == "off":
             render_mod.draw_line_art(
                 painter,
                 art,
@@ -2459,6 +2518,29 @@ class LyricWindow(QWidget):
                 opacity=opacity,
             )
             return
+        if not words:
+            # 没有字级时间时按每个字的实际宽度均分整行时长。它不是“真实演唱
+            # 时间”，但能保证用户选了点亮 / 弹簧后确实看得到逐字推进。
+            chars = list(line.text)
+            widths = [
+                max(0.01, render_mod.measure(char, family, fitted, weight))
+                for char in chars
+            ]
+            total_width = sum(widths) or 1.0
+            start = float(line.time)
+            span = max(0.9, float(line.end or 0.0) - start)
+            cursor_time = start
+            words = []
+            for char, width in zip(chars, widths):
+                duration = span * width / total_width
+                words.append(
+                    SimpleNamespace(
+                        time=cursor_time,
+                        dur=max(0.01, duration),
+                        text=char,
+                    )
+                )
+                cursor_time += duration
 
         # 先画低亮底字，再逐字叠加高光。软边只作用于正在推进的那个字，
         # 已唱完的字直接全亮，避免最后一个字边缘发虚。
@@ -3471,7 +3553,6 @@ class LyricWindow(QWidget):
         if self._drag_offset is not None:
             self._drag_offset = None
             self._dragging = False
-            self.keep_on_screen()
             self._remember_position()
             self.settings.save()
             event.accept()
@@ -3838,13 +3919,13 @@ class LyricWindow(QWidget):
         menu.addSeparator()
         pending = self._pending_version()
         if pending:
-            update_action = menu.addAction(
-                tr("menu.update.pending", "● 发现新版本 v{version}").format(
-                    version=pending
-                )
-            )
-            update_action.setIcon(self._dot_icon())
-            update_action.triggered.connect(lambda: self.open_settings(page="update"))
+            info = self._update_pending
+            widget = UpdateRingActionWidget(self, info)
+            widget.setMinimumWidth(330)
+            update_action = QWidgetAction(menu)
+            update_action.setDefaultWidget(widget)
+            menu.addAction(update_action)
+            self._menu_update_widget = widget
         else:
             menu.addAction(tr("menu.check_update", "检查更新…"), self._check_update)
         version_item = menu.addAction(f"桌面歌词  v{__version__}")
@@ -3890,14 +3971,16 @@ class LyricWindow(QWidget):
         self._apply_disc_change(before)
 
     def _set_disc_angle(self, value: float) -> None:
-        before = self._disc_center_on_screen()
         self.settings.disc_angle = float(value)
-        self._apply_disc_change(before)
+        self.settings.save()
+        self.update()
+        self.settingsChanged.emit()
 
     def _set_disc_spread(self, value: float) -> None:
-        before = self._disc_center_on_screen()
         self.settings.disc_spread = float(value)
-        self._apply_disc_change(before)
+        self.settings.save()
+        self.update()
+        self.settingsChanged.emit()
 
     def _set_lyric_effect(self, value: str) -> None:
         if value == "sweep":
@@ -4105,13 +4188,13 @@ class LyricWindow(QWidget):
         self.settings.clamp()
         self.settings.save()
         self.recalculate()
+        self._clamp_if_fully_offscreen()
         if anchor == "right":
             self.move(before.right() - self.width() + 1, self.y())
         elif anchor == "center":
             self.move(before.center().x() - self.width() // 2, self.y())
         else:
             self.move(before.x(), self.y())
-        self.keep_on_screen()
         self._remember_position()
         self.settings.save()
         self.update()
@@ -4246,9 +4329,14 @@ class LyricWindow(QWidget):
         self._commit()
 
     def _set_align(self, value: str) -> None:
-        before = self._disc_center_on_screen()
         self.settings.lyric_align = value
-        self._apply_disc_change(before)
+        if self.settings.lyric_layout == "disc":
+            self.settings.save()
+            self.update()
+            self.settingsChanged.emit()
+        else:
+            before = self._disc_center_on_screen()
+            self._apply_disc_change(before)
 
     def _toggle_locked(self) -> None:
         self.settings.locked = not self.settings.locked
@@ -4607,6 +4695,8 @@ class LyricWindow(QWidget):
         self.settings.update_pending_url = info.url or ""
         self.settings.update_pending_installer = info.installer or ""
         self.settings.save()
+        if self._menu_update_state != "installing":
+            self._set_menu_update_state("idle")
         self.settingsChanged.emit()
 
     def _clear_pending(self) -> None:
@@ -4616,6 +4706,8 @@ class LyricWindow(QWidget):
         self.settings.update_pending_url = ""
         self.settings.update_pending_installer = ""
         self.settings.save()
+        if self._menu_update_state != "installing":
+            self._set_menu_update_state("idle")
         self.settingsChanged.emit()
 
     def _dot_icon(self) -> QIcon:
@@ -4746,6 +4838,57 @@ class LyricWindow(QWidget):
                 return path
         return None
 
+    def _set_menu_update_state(
+        self,
+        state: str,
+        *,
+        done: int = 0,
+        total: int = 0,
+    ) -> None:
+        self._menu_update_state = state
+        self._menu_update_done = done
+        self._menu_update_total = total
+        widget = getattr(self, "_menu_update_widget", None)
+        if widget is not None:
+            try:
+                widget.update()
+            except RuntimeError:
+                self._menu_update_widget = None
+
+    def _start_menu_update(self, info) -> None:
+        """从右键菜单直接下载；不关闭菜单，也不弹二次确认框。"""
+        if getattr(self, "_update_busy", False):
+            return
+        if not str(getattr(info, "installer", "") or "").startswith(("http://", "https://")):
+            self._set_menu_update_state("failed")
+            self.requestNotify.emit("更新失败", "更新源没有提供可下载的安装包。")
+            return
+
+        self._update_busy = True
+        self._menu_update_active = True
+        self._set_menu_update_state("downloading")
+        stop = threading.Event()
+        self._update_cancel = stop
+        target = Path(tempfile.gettempdir()) / f"LyricDesk-Setup-{info.latest}.exe"
+
+        self.requestNotify.emit(
+            "正在下载更新",
+            f"正在下载 v{info.latest}，右键菜单里的圆环会显示进度。",
+        )
+
+        def done(ok: bool, message: str) -> None:
+            self.updateDownloaded.emit(ok, message, info)
+
+        download_update(
+            info.installer,
+            target,
+            done,
+            on_progress=lambda done_bytes, total, speed: self.updateProgress.emit(
+                int(done_bytes), int(total), float(speed)
+            ),
+            should_stop=stop.is_set,
+        )
+
     def _start_self_update(self, info) -> None:
         from PySide6.QtWidgets import QMessageBox
 
@@ -4803,6 +4946,10 @@ class LyricWindow(QWidget):
         )
 
     def _on_update_progress(self, done: int, total: int, speed: float) -> None:
+        if self._menu_update_active:
+            self._set_menu_update_state(
+                "downloading", done=int(done), total=int(total)
+            )
         box = getattr(self, "_update_progress", None)
         if box is None:
             return
@@ -4825,6 +4972,7 @@ class LyricWindow(QWidget):
     def _on_update_downloaded(self, ok: bool, message: str, info) -> None:
         from PySide6.QtWidgets import QMessageBox
 
+        from_menu = self._menu_update_active
         self._update_busy = False
         progress = getattr(self, "_update_progress", None)
         self._update_progress = None
@@ -4835,7 +4983,18 @@ class LyricWindow(QWidget):
 
         if not ok:
             if message == "已取消":
+                if from_menu:
+                    self._menu_update_active = False
+                    self._set_menu_update_state("idle")
                 self.requestNotify.emit("已取消更新", "没有安装任何东西，程序保持原样。")
+                return
+            if from_menu:
+                self._menu_update_active = False
+                self._set_menu_update_state("failed")
+                self.requestNotify.emit(
+                    "更新失败（可重试）",
+                    f"{message}\n\n打开右键菜单，点击红色圆环即可重试。",
+                )
                 return
             box = self._update_box(
                 QMessageBox.Icon.Warning,
@@ -4854,10 +5013,19 @@ class LyricWindow(QWidget):
                 QDesktopServices.openUrl(QUrl(target))
             return
 
+        if from_menu:
+            self._menu_update_active = False
+            self._set_menu_update_state("installing")
         setup = Path(message)
         exe = self._installed_exe()
         script = self._write_update_script(setup, exe)
         if script is None:
+            self._set_menu_update_state("failed")
+            self.requestNotify.emit(
+                "更新失败", f"更新脚本写入失败，安装包保留在：\n{setup}"
+            )
+            if from_menu:
+                return
             QMessageBox.warning(
                 self,
                 "立即更新",
@@ -4877,6 +5045,13 @@ class LyricWindow(QWidget):
                 close_fds=True,
             )
         except Exception as exc:  # noqa: BLE001
+            self._set_menu_update_state("failed")
+            if from_menu:
+                self.requestNotify.emit(
+                    "更新失败",
+                    f"启动安装失败：{type(exc).__name__}",
+                )
+                return
             QMessageBox.warning(
                 self,
                 "立即更新",
@@ -4939,10 +5114,10 @@ class LyricWindow(QWidget):
         self.settings.save()
         if resize:
             self.recalculate()
+            self._clamp_if_fully_offscreen()
             # 分离面板模式下主窗是隐藏的：切换显示开关时它仍停在旧坐标，
             # 此时若回写槽位会把真正歌词面板刚记住的位置覆盖掉。
             if self.isVisible():
-                self.keep_on_screen()
                 self._remember_position()
                 self.settings.save()
         if background:

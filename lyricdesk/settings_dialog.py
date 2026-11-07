@@ -1638,25 +1638,12 @@ class SettingsDialog(QDialog):
                     )
                 )
         if self._effect_hint is not None:
-            lyrics = getattr(self.window.engine, "lyrics", None)
-            has_words = bool(
-                lyrics is not None
-                and any(getattr(line, "words", None) for line in lyrics.lines)
+            self._effect_hint.setText(
+                tr(
+                    "lyrics.effect.hint",
+                    "优先使用歌词源的真实逐字时间；逐字时间缺失时按字宽估算，可能与实际演唱略有偏差。",
+                )
             )
-            if settings.lyric_effect != "off" and not has_words:
-                self._effect_hint.setText(
-                    tr(
-                        "lyrics.effect.no_words",
-                        "当前歌词没有逐字时间，已自动按「关闭」显示；换到支持逐字的歌曲后会生效。",
-                    )
-                )
-            else:
-                self._effect_hint.setText(
-                    tr(
-                        "lyrics.effect.hint",
-                        "逐字动效只在歌词源提供字级时间时生效；没有逐字数据会自动按关闭处理。",
-                    )
-                )
 
     # ==================================================================
     # 分类 3：播放
