@@ -396,6 +396,8 @@ def check(source: str, on_done, timeout: float = 8.0) -> None:
 
 # 自动安装失败时留下的标记（写安装包文件名），下次启动用它提示用户手动装
 FAILED_MARKER = "lyricdesk-update-failed.txt"
+# 自动安装成功时写入新版本号；只提示一次
+UPDATED_MARKER = "lyricdesk-updated.txt"
 
 
 class _UpdateCancelled(Exception):
@@ -432,6 +434,22 @@ def failed_installer() -> Path | None:
     marker.unlink(missing_ok=True)
     path = Path(tempfile.gettempdir()) / name if name else None
     return path if path is not None and path.exists() else None
+
+
+def consume_updated_version() -> str:
+    """读取并删除一次性的更新成功标记；失败标记存在时不报告成功。"""
+    temp_dir = Path(tempfile.gettempdir())
+    updated = temp_dir / UPDATED_MARKER
+    failed = temp_dir / FAILED_MARKER
+    if failed.exists():
+        updated.unlink(missing_ok=True)
+        return ""
+    try:
+        version = updated.read_text(encoding="mbcs", errors="replace").strip()
+    except OSError:
+        return ""
+    updated.unlink(missing_ok=True)
+    return version
 
 
 def download(

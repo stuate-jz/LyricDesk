@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from .autostart import set_enabled
 from .config import Settings
 from .engine import Engine
+from .i18n import tr
 from .processes import music_app_running
 from .window import LyricWindow, log_error
 from .win_util import run_hidden
@@ -318,6 +319,23 @@ def main() -> int:
 
     rebuild_tray_menu()
     tray.setContextMenu(tray_menu)
+
+    def report_updated_version() -> None:
+        from .update import consume_updated_version
+
+        version = consume_updated_version()
+        if not version:
+            return
+        message = tr("update.updated.notice", "已更新到 v{version}").format(
+            version=version
+        )
+        visible = [win for win in all_windows() if win.isVisible()]
+        if visible:
+            visible[0].show_notice(message, 3_000)
+        else:
+            notify(tr("update.updated.title", "更新完成"), message)
+
+    QTimer.singleShot(1_000, report_updated_version)
 
     # 验收用：LD_OPEN_SETTINGS=1 时启动后自动打开设置窗口（普通用户不会设置这个变量）
     if os.environ.get("LD_OPEN_SETTINGS") == "1":

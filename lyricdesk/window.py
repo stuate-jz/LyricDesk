@@ -61,6 +61,7 @@ from .smtc import friendly_player_name
 from .update import (
     DEFAULT_SOURCE as UPDATE_DEFAULT_SOURCE,
     FAILED_MARKER,
+    UPDATED_MARKER,
     UpdateInfo,
     bundled_source,
     check as check_update,
@@ -429,6 +430,9 @@ class LyricWindow(QWidget):
         self._update_busy = False
         self._update_silent = False
         self._update_pending: UpdateInfo | None = None
+        self._notice_text = ""
+        self._notice_until = 0.0
+        self._notice_token = 0
         self._menu_update_widget: UpdateRingActionWidget | None = None
         self._menu_update_state = "idle"
         self._menu_update_done = 0
@@ -1280,6 +1284,60 @@ class LyricWindow(QWidget):
         next_line = lyrics.lines[index + 1] if index + 1 < len(lyrics.lines) else None
         return self._lyric_progress(snapshot, current, next_line) < 0.999
 
+    def show_notice(self, text: str, duration_ms: int = 3_000) -> None:
+        """在歌词窗内部显示一条不拦截操作的临时提示。"""
+        text = str(text or "").strip()
+        if not text:
+            return
+        self._notice_text = text
+        self._notice_until = time.monotonic() + max(0.2, duration_ms / 1000.0)
+        self._notice_token += 1
+        token = self._notice_token
+        self.update()
+
+        def clear() -> None:
+            if token != self._notice_token:
+                return
+            self._notice_text = ""
+            self._notice_until = 0.0
+            self.update()
+
+        QTimer.singleShot(max(200, int(duration_ms)), clear)
+
+    def _draw_notice(self, painter: QPainter) -> None:
+        if not self._notice_text or time.monotonic() >= self._notice_until:
+            return
+        font = QFont(self.settings.font_family)
+        font.setPixelSize(14)
+        font.setWeight(QFont.Weight.Medium)
+        painter.setFont(font)
+        metrics = QFontMetricsF(font)
+        max_width = max(180.0, min(520.0, self.width() - 48.0))
+        bounds = metrics.boundingRect(
+            QRectF(0, 0, max_width - 32.0, 200.0),
+            int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignCenter),
+            self._notice_text,
+        )
+        width = max(220.0, min(max_width, bounds.width() + 32.0))
+        height = max(40.0, bounds.height() + 20.0)
+        rect = QRectF(
+            (self.width() - width) / 2.0,
+            self.height() - height - 16.0,
+            width,
+            height,
+        )
+        painter.save()
+        painter.setPen(QPen(QColor(self.settings.colors["glow"]), 1.2))
+        painter.setBrush(QColor(10, 16, 28, 225))
+        painter.drawRoundedRect(rect, 12.0, 12.0)
+        painter.setPen(QColor("#ffffff"))
+        painter.drawText(
+            rect.adjusted(16.0, 8.0, -16.0, -8.0),
+            int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignCenter),
+            self._notice_text,
+        )
+        painter.restore()
+
     def _prefetch_visible_lyric_art(self, snapshot) -> None:
         """在计时器线程里构建下一帧要贴的位图，避免首帧绘制超预算。"""
         if self._effective_mode() != "lyrics" or snapshot is None:
@@ -1516,6 +1574,8 @@ class LyricWindow(QWidget):
             self._paint_album(painter, card, snapshot, lyrics)
         elif mode == "lyrics":
             self._paint_lyrics_panel(painter, card, snapshot, lyrics)
+        if self._notice_text:
+            self._draw_notice(painter)
         painter.end()
         if _PROFILE_ENABLED:
             self._profile_finish_paint()
@@ -5345,7 +5405,9 @@ class LyricWindow(QWidget):
             self._set_menu_update_state("installing")
         setup = Path(message)
         exe = self._installed_exe()
-        script = self._write_update_script(setup, exe)
+        script = self._write_update_script(
+            setup, exe, str(info.latest or __version__)
+        )
         if script is None:
             self._set_menu_update_state("failed")
             self.requestNotify.emit(
@@ -5377,20 +5439,30 @@ class LyricWindow(QWidget):
             )
             return
 
-        self.requestNotify.emit(
-            "正在安装更新",
-            f"桌面歌词即将关闭并安装 v{info.latest}，装好后会自动重新打开。",
+        notice = tr(
+            "update.installing.notice",
+            "正在安装更新，完成后会自动重启。",
         )
+        self.show_notice(notice, 3_000)
+        self.requestNotify.emit(tr("update.installing.title", "正在安装更新"), notice)
         self._clear_pending()
-        QTimer.singleShot(1200, self.requestQuit.emit)
+        # 先让用户看见提示，再退出交给安装程序。
+        QTimer.singleShot(3_200, self.requestQuit.emit)
 
-    def _write_update_script(self, setup: Path, exe: Path | None) -> Path | None:
+    def _write_update_script(
+        self, setup: Path, exe: Path | None, version: str = ""
+    ) -> Path | None:
         """写一个脱离本进程运行的 cmd：等一会儿 → 静默装 → 重新打开程序。
 
         装成功才删安装包；装失败（杀软拦截、系统版本不够……）保留安装包，并在
         temp 里留一个标记 —— 程序重新打开后会提示用户「安装包还在，可以手动装」。
         """
-        relaunch = f'start "" "{exe}"' if exe is not None else ""
+        relaunch = (
+            f'start "" /D "{exe.parent}" "{exe}"'
+            if exe is not None
+            else ""
+        )
+        version = str(version or __version__).strip()
         temp_dir = Path(tempfile.gettempdir())
         # 脚本里尽量别出现中文路径：cmd 按控制台代码页解析批处理，
         # 「用户名带中文 + 代码页不是 936」时写死的绝对路径会变乱码。
@@ -5398,21 +5470,26 @@ class LyricWindow(QWidget):
         if setup.parent == temp_dir:
             setup_arg = f"%TEMP%\\{setup.name}"
             marker_arg = f"%TEMP%\\{FAILED_MARKER}"
+            updated_arg = f"%TEMP%\\{UPDATED_MARKER}"
         else:
             setup_arg = str(setup)
             marker_arg = str(temp_dir / FAILED_MARKER)
+            updated_arg = str(temp_dir / UPDATED_MARKER)
         lines = [
             "@echo off",
             # 等程序自己退干净（约 3 秒）。ping 不需要控制台，timeout 在无控制台时会直接报错
             "ping -n 4 127.0.0.1 >nul",
+            f'del /q "{updated_arg}" >nul 2>nul',
             f'"{setup_arg}" /SILENT /SUPPRESSMSGBOXES /NORESTART /SP-',
             "if errorlevel 1 goto failed",
             f'del /q "{setup_arg}"',
             f'del /q "{marker_arg}"',
+            f'>"{updated_arg}" echo {version}',
             relaunch,
             'del "%~f0"',
             "exit /b 0",
             ":failed",
+            f'del /q "{updated_arg}" >nul 2>nul',
             f'>"{marker_arg}" echo {setup.name}',
             relaunch,
             'del "%~f0"',
