@@ -807,6 +807,63 @@ class LyricWindow(QWidget):
                 )
         return max_x * 2.0, max_y * 2.0
 
+    def _disc_center_on_screen(self) -> QPointF | None:
+        """返回当前圆盘圆心在屏幕上的位置；非歌词窗口时返回 None。"""
+        if self.role == "player":
+            return None
+        over_x = self._overscan
+        over_y = self._overscan_v
+        card = QRectF(
+            MARGIN + over_x,
+            MARGIN + over_y,
+            self.width() - (MARGIN + over_x) * 2,
+            self.height() - (MARGIN + over_y) * 2,
+        )
+        header_block = (
+            self._head_block
+            if self.settings.lyric_layout != "disc" and self._want_song_info()
+            else 0.0
+        )
+        center = QPointF(
+            card.center().x(),
+            (card.top() + PAD + header_block + card.bottom() - PAD) / 2.0,
+        )
+        return QPointF(self.x() + center.x(), self.y() + center.y())
+
+    def _apply_disc_change(self, before: QPointF | None = None) -> None:
+        """重排圆盘时保持圆心不动，并让结果仍落在当前屏幕内。"""
+        self.settings.clamp()
+        self.settings.save()
+        self.recalculate()
+        self.keep_on_screen()
+        after = self._disc_center_on_screen()
+        screen_before = (
+            QApplication.screenAt(before.toPoint()) if before is not None else None
+        )
+        screen_after = (
+            QApplication.screenAt(after.toPoint()) if after is not None else None
+        )
+        same_screen = (
+            before is not None
+            and after is not None
+            and (
+                screen_before is None
+                or screen_after is None
+                or screen_before is screen_after
+            )
+        )
+        if same_screen:
+            self.move(
+                self.x() + round(before.x() - after.x()),
+                self.y() + round(before.y() - after.y()),
+            )
+        if self.isVisible():
+            self._remember_position()
+            self.settings.save()
+        self._update_cursor()
+        self.update()
+        self.settingsChanged.emit()
+
     def _effective_mode(self) -> str:
         """主窗永久承担歌词；独立面板只承担播放器。"""
         return "album" if self.role == "player" else "lyrics"
@@ -3806,17 +3863,20 @@ class LyricWindow(QWidget):
         self._commit(resize=True)
 
     def _set_lyric_layout(self, value: str) -> None:
+        before = self._disc_center_on_screen()
         self.settings.lyric_layout = "disc" if value == "disc" else "list"
         self._prefetched_line_key = None
-        self._commit(resize=True)
+        self._apply_disc_change(before)
 
     def _set_disc_angle(self, value: float) -> None:
+        before = self._disc_center_on_screen()
         self.settings.disc_angle = float(value)
-        self._commit(resize=True)
+        self._apply_disc_change(before)
 
     def _set_disc_spread(self, value: float) -> None:
+        before = self._disc_center_on_screen()
         self.settings.disc_spread = float(value)
-        self._commit(resize=True)
+        self._apply_disc_change(before)
 
     def _set_lyric_effect(self, value: str) -> None:
         self.settings.lyric_effect = (
@@ -4163,8 +4223,9 @@ class LyricWindow(QWidget):
         self._commit()
 
     def _set_align(self, value: str) -> None:
+        before = self._disc_center_on_screen()
         self.settings.lyric_align = value
-        self._commit()
+        self._apply_disc_change(before)
 
     def _toggle_locked(self) -> None:
         self.settings.locked = not self.settings.locked
