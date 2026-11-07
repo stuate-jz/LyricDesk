@@ -2517,17 +2517,6 @@ class LyricWindow(QWidget):
                 colors,
             )
 
-        if show_info:
-            self._ensure_heat(snapshot)
-            self._draw_song_header(
-                painter,
-                snapshot,
-                left,
-                right,
-                card.top() + PAD,
-                colors,
-            )
-
         if settings.lyric_layout == "disc":
             self._paint_disc_lyrics(
                 painter,
