@@ -8,7 +8,7 @@
 
 **悬浮在桌面上的歌词组件** —— 不挑播放器，带歌词跳动动画，不改你的壁纸
 
-**当前版本 v1.7.3**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
+**当前版本 v1.7.4**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 镜像仓库：[GitHub](https://github.com/stuate-jz/LyricDesk)　·　发布页：[stuate-jz.github.io/LyricDesk](https://stuate-jz.github.io/LyricDesk/)
 
@@ -18,7 +18,7 @@
 
 ## ⬇ 下载
 
-### ⚙ [**LyricDesk-Setup-v1.7.3.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
+### ⚙ [**LyricDesk-Setup-v1.7.4.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 双击一路「下一步」装好即可（不需要管理员权限，不需要改任何系统设置）。
 
@@ -34,12 +34,13 @@
 
 ## 这个版本更新了什么
 
-- 新增 Unicode 字素时间轴，emoji/组合音标/国旗不会被拆开
-- 有词级时间时展开到字素，无逐字时按字宽分配
-- 逐字点亮改为软边扫光与 4 字余辉拖尾
-- 新增 micro/short/normal 动画预算，极短行整行直亮
-- 高光遮罩按进度缓存，off 与 bounce 保持原行为
-- 补齐更新圆环跨菜单状态与失败重试回归
+- 新增近远双层预模糊光晕，可调 0%～200%
+- 光晕换行时生成并缓存，逐帧只调透明度
+- 重做逐字弹簧为三态与 8ms 子步进积分
+- 新增整行 blur→清晰、90%→100% 入场
+- 列表新增确定性随机错落，圆盘强制关闭
+- 自动宽度为错落预留最坏位移
+- off 档保持不变，补齐性能与跨菜单回归
 
 ![圆盘歌词](screenshots/disc.png)
 
