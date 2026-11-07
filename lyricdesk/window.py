@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 import os
-import subprocess
 import tempfile
 import threading
 import time
@@ -69,7 +68,7 @@ from .update import (
     describe_source,
     is_newer,
 )
-from .win_util import is_topmost, set_native_topmost
+from .win_util import is_topmost, run_hidden, set_native_topmost
 from .lyrics import normalize
 from .lyricfx import (
     WordSpring,
@@ -5361,17 +5360,8 @@ class LyricWindow(QWidget):
             )
             return
 
-        flags = 0
-        if hasattr(subprocess, "DETACHED_PROCESS"):
-            flags |= subprocess.DETACHED_PROCESS
-        if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
-            flags |= subprocess.CREATE_NEW_PROCESS_GROUP
         try:
-            subprocess.Popen(
-                ["cmd", "/c", str(script)],
-                creationflags=flags,
-                close_fds=True,
-            )
+            run_hidden(["cmd", "/c", str(script)])
         except Exception as exc:  # noqa: BLE001
             self._set_menu_update_state("failed")
             if from_menu:

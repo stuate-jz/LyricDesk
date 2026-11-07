@@ -16,6 +16,8 @@ import time
 import winreg
 from pathlib import Path
 
+from .win_util import hidden_creation_flags, run_hidden
+
 APP_NAME = "桌面歌词"
 APP_ID = "LyricDesk"
 EXE_NAME = "LyricDesk.exe"
@@ -25,7 +27,7 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
 def _no_window() -> int:
-    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return hidden_creation_flags()
 
 
 def _message(text: str, error: bool = False) -> None:
@@ -75,7 +77,7 @@ def _self_delete(path: Path) -> None:
     )
     encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
     try:
-        subprocess.Popen(
+        run_hidden(
             [
                 "powershell",
                 "-NoProfile",
@@ -85,7 +87,6 @@ def _self_delete(path: Path) -> None:
                 "-EncodedCommand",
                 encoded,
             ],
-            creationflags=_no_window(),
         )
     except OSError:
         pass
@@ -142,7 +143,7 @@ def _relaunch_from_temp(install_dir: Path, silent: bool) -> int:
     args = [str(temp_exe), "--uninstall", "--from-temp", str(install_dir)]
     if silent:
         args.append("--silent")
-    subprocess.Popen(args, close_fds=True)
+    run_hidden(args)
     return 0
 
 

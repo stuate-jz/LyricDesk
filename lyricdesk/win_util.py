@@ -7,6 +7,7 @@ Qt 的 ``setWindowFlag()`` 在**可见窗口**上会重建原生窗口（hide �
 from __future__ import annotations
 
 import ctypes
+import subprocess
 from ctypes import wintypes
 
 _HWND_TOPMOST = -1
@@ -76,3 +77,24 @@ def is_topmost(widget) -> bool:
         return bool(style & _WS_EX_TOPMOST)
     except Exception:  # noqa: BLE001
         return False
+
+
+def hidden_creation_flags(extra: int = 0) -> int:
+    """子进程标志：隐藏控制台，同时保留独立进程组。"""
+    flags = int(extra)
+    detached = int(getattr(subprocess, "DETACHED_PROCESS", 0))
+    if detached:
+        flags &= ~detached
+    flags |= int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    flags |= int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    return flags
+
+
+def run_hidden(command, **kwargs):
+    """启动 cmd / PowerShell / taskkill 这类控制台程序且绝不显示黑框。"""
+    flags = hidden_creation_flags(int(kwargs.pop("creationflags", 0) or 0))
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    kwargs.setdefault("stdout", subprocess.DEVNULL)
+    kwargs.setdefault("stderr", subprocess.DEVNULL)
+    kwargs.setdefault("close_fds", True)
+    return subprocess.Popen(command, creationflags=flags, **kwargs)

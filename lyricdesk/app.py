@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import queue
-import subprocess
 import sys
 import threading
 
@@ -17,6 +16,7 @@ from .config import Settings
 from .engine import Engine
 from .processes import music_app_running
 from .window import LyricWindow, log_error
+from .win_util import run_hidden
 
 _SHARED_MEMORY = None
 # 翻译器要一直活着，否则被 GC 掉之后翻译会失效（Qt 不持有所有权）
@@ -349,7 +349,7 @@ def main() -> int:
         box.addButton("知道了", QMessageBox.ButtonRole.AcceptRole)
         box.exec()
         if box.clickedButton() is open_folder:
-            subprocess.Popen(["explorer", "/select,", str(kept)])
+            run_hidden(["explorer", "/select,", str(kept)])
 
     QTimer.singleShot(1200, report_failed_update)
 
