@@ -307,7 +307,15 @@ QSlider::handle:horizontal {
     background: %HANDLE%; border: 1px solid %ACCENT%;
 }
 QSlider::handle:horizontal:hover { background: %HANDLE_HOVER%; }
+QSlider::groove:horizontal:disabled { background: %LINE%; }
+QSlider::handle:horizontal:disabled {
+    background: %TEXT_DIM%; border-color: %LINE%;
+}
 QSlider:disabled::sub-page:horizontal { background: %LINE%; }
+QLabel:disabled { color: %TEXT_DIM%; }
+QSpinBox:disabled, QDoubleSpinBox:disabled {
+    color: %TEXT_DIM%; border-color: %LINE%;
+}
 QPushButton {
     background: %CARD%; color: %TEXT%; border: 1px solid %LINE%;
     border-radius: 8px; padding: 6px 14px;
@@ -409,7 +417,15 @@ QSlider::handle:horizontal {
     background: %HANDLE%; border: 1px solid %ACCENT%;
 }
 QSlider::handle:horizontal:hover { background: %HANDLE_HOVER%; }
+QSlider::groove:horizontal:disabled { background: %LINE%; }
+QSlider::handle:horizontal:disabled {
+    background: %TEXT_DIM%; border-color: %LINE%;
+}
 QSlider:disabled::sub-page:horizontal { background: %LINE%; }
+QLabel:disabled { color: %TEXT_DIM%; }
+QSpinBox:disabled, QDoubleSpinBox:disabled {
+    color: %TEXT_DIM%; border-color: %LINE%;
+}
 QPushButton {
     background: %CARD%; color: %TEXT%; border: 1px solid %LINE%;
     border-radius: 8px; padding: 6px 14px;
@@ -1574,15 +1590,11 @@ class SettingsDialog(QDialog):
     def _sync_layout_controls(self) -> None:
         settings = self.window.settings
         disc = settings.lyric_layout == "disc"
-        for row in (
-            self._disc_angle_row,
-            self._disc_spread_row,
-            self._text3d_rows[0] if self._text3d_rows else None,
-            self._text3d_rows[1] if len(self._text3d_rows) > 1 else None,
-            self._text3d_rows[2] if len(self._text3d_rows) > 2 else None,
-        ):
+        for row in (self._disc_angle_row, self._disc_spread_row):
             if row is not None:
                 row.setEnabled(disc)
+        for row in self._text3d_rows:
+            row.setEnabled(not disc)
         if self._line_spacing_row is not None:
             self._line_spacing_row.setEnabled(not disc)
         if self._align_combo is not None:
