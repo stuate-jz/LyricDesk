@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 import math
+import hashlib
 from collections import OrderedDict
 from collections import Counter
 from dataclasses import dataclass
@@ -244,6 +245,36 @@ def render_budget(duration: float) -> Budget:
     )
 
 
+def pulse_envelope(elapsed: float) -> float:
+    """单字脉冲：0→120ms 到峰值，再在 380ms 内平滑回落。"""
+    elapsed = max(0.0, min(0.38, float(elapsed)))
+    if elapsed <= 0.12:
+        t = elapsed / 0.12
+        return 1.0 - (1.0 - t) ** 3
+    t = (elapsed - 0.12) / 0.26
+    return max(0.0, 1.0 - t * t * (3.0 - 2.0 * t))
+
+
+def word_jitter(
+    line,
+    index: int,
+    font_size: int,
+    amount: float = 0.35,
+) -> tuple[float, float]:
+    """由行和字序生成稳定的纵向错落与旋转，不使用随机数。"""
+    amount = max(0.0, min(1.0, float(amount) / 0.35))
+    seed = (
+        f"{float(getattr(line, 'time', 0.0)):.3f}|"
+        f"{getattr(line, 'text', '')}|{int(index)}"
+    ).encode("utf-8")
+    digest = hashlib.sha256(seed).digest()
+    y_rand = int.from_bytes(digest[0:4], "big") / 0xFFFFFFFF
+    r_rand = int.from_bytes(digest[4:8], "big") / 0xFFFFFFFF
+    dy = (y_rand * 2.0 - 1.0) * float(font_size) * 0.12 * amount
+    rotation = (r_rand * 2.0 - 1.0) * 3.0 * amount
+    return dy, rotation
+
+
 def spring_step(
     state: SpringState,
     dt: float,
@@ -283,7 +314,7 @@ class WordSpring:
         position: float,
         budget: Budget,
         dt: float,
-        active_target: float = 1.24,
+        active_target: float = 1.28,
     ) -> list[SpringState]:
         states: list[SpringState] = []
         for index, timing in enumerate(timings):

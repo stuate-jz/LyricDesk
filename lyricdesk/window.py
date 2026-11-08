@@ -84,8 +84,10 @@ from .lyricfx import (
     WordSpring,
     build_char_timeline,
     chorus_weights,
+    pulse_envelope,
     render_budget,
     reveal_state,
+    word_jitter,
 )
 from .render import (
     draw_sprite,
@@ -2960,26 +2962,7 @@ class LyricWindow(QWidget):
                     rotation=rotation,
                 )
                 return
-            if budget.reveal == "instant":
-                visible = 1.0 if position >= timings[0].start else 0.0
-                render_mod.draw_line_art(
-                    painter,
-                    art,
-                    center_x,
-                    baseline,
-                    progress=visible,
-                    scale=draw_scale,
-                    opacity=draw_opacity,
-                    entry_blur=entry_blur,
-                    glow_scale=glow_scale,
-                    rotation=rotation,
-                )
-                return
-            solid, tail, feather, exit_opacity = reveal_state(
-                timings,
-                position,
-                exit_duration=budget.exit,
-            )
+            # 整行只保留极淡的底字与底层光晕，视觉主体交给下面逐字脉冲。
             render_mod.draw_line_art(
                 painter,
                 art,
@@ -2987,25 +2970,65 @@ class LyricWindow(QWidget):
                 baseline,
                 progress=0.0,
                 scale=draw_scale,
-                opacity=draw_opacity * 0.24 * exit_opacity,
+                opacity=draw_opacity * 0.12,
+                glow_scale=glow_scale * 0.20,
                 entry_blur=entry_blur,
                 rotation=rotation,
             )
-            if solid > 0.0 and exit_opacity > 0.0:
+            active_index = -1
+            for index, timing in enumerate(timings):
+                if position < timing.start:
+                    break
+                active_index = index
+            for index, timing in enumerate(timings):
+                elapsed = position - timing.start
+                is_current = index == active_index and elapsed <= 0.38
+                pulse = pulse_envelope(elapsed) if is_current else 0.0
+                sung = elapsed >= 0.0
+                char_scale = draw_scale * (1.0 + 0.28 * pulse)
+                char_opacity = draw_opacity if sung else draw_opacity * 0.12
+                char_progress = 1.0 if sung else 0.0
+                local_glow = (
+                    glow_scale * max(0.0, 1.0 - max(0.0, elapsed) / 0.35)
+                    if is_current
+                    else 0.0
+                )
+                char_x = (
+                    center_x
+                    - art.advance / 2.0
+                    + timing.x
+                    + timing.width / 2.0
+                )
+                dy, char_rotation = word_jitter(
+                    line,
+                    index,
+                    fitted,
+                    amount=0.35,
+                )
+                sprite = make_sprite(timing.char, family, fitted, weight)
+                char_art = render_mod.make_line_art(
+                    sprite,
+                    QColor(255, 255, 255, 120),
+                    (colors["c1"], colors["c2"], colors["c3"]),
+                    QColor(colors["glow"]),
+                    outline_width=max(2.0, fitted * 0.05),
+                    outline_color=QColor(0, 0, 0, 150),
+                    shadow=True,
+                    dpr=self.devicePixelRatioF(),
+                    glow=local_glow > 0,
+                )
                 render_mod.draw_line_art(
                     painter,
-                    art,
-                    center_x,
-                    baseline,
-                    progress=solid,
-                    scale=draw_scale,
-                    opacity=draw_opacity * exit_opacity,
-                    softness=feather,
-                    tail_progress=tail,
-                    tail_alpha=0.72 + 0.13 * chorus,
-                    glow_scale=glow_scale,
+                    char_art,
+                    char_x,
+                    baseline + dy,
+                    progress=char_progress,
+                    scale=char_scale,
+                    opacity=char_opacity,
+                    glow_scale=local_glow,
                     entry_blur=entry_blur,
-                    rotation=rotation,
+                    rotation=rotation + char_rotation,
+                    lift=pulse * 4.0,
                 )
             return
         # bounce：每个字素独立二阶弹簧。底字保持清晰，高光按状态逐字叠加。
@@ -3046,7 +3069,7 @@ class LyricWindow(QWidget):
             position,
             budget,
             dt,
-            active_target=1.24 + 0.08 * chorus,
+            active_target=1.28 + 0.08 * chorus,
         )
         softness = max(6.0, min(14.0, fitted * 0.32))
         for timing, state in zip(timings, states):
