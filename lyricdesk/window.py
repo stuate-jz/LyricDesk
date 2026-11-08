@@ -4608,43 +4608,31 @@ class LyricWindow(QWidget):
     def _set_width(self, value: int) -> None:
         """改歌词宽度。按歌词对齐方式保持锚点，避免窗口"滑来滑去"。"""
         self.settings.width = int(value)
-        self._apply_new_width(QRect(self.geometry()), self.settings.lyric_align)
+        self._apply_new_width(QRect(self.geometry()))
 
     def _set_player_width(self, value: int) -> None:
         """唱片/播放器面板宽度；0 = 自动（跟随封面）。"""
         self.settings.player_width = 0 if int(value) <= 0 else int(value)
-        self._apply_new_width(QRect(self.geometry()), "right")
+        self._apply_new_width(QRect(self.geometry()))
 
     def _set_letter_spacing(self, value: float) -> None:
         """歌词字间距（px）。改完重算：字变宽 → 自动宽度跟着变。"""
         self.settings.letter_spacing = float(value)
         self._commit(resize=True)
 
-    def _apply_new_width(self, before: QRect, anchor: str) -> None:
-        """重算宽度，歌词按当前排版边、播放器按视觉中心保持位置。"""
+    def _apply_new_width(self, before: QRect) -> None:
+        """重算宽度：歌词保持文字锚点，播放器钉住右上角。"""
         self.settings.clamp()
         self.settings.save()
         if self.role == "player":
-            before_center = QPointF(
-                before.center().x() + self.x(),
-                before.center().y() + self.y(),
-            )
-
-            def player_center(size: QSize) -> QPointF:
-                return QPointF(
-                    self.x() + size.width() / 2.0,
-                    self.y() + size.height() / 2.0,
-                )
-
             self.recalculate(apply_geometry=False)
             size = QSize(
                 max(1, self._pending_size.width()),
                 max(1, self._pending_size.height()),
             )
-            after_center = player_center(size)
             self.setGeometry(
-                self.x() + round(before_center.x() - after_center.x()),
-                self.y() + round(before_center.y() - after_center.y()),
+                int(before.right() + 1 - size.width()),
+                int(before.top()),
                 size.width(),
                 size.height(),
             )
@@ -4656,7 +4644,7 @@ class LyricWindow(QWidget):
 
     def _flush_pending_width(self) -> None:
         """内容变化只重排几何，不把内容算出的坐标写回用户位置。"""
-        self._apply_new_width(QRect(self.geometry()), self.settings.lyric_align)
+        self._apply_new_width(QRect(self.geometry()))
 
     def _nudge_width(self, delta: int) -> None:
         self.settings.width += delta
