@@ -476,15 +476,16 @@ def draw_line_art(
     if glow_alpha > 0.01 and art.highlight is not None:
         near, middle, far = glow_layers(art.highlight, art.font_size)
         painter.save()
-        painter.setOpacity(painter.opacity() * min(1.0, glow_alpha * 0.22))
+        base_opacity = painter.opacity()
+        painter.setOpacity(base_opacity * min(1.0, glow_alpha * 0.24))
         painter.drawPixmap(
             QPointF(-art.offset_x, -art.baseline_y), far
         )
-        painter.setOpacity(painter.opacity() * min(1.0, glow_alpha * 0.55))
+        painter.setOpacity(base_opacity * min(1.0, glow_alpha * 0.30))
         painter.drawPixmap(
             QPointF(-art.offset_x, -art.baseline_y), middle
         )
-        painter.setOpacity(painter.opacity() * min(1.0, glow_alpha * 0.95))
+        painter.setOpacity(base_opacity * min(1.0, glow_alpha * 0.50))
         painter.drawPixmap(
             QPointF(-art.offset_x, -art.baseline_y), near
         )
