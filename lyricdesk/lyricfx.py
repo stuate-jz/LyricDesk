@@ -249,8 +249,8 @@ def spring_step(
     dt: float,
     target: float,
     *,
-    stiffness: float = 200.0,
-    damping: float = 20.0,
+    stiffness: float = 260.0,
+    damping: float = 22.0,
 ) -> SpringState:
     """8ms 子步进的二阶弹簧积分，数值夹紧防止极端帧间隔爆炸。"""
     dt = max(0.0, min(0.08, float(dt)))
@@ -263,7 +263,7 @@ def spring_step(
         acceleration = stiffness * (target - state.value) - damping * state.velocity
         state.velocity += acceleration * step
         state.value += state.velocity * step
-        state.value = max(1.0, min(1.25, state.value))
+        state.value = max(1.0, min(1.35, state.value))
     state.alpha += (state.alpha_target - state.alpha) * min(1.0, dt * 18.0)
     return state
 
@@ -283,12 +283,12 @@ class WordSpring:
         position: float,
         budget: Budget,
         dt: float,
-        active_target: float = 1.16,
+        active_target: float = 1.24,
     ) -> list[SpringState]:
         states: list[SpringState] = []
         for index, timing in enumerate(timings):
             state = self.states.setdefault(index, SpringState())
-            if position < timing.start - budget.lookahead:
+            if position < timing.start:
                 mode = "waiting"
                 target = 1.0
                 alpha_target = 1.0
@@ -299,7 +299,7 @@ class WordSpring:
             else:
                 mode = "passed"
                 target = 1.0
-                alpha_target = 0.88
+                alpha_target = 0.84
             if mode != state.mode:
                 state.mode = mode
                 state.alpha_target = alpha_target

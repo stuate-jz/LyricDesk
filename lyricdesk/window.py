@@ -2967,7 +2967,7 @@ class LyricWindow(QWidget):
             position,
             budget,
             dt,
-            active_target=1.16 + 0.04 * chorus,
+            active_target=1.24 + 0.08 * chorus,
         )
         softness = max(6.0, min(14.0, fitted * 0.32))
         for timing, state in zip(timings, states):
@@ -3018,6 +3018,7 @@ class LyricWindow(QWidget):
                 glow_scale=glow_scale * (1.15 if active else 0.55),
                 entry_blur=entry_blur,
                 rotation=rotation,
+                lift=max(0.0, (state.value - 1.0) * 16.0) if active else 0.0,
             )
 
     def _lyric_progress(self, snapshot, current, next_line=None) -> float:

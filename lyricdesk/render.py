@@ -461,10 +461,13 @@ def draw_line_art(
     glow_scale: float = 0.0,
     entry_blur: float = 0.0,
     rotation: float = 0.0,
+    lift: float = 0.0,
 ) -> None:
     painter.save()
     painter.setOpacity(max(0.0, min(1.0, painter.opacity() * opacity)))
     painter.translate(center_x, baseline)
+    if lift:
+        painter.translate(0.0, -float(lift))
     if rotation:
         painter.rotate(rotation)
     if scale != 1.0:
