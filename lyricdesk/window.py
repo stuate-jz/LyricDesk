@@ -809,33 +809,6 @@ class LyricWindow(QWidget):
                     self._disc_line_width,
                     max(fm_list.height(), self._metrics["list_cur"].height()),
                 )
-                screen = self.screen() or QApplication.primaryScreen()
-                room = (
-                    float(screen.availableGeometry().width())
-                    - 2 * (PAD + MARGIN)
-                    if screen is not None
-                    else float(WIDTH_MAX)
-                )
-                width_cap = max(float(WIDTH_MIN), min(float(WIDTH_MAX), room))
-                if bound_w > width_cap and float(settings.disc_radius) > 0.0:
-                    line_height = max(
-                        fm_list.height(), self._metrics["list_cur"].height()
-                    )
-                    base_extent = (
-                        self._disc_size / 2.0
-                        + 26.0
-                        + float(self._disc_line_width)
-                        + line_height / 2.0
-                    )
-                    usable_gap = max(0.0, width_cap / 2.0 - base_extent)
-                    actual = min(float(settings.disc_radius), usable_gap)
-                    settings.disc_radius = max(0.0, actual)
-                    settings.save()
-                    bound_w, bound_h = self._disc_bounds(
-                        self._disc_size,
-                        self._disc_line_width,
-                        line_height,
-                    )
                 window_w = max(float(WIDTH_MIN), bound_w)
                 content_h = PAD * 2 + bound_h
                 self._overscan = 0

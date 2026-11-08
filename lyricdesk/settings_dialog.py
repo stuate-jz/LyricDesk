@@ -1435,6 +1435,12 @@ class SettingsDialog(QDialog):
             unit="px",
             coalesce_ms=60,
         )
+        self._disc_overflow_hint = self._hint(
+            layout,
+            "lyrics.disc.overflow",
+            "当前窗口 {width}×{height}，已超出屏幕可用区；可以调小封面、张角或字号。",
+        )
+        self._disc_overflow_hint.setVisible(False)
         self._disc_hint = self._hint(
             layout,
             "lyrics.disc.hint",
@@ -1716,6 +1722,28 @@ class SettingsDialog(QDialog):
                     tr(
                         "lyrics.disc.hint",
                         "圆盘下「歌词对齐」表示歌词在封面的左侧或右侧；居中会临时按右侧显示。",
+                    )
+                )
+        if self._disc_overflow_hint is not None:
+            screen = self.window.screen() or QApplication.primaryScreen()
+            available = screen.availableGeometry() if screen is not None else None
+            overflow = bool(
+                disc
+                and available is not None
+                and (
+                    self.window.width() > available.width()
+                    or self.window.height() > available.height()
+                )
+            )
+            self._disc_overflow_hint.setVisible(overflow)
+            if overflow:
+                self._disc_overflow_hint.setText(
+                    tr(
+                        "lyrics.disc.overflow",
+                        "当前窗口 {width}×{height}，已超出屏幕可用区；可以调小封面、张角或字号。",
+                    ).format(
+                        width=self.window.width(),
+                        height=self.window.height(),
                     )
                 )
         if self._effect_hint is not None:
