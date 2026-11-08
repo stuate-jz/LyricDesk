@@ -19,10 +19,20 @@ import re
 import sys
 
 from PySide6.QtCore import QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QPainter, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QLinearGradient,
+    QPainter,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -46,6 +56,8 @@ from . import __version__
 from . import audio as audio_mod
 from .autostart import is_enabled
 from .config import (
+    CUSTOM_COLOR_KEYS,
+    CUSTOM_THEME,
     LETTER_SPACING_MAX,
     LETTER_SPACING_MIN,
     PLAYER_WIDTH_MAX,
@@ -1284,15 +1296,55 @@ class SettingsDialog(QDialog):
         )
 
         self._section(layout, "general.section.appearance", "外观")
-        self._combo(
+        self._theme_combo = self._combo(
             layout,
             "general.theme",
             "主题",
             # 主题名做成可翻译的 key，查不到就退回 config 里的中文名
-            [(f"theme.{key}", THEMES[key]["label"], key) for key in THEME_ORDER],
+            [
+                *[
+                    (f"theme.{key}", THEMES[key]["label"], key)
+                    for key in THEME_ORDER
+                ],
+                ("theme.custom", "自定义", CUSTOM_THEME),
+            ],
             lambda: settings.theme,
             self.window._set_theme,
         )
+        self._theme_combo.setIconSize(QSize(16, 48))
+        self._theme_combo.setMinimumHeight(52)
+        self._theme_combo.currentIndexChanged.connect(
+            lambda _index: self._sync_custom_theme()
+        )
+
+        self._custom_theme_box = QWidget()
+        custom_layout = QVBoxLayout(self._custom_theme_box)
+        custom_layout.setContentsMargins(0, 0, 0, 0)
+        custom_layout.setSpacing(8)
+        self._custom_theme_title = QLabel(
+            self._t("general.theme.custom", "自定义配色")
+        )
+        self._bind_text(
+            self._custom_theme_title,
+            "general.theme.custom",
+            "自定义配色",
+        )
+        custom_layout.addWidget(self._custom_theme_title)
+        color_grid = QGridLayout()
+        color_grid.setContentsMargins(0, 0, 0, 0)
+        color_grid.setHorizontalSpacing(8)
+        color_grid.setVerticalSpacing(6)
+        self._custom_color_buttons: dict[str, QPushButton] = {}
+        for index, key in enumerate(CUSTOM_COLOR_KEYS):
+            button = QPushButton()
+            button.setIconSize(QSize(20, 20))
+            button.clicked.connect(
+                lambda _checked=False, color_key=key: self._pick_custom_color(color_key)
+            )
+            color_grid.addWidget(button, index // 2, index % 2)
+            self._custom_color_buttons[key] = button
+        custom_layout.addLayout(color_grid)
+        layout.addWidget(self._custom_theme_box)
         self._combo(
             layout,
             "general.dialog_theme",
@@ -1329,6 +1381,77 @@ class SettingsDialog(QDialog):
         self.window.settings.dialog_theme = value
         self.window._commit()
         self._apply_theme()
+
+    @staticmethod
+    def _gradient_swatch(colors: dict[str, str], width: int, height: int) -> QIcon:
+        pixmap = QPixmap(width, height)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        gradient = QLinearGradient(0.0, 0.0, 0.0, float(height))
+        gradient.setColorAt(0.0, QColor(colors["c1"]))
+        gradient.setColorAt(0.5, QColor(colors["c2"]))
+        gradient.setColorAt(1.0, QColor(colors["c3"]))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(gradient)
+        painter.drawRoundedRect(0, 0, width, height, 4, 4)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _sync_custom_theme(self) -> None:
+        settings = self.window.settings
+        custom = settings.theme == CUSTOM_THEME
+        self._custom_theme_box.setVisible(custom)
+        defaults = THEMES["aurora"]
+        labels = {
+            "c1": (self._t("general.theme.color.c1", "渐变起点"), "Gradient start"),
+            "c2": (self._t("general.theme.color.c2", "渐变中点"), "Gradient middle"),
+            "c3": (self._t("general.theme.color.c3", "渐变终点"), "Gradient end"),
+            "glow": (self._t("general.theme.color.glow", "光晕颜色"), "Glow color"),
+        }
+        for key, button in self._custom_color_buttons.items():
+            color = QColor(settings.custom_colors.get(key, defaults[key]))
+            button.setText(f"{labels[key][0]}  {color.name().upper()}")
+            button.setIcon(
+                self._gradient_swatch(
+                    {"c1": color.name(), "c2": color.name(), "c3": color.name()},
+                    20,
+                    20,
+                )
+            )
+
+        for index, key in enumerate(THEME_ORDER):
+            self._theme_combo.setItemIcon(
+                index,
+                self._gradient_swatch(THEMES[key], 16, 48),
+            )
+        custom_index = self._theme_combo.findData(CUSTOM_THEME)
+        if custom_index >= 0:
+            custom_preview = {
+                key: settings.custom_colors.get(key, defaults[key])
+                for key in CUSTOM_COLOR_KEYS
+            }
+            self._theme_combo.setItemIcon(
+                custom_index,
+                self._gradient_swatch(custom_preview, 16, 48),
+            )
+
+    def _pick_custom_color(self, key: str) -> None:
+        settings = self.window.settings
+        current = QColor(
+            settings.custom_colors.get(key, THEMES["aurora"][key])
+        )
+        color = QColorDialog.getColor(
+            current,
+            self,
+            self._t("general.theme.color.pick", "选择颜色"),
+        )
+        if not color.isValid():
+            return
+        settings.custom_colors[key] = color.name()
+        settings.theme = CUSTOM_THEME
+        self.window._set_theme(CUSTOM_THEME)
+        self._refresh()
 
     # ==================================================================
     # 分类 2：歌词
@@ -2236,6 +2359,7 @@ class SettingsDialog(QDialog):
                 bool(settings.show_lyrics if kind == "lyrics" else settings.show_player)
             )
         self._sync_layout_controls()
+        self._sync_custom_theme()
 
         self._click_warn.setText(tr("window.click_warn", CLICK_WARN_DEFAULT))
         clicking = bool(settings.click_through)

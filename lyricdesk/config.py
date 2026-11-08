@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import ClassVar
 
+from PySide6.QtGui import QColor
+
 APP_NAME = "LyricDesk"
 
 
@@ -75,9 +77,77 @@ THEMES: dict[str, dict[str, str]] = {
         "c3": "#ffffff",
         "glow": "#cbd5e1",
     },
+    "midnight": {
+        "label": "极夜",
+        "base": "#ffffff",
+        "dim": "#8f9ac7",
+        "c1": "#38bdf8",
+        "c2": "#4f46e5",
+        "c3": "#a855f7",
+        "glow": "#6366f1",
+    },
+    "mint": {
+        "label": "薄荷",
+        "base": "#ffffff",
+        "dim": "#91b9ad",
+        "c1": "#bbf7d0",
+        "c2": "#2dd4bf",
+        "c3": "#22d3ee",
+        "glow": "#2dd4bf",
+    },
+    "peach": {
+        "label": "蜜桃",
+        "base": "#ffffff",
+        "dim": "#c3a09f",
+        "c1": "#fb923c",
+        "c2": "#fb7185",
+        "c3": "#f9a8d4",
+        "glow": "#fb7185",
+    },
+    "cyber": {
+        "label": "赛博",
+        "base": "#ffffff",
+        "dim": "#8790b4",
+        "c1": "#22d3ee",
+        "c2": "#3b82f6",
+        "c3": "#ec4899",
+        "glow": "#22d3ee",
+    },
+    "lilac": {
+        "label": "雾紫",
+        "base": "#ffffff",
+        "dim": "#aaa0bd",
+        "c1": "#a5b4fc",
+        "c2": "#c084fc",
+        "c3": "#d8b4fe",
+        "glow": "#a78bfa",
+    },
+    "mocha": {
+        "label": "摩卡",
+        "base": "#ffffff",
+        "dim": "#b8a696",
+        "c1": "#d6a46d",
+        "c2": "#b7794b",
+        "c3": "#e7c8a7",
+        "glow": "#c78a58",
+    },
 }
 
-THEME_ORDER = ["aurora", "sakura", "sunset", "jade", "ink"]
+THEME_ORDER = [
+    "aurora",
+    "sakura",
+    "sunset",
+    "jade",
+    "ink",
+    "midnight",
+    "mint",
+    "peach",
+    "cyber",
+    "lilac",
+    "mocha",
+]
+CUSTOM_THEME = "custom"
+CUSTOM_COLOR_KEYS = ("c1", "c2", "c3", "glow")
 
 # 歌词宽度的可调范围：clamp()、「自定义宽度…」对话框、设置窗口的滑动条
 # 都从这里取，避免以后三处对不上。
@@ -107,6 +177,8 @@ class Settings:
     offset_preview: ClassVar[int | None] = None
 
     theme: str = "aurora"
+    # 「自定义」主题的四个可编辑颜色：渐变起点 / 中点 / 终点 / 光晕
+    custom_colors: dict = field(default_factory=dict)
     # 1.6.8 起桌面显示由下面两个开关派生，mode 只用于老配置迁移
     show_lyrics: bool = True
     show_player: bool = False
@@ -383,8 +455,17 @@ class Settings:
             cleaned.pop(next(iter(cleaned)))
         self.song_offsets = cleaned
         self.cover_size = max(40, min(320, int(self.cover_size)))
-        if self.theme not in THEMES:
+        if self.theme not in THEMES and self.theme != CUSTOM_THEME:
             self.theme = "aurora"
+        if not isinstance(self.custom_colors, dict):
+            self.custom_colors = {}
+        cleaned_colors: dict[str, str] = {}
+        defaults = THEMES["aurora"]
+        for key in CUSTOM_COLOR_KEYS:
+            value = str(self.custom_colors.get(key, defaults[key]))
+            color = QColor(value)
+            cleaned_colors[key] = color.name() if color.isValid() else defaults[key]
+        self.custom_colors = cleaned_colors
         self.lyric_lines = max(1, min(15, int(self.lyric_lines)))
         for name in ("player_pos", "lyrics_pos"):
             value = getattr(self, name)
@@ -459,6 +540,17 @@ class Settings:
 
     @property
     def colors(self) -> dict[str, str]:
+        if self.theme == CUSTOM_THEME:
+            defaults = THEMES["aurora"]
+            return {
+                "label": "自定义",
+                "base": "#ffffff",
+                "dim": "#a8adba",
+                **{
+                    key: self.custom_colors.get(key, defaults[key])
+                    for key in CUSTOM_COLOR_KEYS
+                },
+            }
         return THEMES.get(self.theme, THEMES["aurora"])
 
     @property
