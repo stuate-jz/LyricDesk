@@ -2958,6 +2958,7 @@ class LyricWindow(QWidget):
                     scale=scale,
                     opacity=opacity,
                     glow_scale=glow_scale,
+                    glow_overlay=1.0,
                     rotation=rotation,
                 )
                 return
@@ -2979,20 +2980,10 @@ class LyricWindow(QWidget):
                     scale=scale,
                     opacity=opacity,
                     glow_scale=glow_scale,
+                    glow_overlay=1.0,
                     rotation=rotation,
                 )
                 return
-            render_mod.draw_line_art(
-                painter,
-                art,
-                center_x,
-                baseline,
-                progress=0.0,
-                scale=draw_scale,
-                opacity=draw_opacity * 0.12,
-                glow_scale=glow_scale * 0.20,
-                rotation=rotation,
-            )
             layouts = self._layout_chars(
                 line,
                 timings,
@@ -3048,6 +3039,17 @@ class LyricWindow(QWidget):
                     ),
                     rotation=rotation + char_rotation,
                 )
+            render_mod.draw_glow_overlay(
+                painter,
+                art,
+                center_x,
+                baseline,
+                scale=draw_scale,
+                opacity=draw_opacity,
+                rotation=rotation,
+                glow_scale=glow_scale,
+                glow_overlay=1.0,
+            )
             return
         if effect == "word":
             timings = build_char_timeline(line, family, fitted, weight, art.advance)

@@ -25,9 +25,11 @@ _CACHE_LIMIT = 256
 _LINE_CACHE: "OrderedDict[tuple, LineArt]" = OrderedDict()
 _LINE_CACHE_LIMIT = 160
 _GLOW_CACHE: "OrderedDict[tuple, tuple[QPixmap, QPixmap, QPixmap]]" = OrderedDict()
-_GLOW_CACHE_LIMIT = 12
+_GLOW_CACHE_LIMIT = 96
 _GLOW_STACK_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
 _GLOW_STACK_LIMIT = 18
+_GLOW_OVERLAY_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
+_GLOW_OVERLAY_LIMIT = 96
 _ENTRY_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
 _ENTRY_CACHE_LIMIT = 12
 
@@ -105,6 +107,7 @@ def clear_line_cache() -> None:
     _LINE_CACHE.clear()
     _GLOW_CACHE.clear()
     _GLOW_STACK_CACHE.clear()
+    _GLOW_OVERLAY_CACHE.clear()
     _ENTRY_CACHE.clear()
 
 
@@ -215,6 +218,115 @@ def glow_stack(
     if len(_GLOW_STACK_CACHE) > _GLOW_STACK_LIMIT:
         _GLOW_STACK_CACHE.popitem(last=False)
     return stack
+
+
+def glow_overlay_layer(
+    art: "LineArt",
+    glow_scale: float,
+) -> QPixmap | None:
+    """生成盖在正文上的近/中双层加法光，并挖掉字形本体。"""
+    if art.highlight is None or glow_scale <= 0.01:
+        return None
+    near, middle, _far = glow_layers(art.highlight, art.font_size)
+    strength = min(
+        1.0,
+        0.55 + max(0.0, float(glow_scale) - 1.0) * 0.1125,
+    )
+    dpr = round(float(near.devicePixelRatio()), 2)
+    key = (
+        art.advance,
+        art.font_size,
+        middle.cacheKey(),
+        near.cacheKey(),
+        round(strength, 3),
+        dpr,
+    )
+    cached = _GLOW_OVERLAY_CACHE.get(key)
+    if cached is not None:
+        _GLOW_OVERLAY_CACHE.move_to_end(key)
+        return cached
+    overlay = QPixmap(near.size())
+    overlay.fill(Qt.GlobalColor.transparent)
+    overlay.setDevicePixelRatio(dpr)
+    painter = QPainter(overlay)
+    painter.setCompositionMode(
+        QPainter.CompositionMode.CompositionMode_Plus
+    )
+    painter.setOpacity(strength)
+    painter.drawPixmap(0, 0, near)
+    painter.setOpacity(strength * 0.48)
+    painter.drawPixmap(0, 0, middle)
+    painter.end()
+    _GLOW_OVERLAY_CACHE[key] = overlay
+    if len(_GLOW_OVERLAY_CACHE) > _GLOW_OVERLAY_LIMIT:
+        _GLOW_OVERLAY_CACHE.popitem(last=False)
+    return overlay
+
+
+def _draw_glow_overlay_current(
+    painter: QPainter,
+    art: "LineArt",
+    glow_scale: float,
+    glow_overlay: float,
+    entry_blur: float,
+) -> None:
+    if (
+        glow_scale <= 0.01
+        or glow_overlay <= 0.0
+        or art.highlight is None
+    ):
+        return
+    overlay = glow_overlay_layer(art, glow_scale)
+    if overlay is None:
+        return
+    fade = max(0.0, 1.0 - float(entry_blur) / 10.0)
+    if fade <= 0.0:
+        return
+    painter.save()
+    # 叠光画在已有正文“后方”：透明区域会显出光晕，而 alpha=255 的正文
+    # 保持原 RGB。这样比 Plus 更能严格满足“正文像素不得偏移”。
+    painter.setCompositionMode(
+        QPainter.CompositionMode.CompositionMode_DestinationOver
+    )
+    painter.setOpacity(painter.opacity() * min(1.0, float(glow_overlay)) * fade)
+    painter.drawPixmap(
+        QPointF(-art.offset_x, -art.baseline_y),
+        overlay,
+    )
+    painter.restore()
+
+
+def draw_glow_overlay(
+    painter: QPainter,
+    art: "LineArt",
+    center_x: float,
+    baseline: float,
+    *,
+    scale: float = 1.0,
+    opacity: float = 1.0,
+    rotation: float = 0.0,
+    glow_scale: float = 0.0,
+    glow_overlay: float = 1.0,
+    entry_blur: float = 0.0,
+) -> None:
+    """在已经画完正文的位置补一层近/中加法光。"""
+    if glow_scale <= 0.01 or glow_overlay <= 0.0:
+        return
+    painter.save()
+    painter.setOpacity(max(0.0, min(1.0, painter.opacity() * opacity)))
+    painter.translate(center_x, baseline)
+    if rotation:
+        painter.rotate(rotation)
+    if scale != 1.0:
+        painter.scale(scale, scale)
+    _draw_glow_overlay_current(
+        painter,
+        art,
+        glow_scale,
+        glow_overlay,
+        entry_blur,
+    )
+    painter.restore()
 
 
 def entry_blur_layer(source: QPixmap, radius: float) -> QPixmap:
@@ -510,6 +622,8 @@ def draw_line_art(
     entry_blur: float = 0.0,
     rotation: float = 0.0,
     lift: float = 0.0,
+    glow_passes: int = 1,
+    glow_overlay: float = 0.0,
 ) -> None:
     painter.save()
     painter.setOpacity(max(0.0, min(1.0, painter.opacity() * opacity)))
@@ -523,6 +637,7 @@ def draw_line_art(
     glow_alpha = glow_scale * max(0.0, 1.0 - entry_blur / 10.0)
     if glow_alpha > 0.01 and art.highlight is not None:
         near, middle, far = glow_layers(art.highlight, art.font_size)
+        passes = max(1, int(glow_passes))
         painter.save()
         base_opacity = painter.opacity()
         if glow_scale <= 2.0:
@@ -531,6 +646,11 @@ def draw_line_art(
             painter.drawPixmap(
                 QPointF(-art.offset_x, -art.baseline_y), stack
             )
+            for extra in range(1, passes):
+                painter.setOpacity(base_opacity * 0.45 / (extra + 1))
+                painter.drawPixmap(
+                    QPointF(-art.offset_x, -art.baseline_y), stack
+                )
             painter.setOpacity(base_opacity * 0.65)
             painter.drawPixmap(
                 QPointF(-art.offset_x, -art.baseline_y), stack
@@ -616,22 +736,28 @@ def draw_line_art(
                 tail_progress=tail_progress,
                 tail_alpha=tail_alpha,
             )
-            painter.restore()
-            return
-        painter.save()
-        painter.setClipRect(
-            QRectF(
-                -art.advance / 2.0,
-                -art.ascent * 1.25,
-                art.advance * progress,
-                art.height * 1.9,
+        else:
+            painter.save()
+            painter.setClipRect(
+                QRectF(
+                    -art.advance / 2.0,
+                    -art.ascent * 1.25,
+                    art.advance * progress,
+                    art.height * 1.9,
+                )
             )
-        )
-        painter.setOpacity(painter.opacity() * min(1.0, progress * 6.0))
-        painter.drawPixmap(
-            QPointF(-art.offset_x, -art.baseline_y), art.highlight
-        )
-        painter.restore()
+            painter.setOpacity(painter.opacity() * min(1.0, progress * 6.0))
+            painter.drawPixmap(
+                QPointF(-art.offset_x, -art.baseline_y), art.highlight
+            )
+            painter.restore()
+    _draw_glow_overlay_current(
+        painter,
+        art,
+        glow_scale,
+        glow_overlay,
+        entry_blur,
+    )
     painter.restore()
 
 
