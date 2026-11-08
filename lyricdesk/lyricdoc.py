@@ -13,6 +13,7 @@ class LyricWord:
     time: float
     dur: float
     text: str
+    estimated: bool = False
 
 
 @dataclass
@@ -28,6 +29,10 @@ class LyricLine:
     def is_gap(self) -> bool:
         return not self.text.strip()
 
+    @property
+    def has_real_words(self) -> bool:
+        return any(word.text and not word.estimated for word in self.words)
+
 
 @dataclass
 class LyricDoc:
@@ -39,6 +44,14 @@ class LyricDoc:
 
     def __post_init__(self) -> None:
         self.has_words = any(line.words for line in self.lines)
+
+    @property
+    def real_word_lines(self) -> int:
+        return sum(1 for line in self.lines if line.has_real_words)
+
+    @property
+    def has_real_words(self) -> bool:
+        return self.real_word_lines > 0
 
     def index_at(self, position: float) -> int:
         if not self.lines:
@@ -138,6 +151,7 @@ def estimate_lrc_words(lines: list[LyricLine]) -> None:
                     time=cursor,
                     dur=duration,
                     text=char,
+                    estimated=True,
                 )
             )
             cursor += duration

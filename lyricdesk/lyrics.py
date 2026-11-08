@@ -43,8 +43,8 @@ NE_HEADERS = {"User-Agent": UA, "Referer": "https://music.163.com/"}
 KG_HEADERS = {"User-Agent": UA, "Referer": "https://www.kugou.com/"}
 
 MISS_TTL = 900.0
-# 6：作废旧版可能按错误曲目身份写下的歌词缓存
-CACHE_VERSION = 6
+# 7：区分真实字级与普通 LRC 估算字级，避免选源误判
+CACHE_VERSION = 7
 TIMEOUT = 8.0
 
 _SESSION = requests.Session()
@@ -89,6 +89,10 @@ class LyricLine:
     def is_gap(self) -> bool:
         return not self.text.strip()
 
+    @property
+    def has_real_words(self) -> bool:
+        return any(word.text and not word.estimated for word in self.words)
+
 
 @dataclass
 class Lyrics:
@@ -119,6 +123,10 @@ class Lyrics:
             else:
                 hi = mid - 1
         return lo
+
+    @property
+    def real_word_lines(self) -> int:
+        return sum(1 for line in self.lines if line.has_real_words)
 
     @classmethod
     def from_doc(
@@ -669,6 +677,7 @@ def load_cached(
                 time=float(word[0]),
                 dur=float(word[1]),
                 text=str(word[2]),
+                estimated=bool(word[3]) if len(word) > 3 else False,
             )
             for word in item[4]
             if isinstance(word, (list, tuple)) and len(word) >= 3
@@ -738,7 +747,7 @@ def save_cached(
                         line.end,
                         line.trans,
                         [
-                            [word.time, word.dur, word.text]
+                            [word.time, word.dur, word.text, word.estimated]
                             for word in line.words
                         ],
                         line.roma,
@@ -1285,7 +1294,7 @@ def fetch_enhanced(
             pass
 
     if official_result is not None:
-        official_words = sum(1 for line in official_result.lines if line.words)
+        official_words = official_result.real_word_lines
         official_ratio = official_words / max(1, len(official_result.lines))
         try:
             kdoc = kugou_source.fetch_doc(
@@ -1299,7 +1308,7 @@ def fetch_enhanced(
                 kugou_result.track_key = track_key
                 kugou_result.match_score = 0.96
                 kugou_result.track_duration = duration
-                kugou_words = sum(1 for line in kdoc.lines if line.words)
+                kugou_words = sum(1 for line in kdoc.lines if line.has_real_words)
                 kugou_ratio = kugou_words / max(1, len(kdoc.lines))
                 use_official = (
                     official_result.lines
@@ -1309,7 +1318,7 @@ def fetch_enhanced(
                 chosen = official_result if use_official else kugou_result
                 _lyric_log(
                     f"入选 provider={chosen.provider} track={track_key} "
-                    f"lines={len(chosen.lines)} words={sum(1 for x in chosen.lines if x.words)} "
+                    f"lines={len(chosen.lines)} words={chosen.real_word_lines} "
                     f"reason={'官方行数与逐字覆盖足够' if use_official else '酷狗逐字覆盖更完整'}"
                 )
                 return chosen
@@ -1336,7 +1345,7 @@ def fetch_enhanced(
                 partial(result)
             except Exception:  # noqa: BLE001
                 pass
-    if result.lines and not any(line.words for line in result.lines):
+    if result.lines and not result.real_word_lines:
         # 行级歌词已经可用时，再尝试一次严格三重匹配的 KRC 作为逐字增强；
         # 接口失败或版本不符就保留原来的行级结果。
         try:
