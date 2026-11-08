@@ -157,6 +157,8 @@ WIDTH_MIN, WIDTH_MAX = 240, 1440
 PLAYER_WIDTH_MIN, PLAYER_WIDTH_MAX = 240, 1440
 # 歌词字间距（px）：正数拉开、负数收紧
 LETTER_SPACING_MIN, LETTER_SPACING_MAX = -2.0, 12.0
+# 歌词光晕强度上限。界面按百分数显示，内部统一用倍率。
+GLOW_MAX = 5.0
 # 旧版 width 是「窗口宽」口径，迁移到新口径时减掉左右两个 PAD。
 # （window.PAD = 20；这里不 import window 是为了避免 config → window 循环依赖）
 LEGACY_WIDTH_SHIFT = 40
@@ -489,7 +491,7 @@ class Settings:
             self.lyric_effect = "word"
         if self.lyric_effect not in ("off", "word", "bounce"):
             self.lyric_effect = "off"
-        self.lyric_glow = max(0.0, min(3.0, float(self.lyric_glow)))
+        self.lyric_glow = max(0.0, min(GLOW_MAX, float(self.lyric_glow)))
         self.lyric_chaos = max(0.0, min(1.0, float(self.lyric_chaos)))
         self.lyric_scatter = bool(self.lyric_scatter)
         self.chorus_boost = bool(self.chorus_boost)

@@ -26,6 +26,8 @@ _LINE_CACHE: "OrderedDict[tuple, LineArt]" = OrderedDict()
 _LINE_CACHE_LIMIT = 160
 _GLOW_CACHE: "OrderedDict[tuple, tuple[QPixmap, QPixmap, QPixmap]]" = OrderedDict()
 _GLOW_CACHE_LIMIT = 18
+_GLOW_STACK_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
+_GLOW_STACK_LIMIT = 18
 _ENTRY_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
 _ENTRY_CACHE_LIMIT = 12
 
@@ -102,6 +104,7 @@ _SOFT_MASK_STATE: tuple | None = None
 def clear_line_cache() -> None:
     _LINE_CACHE.clear()
     _GLOW_CACHE.clear()
+    _GLOW_STACK_CACHE.clear()
     _ENTRY_CACHE.clear()
 
 
@@ -167,6 +170,46 @@ def glow_layers(
     if len(_GLOW_CACHE) > _GLOW_CACHE_LIMIT:
         _GLOW_CACHE.popitem(last=False)
     return value
+
+
+def glow_stack(
+    near: QPixmap,
+    middle: QPixmap,
+    far: QPixmap,
+    strength: float,
+) -> QPixmap:
+    """把同一遍的远 / 中 / 近三层预合成，减少高光晕档的逐帧绘制调用。"""
+    dpr = round(float(near.devicePixelRatio()), 2)
+    key = (
+        far.cacheKey(),
+        middle.cacheKey(),
+        near.cacheKey(),
+        round(float(strength), 3),
+        dpr,
+    )
+    cached = _GLOW_STACK_CACHE.get(key)
+    if cached is not None:
+        _GLOW_STACK_CACHE.move_to_end(key)
+        return cached
+    stack = QPixmap(far.size())
+    stack.fill(Qt.GlobalColor.transparent)
+    stack.setDevicePixelRatio(dpr)
+    painter = QPainter(stack)
+    painter.setCompositionMode(
+        QPainter.CompositionMode.CompositionMode_Plus
+    )
+    for layer, coefficient in (
+        (far, 0.24),
+        (middle, 0.30),
+        (near, 0.55),
+    ):
+        painter.setOpacity(min(1.0, float(strength) * coefficient))
+        painter.drawPixmap(0, 0, layer)
+    painter.end()
+    _GLOW_STACK_CACHE[key] = stack
+    if len(_GLOW_STACK_CACHE) > _GLOW_STACK_LIMIT:
+        _GLOW_STACK_CACHE.popitem(last=False)
+    return stack
 
 
 def entry_blur_layer(source: QPixmap, radius: float) -> QPixmap:
@@ -477,18 +520,52 @@ def draw_line_art(
         near, middle, far = glow_layers(art.highlight, art.font_size)
         painter.save()
         base_opacity = painter.opacity()
-        painter.setOpacity(base_opacity * min(1.0, glow_alpha * 0.24))
-        painter.drawPixmap(
-            QPointF(-art.offset_x, -art.baseline_y), far
-        )
-        painter.setOpacity(base_opacity * min(1.0, glow_alpha * 0.30))
-        painter.drawPixmap(
-            QPointF(-art.offset_x, -art.baseline_y), middle
-        )
-        painter.setOpacity(base_opacity * min(1.0, glow_alpha * 0.50))
-        painter.drawPixmap(
-            QPointF(-art.offset_x, -art.baseline_y), near
-        )
+        if glow_scale <= 2.0:
+            # 100% / 200% 保持与 9fc24b7 完全相同的单遍绘制。
+            painter.setOpacity(base_opacity * min(1.0, glow_alpha * 0.24))
+            painter.drawPixmap(
+                QPointF(-art.offset_x, -art.baseline_y), far
+            )
+            painter.setOpacity(base_opacity * min(1.0, glow_alpha * 0.30))
+            painter.drawPixmap(
+                QPointF(-art.offset_x, -art.baseline_y), middle
+            )
+            painter.setOpacity(base_opacity * min(1.0, glow_alpha * 0.50))
+            painter.drawPixmap(
+                QPointF(-art.offset_x, -art.baseline_y), near
+            )
+        else:
+            # 200% 以上用连续的等效遍数：整数遍 + 末尾零头遍。
+            equivalent_passes = 1.0 + max(0.0, float(glow_scale) - 2.0)
+            full_passes = int(equivalent_passes)
+            fraction = equivalent_passes - full_passes
+            capped_glow = min(
+                glow_alpha,
+                max(2.0, float(glow_scale) - 0.05),
+            )
+            stack = glow_stack(near, middle, far, capped_glow)
+            painter.setOpacity(base_opacity)
+            for _ in range(full_passes):
+                painter.drawPixmap(
+                    QPointF(-art.offset_x, -art.baseline_y), stack
+                )
+            if fraction > 0.0:
+                painter.setOpacity(base_opacity * fraction**4.2)
+                painter.drawPixmap(
+                    QPointF(-art.offset_x, -art.baseline_y), stack
+                )
+            plus = min(
+                1.0,
+                max(0.0, (float(glow_scale) - 4.0) / 1.0) ** 4,
+            )
+            if plus > 0.0:
+                painter.setCompositionMode(
+                    QPainter.CompositionMode.CompositionMode_Plus
+                )
+                painter.setOpacity(base_opacity * plus * 0.40)
+                painter.drawPixmap(
+                    QPointF(-art.offset_x, -art.baseline_y), stack
+                )
         painter.restore()
     base_layer = art.base
     if entry_blur > 0.0:

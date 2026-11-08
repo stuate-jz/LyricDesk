@@ -58,6 +58,7 @@ from .autostart import is_enabled
 from .config import (
     CUSTOM_COLOR_KEYS,
     CUSTOM_THEME,
+    GLOW_MAX,
     LETTER_SPACING_MAX,
     LETTER_SPACING_MIN,
     PLAYER_WIDTH_MAX,
@@ -1570,7 +1571,7 @@ class SettingsDialog(QDialog):
             getter=lambda: round(float(settings.lyric_glow) * 100),
             apply=lambda value: self.window._set_glow(float(value) / 100),
             minimum=0,
-            maximum=300,
+            maximum=round(GLOW_MAX * 100),
             step=5,
             default=round(float(self._defaults.lyric_glow) * 100),
             unit="%",
