@@ -8,7 +8,7 @@
 
 **悬浮在桌面上的歌词组件** —— 不挑播放器，带歌词跳动动画，不改你的壁纸
 
-**当前版本 v1.7.9**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
+**当前版本 v1.7.10**　·　[⬇ 下载最新版](https://gitee.com/pursue-studies/LyricDesk/releases)　·　[全部版本](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 镜像仓库：[GitHub](https://github.com/stuate-jz/LyricDesk)　·　发布页：[stuate-jz.github.io/LyricDesk](https://stuate-jz.github.io/LyricDesk/)
 
@@ -18,7 +18,7 @@
 
 ## ⬇ 下载
 
-### ⚙ [**LyricDesk-Setup-v1.7.9.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
+### ⚙ [**LyricDesk-Setup-v1.7.10.exe**](https://gitee.com/pursue-studies/LyricDesk/releases)
 
 双击一路「下一步」装好即可（不需要管理员权限，不需要改任何系统设置）。
 
@@ -34,12 +34,11 @@
 
 ## 这个版本更新了什么
 
-- 修复切歌后仍显示上一首歌词，加入取词看门狗、超时淘汰与身份校验
-- 网易云标题和 song_id 改为同一 track 快照，并作废旧版错误缓存
-- 圆盘新增独立圆心大小，歌词外扩时封面和圆心保持不动
-- 置顶每 5 秒强制重申，设置窗口关闭或隐藏后自动恢复
-- 切歌重排不再改写用户位置，分批歌词只合并刷新一次
-- 前奏倒计时改为按秒刷新，不再冻在初始数字
+- 接入 AMLL 人工逐词歌词库，新增 YRC/QRC/TTML/LYS 解析与多镜像回退
+- 支持网易云客户端登录态 YRC 拦截、QQ 音乐 QRC 与本地多格式歌词
+- 分离真实字级与普通 LRC 估算，多源按覆盖率、行边界和字密度选优
+- 新增实验性音频起音校准，默认关闭且低置信度自动回退
+- 歌词缓存升级，避免旧版估算稿覆盖新逐字源
 
 ![圆盘歌词](screenshots/disc.png)
 
@@ -68,8 +67,9 @@
 想换字体：右键 → 歌词字体 —— 内置了「得意黑」「霞鹜漫黑」，
 也可以用「导入字体文件…」把自己下载的 ttf / otf 字体导进来，导入一次以后一直在。
 
-歌词准确度：网易云会优先用客户端曲目 ID 取官方 LRC / YRC；其他播放器会按
-歌名、歌手和时长严格匹配，并尝试酷狗 KRC 逐字增强。没有逐字数据时会自动回落行级歌词。
+歌词准确度：优先使用本机多格式歌词、客户端 YRC / 酷狗 KRC，并严格匹配
+AMLL TTML DB 与 QQ 音乐 QRC。标题和至少一位歌手必须完全相等，
+没有真实字级时才回落到带语速估算的行级 LRC。
 
 卸载：开始菜单 → 桌面歌词 → 卸载，或者「设置 → 应用」里卸载。
 
@@ -109,3 +109,4 @@ gitee:pursue-studies/LyricDesk
 ## 许可
 
 免费使用。内置字体「得意黑」「霞鹜漫黑」均为 SIL OFL 1.1 授权，可自由分发。
+逐词歌词来自 AMLL TTML DB（CC0），感谢其贡献者。
