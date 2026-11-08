@@ -9,7 +9,13 @@ import unicodedata
 
 import requests
 
-from ..lyricdoc import LyricDoc, LyricLine, LyricWord
+from ..lyricdoc import (
+    LyricDoc,
+    LyricLine,
+    LyricWord,
+    estimate_lrc_words,
+    parse_inline_words,
+)
 
 LYRIC_URL = "https://music.163.com/api/song/lyric/v1"
 HEADERS = {
@@ -78,7 +84,16 @@ def _parse_text_lrc(text: str) -> list[LyricLine]:
         for stamp in stamps:
             minute = int(stamp.group(1))
             second = float(stamp.group(2).replace(":", "."))
-            values.append(LyricLine(minute * 60 + second, 0.0, content))
+            stamp_time = minute * 60 + second
+            display, words = parse_inline_words(content, stamp_time)
+            values.append(
+                LyricLine(
+                    stamp_time,
+                    0.0,
+                    display,
+                    words=words,
+                )
+            )
     return values
 
 
@@ -119,7 +134,23 @@ def parse_lrc(text: str) -> list[LyricLine]:
     # 网易云部分曲目把 JSON 制作信息和普通 [mm:ss] 歌词混在同一个字段里。
     # 两种格式必须一起解析，不能因为首字符是 "{" 就把后面的正文全部丢掉。
     values = _parse_json_lrc(text) + _parse_text_lrc(text)
-    return _clean_lrc_lines(values)
+    cleaned = _clean_lrc_lines(values)
+    for index, line in enumerate(cleaned):
+        if line.end <= line.time:
+            line.end = (
+                cleaned[index + 1].time
+                if index + 1 < len(cleaned)
+                else line.time + 6.0
+            )
+        for word_index, word in enumerate(line.words):
+            end = (
+                line.words[word_index + 1].time
+                if word_index + 1 < len(line.words)
+                else line.end
+            )
+            word.dur = max(0.01, end - word.time)
+    estimate_lrc_words(cleaned)
+    return cleaned
 
 
 def parse_yrc(text: str) -> list[LyricLine]:

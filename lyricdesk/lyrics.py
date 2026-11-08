@@ -17,7 +17,7 @@ import requests
 from .config import cache_dir
 from .lyricdoc import LyricDoc
 from .lyricdoc import LyricLine as DocLyricLine
-from .lyricdoc import LyricWord
+from .lyricdoc import LyricWord, estimate_lrc_words, parse_inline_words
 from .titles import clean_title, is_variant_title, variant_speed
 
 UA = (
@@ -523,7 +523,15 @@ def parse_lrc(
         for match in stamps:
             minutes = int(match.group(1))
             seconds = float(match.group(2).replace(":", "."))
-            lines.append(LyricLine(time=minutes * 60 + seconds, text=content))
+            stamp_time = minutes * 60 + seconds
+            display, words = parse_inline_words(content, stamp_time)
+            lines.append(
+                LyricLine(
+                    time=stamp_time,
+                    text=display,
+                    words=words,
+                )
+            )
 
     if not lines:
         return []
@@ -562,7 +570,16 @@ def parse_lrc(
                     and len(simplified) <= len(norm_title) + 32
                 ):
                     continue
-        cleaned.append(LyricLine(time=line.time, text=text_value))
+        cleaned.append(
+            LyricLine(
+                time=line.time,
+                end=line.end,
+                text=text_value,
+                words=list(line.words),
+                trans=line.trans,
+                roma=line.roma,
+            )
+        )
 
     if not cleaned:
         cleaned = deduped
@@ -572,6 +589,16 @@ def parse_lrc(
         line.end = cleaned[index + 1].time if index + 1 < len(cleaned) else tail
         if line.end <= line.time:
             line.end = line.time + 2.5
+        if line.words:
+            for word_index, word in enumerate(line.words):
+                end = (
+                    line.words[word_index + 1].time
+                    if word_index + 1 < len(line.words)
+                    else line.end
+                )
+                word.dur = max(0.01, end - word.time)
+
+    estimate_lrc_words(cleaned)
 
     return cleaned
 
