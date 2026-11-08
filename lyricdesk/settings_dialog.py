@@ -525,7 +525,8 @@ CLICK_WARN_DEFAULT = (
 )
 ABOUT_DEFAULT = (
     "桌面歌词  v{version}\n"
-    "把正在播放的歌词实时显示在桌面上，读取的是 Windows 系统媒体控制，不挑播放器。"
+    "把正在播放的歌词实时显示在桌面上，读取的是 Windows 系统媒体控制，不挑播放器。\n\n"
+    "逐词歌词来自 AMLL TTML DB（CC0），感谢其贡献者。"
 )
 
 SHORTCUT_ROWS: tuple[tuple[str, str, str, str], ...] = (

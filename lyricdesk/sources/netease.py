@@ -28,7 +28,8 @@ HEADERS = {
 TIMEOUT = 10
 _TIME_RE = re.compile(r"\[(\d+):(\d+(?:[.:]\d+)?)\]")
 _YRC_LINE = re.compile(r"^\[(\d+),(\d+)\](.*)$")
-_YRC_WORD = re.compile(r"[\(<](\d+),(\d+),\d+[\)>]")
+# YRC 是 (start,duration,0)，QRC 是 (start,duration)；两者都能复用此解析器。
+_YRC_WORD = re.compile(r"[\(<](\d+),(\d+)(?:,\d+)?[\)>]")
 _CREDIT_RE = re.compile(
     r"^\s*(?:"
     r"作词|作曲|编曲|演唱|原唱|制作人|制作|监制|出品人?|统筹|视觉|封面|策划|发行|词曲|词|曲|"
@@ -166,19 +167,39 @@ def parse_yrc(text: str) -> list[LyricLine]:
         relative_offsets = bool(
             markers and int(markers[0].group(1)) < max(1, start_ms // 2)
         )
-        for index, marker in enumerate(markers):
-            text_end = markers[index + 1].start() if index + 1 < len(markers) else len(body)
-            content = body[marker.end():text_end]
-            if content:
-                offset_ms = int(marker.group(1))
-                word_time = offset_ms if not relative_offsets else start_ms + offset_ms
-                words.append(
-                    LyricWord(
-                        time=word_time / 1000.0,
-                        dur=int(marker.group(2)) / 1000.0,
-                        text=content,
-                    )
+
+        def append_word(marker: re.Match[str], content: str) -> None:
+            if not content:
+                return
+            offset_ms = int(marker.group(1))
+            word_time = offset_ms if not relative_offsets else start_ms + offset_ms
+            words.append(
+                LyricWord(
+                    time=word_time / 1000.0,
+                    dur=int(marker.group(2)) / 1000.0,
+                    text=content,
                 )
+            )
+
+        # QRC 的格式是「文字(起点,时长)」，YRC 是「(起点,时长,0)文字」。
+        # 首个标记前有非空文字就按 QRC 逐段解析，否则沿用 YRC。
+        qrc_style = bool(
+            markers
+            and body[: markers[0].start()].strip()
+        )
+        if qrc_style:
+            previous = 0
+            for marker in markers:
+                append_word(marker, body[previous:marker.start()])
+                previous = marker.end()
+        else:
+            for index, marker in enumerate(markers):
+                text_end = (
+                    markers[index + 1].start()
+                    if index + 1 < len(markers)
+                    else len(body)
+                )
+                append_word(marker, body[marker.end():text_end])
         if words:
             values.append(
                 LyricLine(

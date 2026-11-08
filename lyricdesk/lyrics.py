@@ -1222,6 +1222,71 @@ def fetch(
     return Lyrics(lines=[], source="", title=title, artist=artist)
 
 
+def _real_word_ratio(lyrics: Lyrics) -> float:
+    return lyrics.real_word_lines / max(1, len(lyrics.lines))
+
+
+def _word_boundary_fit(lyrics: Lyrics) -> float:
+    checked = 0
+    good = 0
+    for line in lyrics.lines:
+        if not line.words:
+            continue
+        checked += 1
+        if all(
+            line.time - 0.15 <= word.time <= line.end + 0.15
+            for word in line.words
+            if word.text
+        ):
+            good += 1
+    return good / max(1, checked)
+
+
+def _word_density(lyrics: Lyrics) -> float:
+    values = [
+        len([word for word in line.words if word.text.strip()])
+        for line in lyrics.lines
+        if line.has_real_words
+    ]
+    if not values:
+        return 0.0
+    # 只用于两个都已有真实字级时间的源之间打破平局。把常见 5–30 字
+    # 映射到 0–1，避免极长一行仅靠字多而胜出。
+    median = sorted(values)[len(values) // 2]
+    return min(1.0, median / 30.0)
+
+
+def _select_real_word_source(candidates: list[Lyrics], duration: float) -> Lyrics | None:
+    usable = [item for item in candidates if item.lines and item.real_word_lines]
+    if not usable:
+        return None
+    return max(
+        usable,
+        key=lambda item: (
+            _real_word_ratio(item),
+            _word_boundary_fit(item),
+            _coverage(item.lines, duration),
+            _word_density(item),
+            len(item.lines),
+        ),
+    )
+
+
+def _lyrics_from_doc(
+    doc: LyricDoc,
+    title: str,
+    artist: str,
+    duration: float,
+    track_key: str,
+    score: float,
+) -> Lyrics:
+    result = Lyrics.from_doc(doc, title, artist)
+    result.track_key = track_key
+    result.match_score = score
+    result.track_duration = float(duration or 0.0)
+    return result
+
+
 def fetch_enhanced(
     title: str,
     artist: str,
@@ -1236,14 +1301,19 @@ def fetch_enhanced(
 
     ID 和逐字源都只认公开接口；任一环节失败都不影响行级歌词。
     """
+    from . import amll
+    from . import netease_yrc
     from .lyricdoc import validate
+    from .local_lyrics import find_local_doc
     from .sources import kugou as kugou_source
     from .sources import netease as netease_source
 
     cleaned_title = clean_title(title) or title
     cleaned_artist = clean_title(artist) or artist
     variant = is_variant_title(title)
-    official_result: Lyrics | None = None
+    actual_duration = float(duration or 0.0)
+    base_result: Lyrics | None = None
+    real_candidates: list[Lyrics] = []
 
     if isinstance(lock, dict) and lock:
         try:
@@ -1261,17 +1331,27 @@ def fetch_enhanced(
 
     if prefer == "netease" and song_id:
         try:
-            doc = netease_source.fetch_doc(song_id, track_key or song_id)
+            doc = netease_yrc.get(song_id)
+            if doc is None:
+                doc = netease_source.fetch_doc(song_id, track_key or song_id)
             if doc is not None and validate(doc, duration)[0]:
-                result = Lyrics.from_doc(doc, cleaned_title, cleaned_artist)
-                result.track_key = track_key or song_id
-                result.match_score = 1.0
-                result.track_duration = float(duration or 0.0)
-                official_result = result
+                base_result = _lyrics_from_doc(
+                    doc,
+                    cleaned_title,
+                    cleaned_artist,
+                    duration,
+                    track_key or song_id,
+                    1.0,
+                )
+                actual_duration = float(duration or base_result.track_duration or 0.0)
+                if base_result.real_word_lines:
+                    real_candidates.append(base_result)
         except Exception:  # noqa: BLE001
             pass
 
-    if prefer == "kugou":
+    if prefer == "kugou" and not (
+        base_result is not None and base_result.real_word_lines
+    ):
         try:
             doc = kugou_source.fetch_doc(
                 cleaned_title,
@@ -1280,76 +1360,77 @@ def fetch_enhanced(
                 track_key or f"{cleaned_title}|{cleaned_artist}",
             )
             if doc is not None and validate(doc, duration)[0]:
-                result = Lyrics.from_doc(doc, cleaned_title, cleaned_artist)
-                result.track_key = track_key
-                result.match_score = 1.0
-                result.track_duration = float(duration or 0.0)
-                _lyric_log(
-                    f"入选 provider=kugou-official track={track_key or title} "
-                    f"lines={len(doc.lines)} words={doc.has_words} "
-                    "reason=同平台严格三重匹配"
+                kugou_result = _lyrics_from_doc(
+                    doc,
+                    cleaned_title,
+                    cleaned_artist,
+                    actual_duration,
+                    track_key,
+                    1.0,
                 )
-                return result
+                if base_result is None:
+                    base_result = kugou_result
+                real_candidates.append(kugou_result)
         except Exception:  # noqa: BLE001
             pass
 
-    if official_result is not None:
-        official_words = official_result.real_word_lines
-        official_ratio = official_words / max(1, len(official_result.lines))
+    if base_result is None:
+        base_result = fetch(title, artist, duration, prefer)
+        if variant and not base_result.lines:
+            _lyric_log(
+                f"被拒 title={title!r} reason=变速/remix 未取得同平台版本歌词"
+            )
+            return Lyrics(
+                lines=[],
+                source="",
+                title=cleaned_title,
+                artist=cleaned_artist,
+            )
+        base_result.track_key = track_key
+        base_result.to_doc()
+        actual_duration = float(
+            duration or base_result.track_duration or 0.0
+        )
+
+    if partial is not None and base_result.lines:
         try:
-            kdoc = kugou_source.fetch_doc(
+            partial(base_result)
+        except Exception:  # noqa: BLE001
+            pass
+
+    if base_result.real_word_lines:
+        real_candidates.append(base_result)
+
+    # 本地歌词先于网络增强；只有标题、歌手和唯一文件三项都满足才使用。
+    if not real_candidates:
+        try:
+            local_doc = find_local_doc(
                 cleaned_title,
                 cleaned_artist,
-                duration,
+                actual_duration,
                 track_key or f"{cleaned_title}|{cleaned_artist}",
             )
-            if kdoc is not None and validate(kdoc, duration)[0]:
-                kugou_result = Lyrics.from_doc(kdoc, cleaned_title, cleaned_artist)
-                kugou_result.track_key = track_key
-                kugou_result.match_score = 0.96
-                kugou_result.track_duration = duration
-                kugou_words = sum(1 for line in kdoc.lines if line.has_real_words)
-                kugou_ratio = kugou_words / max(1, len(kdoc.lines))
-                use_official = (
-                    official_result.lines
-                    and len(official_result.lines) >= len(kdoc.lines) * 0.9
-                    and official_ratio >= kugou_ratio
+            if local_doc is not None and validate(local_doc, actual_duration)[0]:
+                local_result = _lyrics_from_doc(
+                    local_doc,
+                    cleaned_title,
+                    cleaned_artist,
+                    actual_duration,
+                    track_key,
+                    0.98,
                 )
-                chosen = official_result if use_official else kugou_result
-                _lyric_log(
-                    f"入选 provider={chosen.provider} track={track_key} "
-                    f"lines={len(chosen.lines)} words={chosen.real_word_lines} "
-                    f"reason={'官方行数与逐字覆盖足够' if use_official else '酷狗逐字覆盖更完整'}"
-                )
-                return chosen
-        except Exception:
+                if local_result.real_word_lines:
+                    real_candidates.append(local_result)
+                elif not base_result.lines or not base_result.real_word_lines:
+                    # 同一版本的本机文件通常比跨库同名歌词更可靠；普通 LRC
+                    # 虽然只有估算字级，也应在没有真实字级时替换网络估算稿。
+                    base_result = local_result
+        except Exception:  # noqa: BLE001
             pass
-        _lyric_log(
-            f"入选 provider=netease-official track={track_key} "
-            f"lines={len(official_result.lines)} words={official_words} "
-            "reason=播放器官方 songId"
-        )
-        return official_result
 
-    result = fetch(title, artist, duration, prefer)
-    if variant and not result.lines:
-        _lyric_log(
-            f"被拒 title={title!r} reason=变速/remix 未取得同平台版本歌词"
-        )
-        return Lyrics(lines=[], source="", title=cleaned_title, artist=cleaned_artist)
-    if result.lines:
-        result.track_key = track_key
-        result.to_doc()
-        if partial is not None:
-            try:
-                partial(result)
-            except Exception:  # noqa: BLE001
-                pass
-    if result.lines and not result.real_word_lines:
-        # 行级歌词已经可用时，再尝试一次严格三重匹配的 KRC 作为逐字增强；
-        # 接口失败或版本不符就保留原来的行级结果。
+    if not real_candidates:
+        # 有行级歌词但只有估算字级时，再用严格三重匹配的 KRC 增强。
         try:
-            actual_duration = float(duration or result.track_duration or 0.0)
             doc = kugou_source.fetch_doc(
                 cleaned_title,
                 cleaned_artist,
@@ -1357,11 +1438,63 @@ def fetch_enhanced(
                 track_key or f"{cleaned_title}|{cleaned_artist}",
             )
             if doc is not None and validate(doc, actual_duration)[0]:
-                enhanced = Lyrics.from_doc(doc, cleaned_title, cleaned_artist)
-                enhanced.track_key = track_key
-                enhanced.match_score = max(float(result.match_score), 0.9)
-                enhanced.track_duration = actual_duration
-                return enhanced
+                enhanced = _lyrics_from_doc(
+                    doc,
+                    cleaned_title,
+                    cleaned_artist,
+                    actual_duration,
+                    track_key,
+                    max(float(base_result.match_score), 0.9),
+                )
+                real_candidates.append(enhanced)
         except Exception:  # noqa: BLE001
             pass
-    return result
+
+    if (not real_candidates or not base_result.real_word_lines) and cleaned_artist:
+        # AMLL 是人工逐词打轴。标题和至少一位歌手必须严格相等；
+        # 播放器原生 ID 只在自己对应的平台信任。
+        platform = {"netease": "ncm", "qq": "qq"}.get(prefer, "ncm")
+        trusted_id = bool(song_id and prefer in ("netease", "qq"))
+        try:
+            doc = amll.fetch_doc(
+                platform,
+                cleaned_title,
+                cleaned_artist,
+                actual_duration,
+                track_key or f"{cleaned_title}|{cleaned_artist}",
+                known_id=song_id,
+                trusted_id=trusted_id,
+            )
+            if doc is not None and validate(doc, actual_duration)[0]:
+                amll_result = _lyrics_from_doc(
+                    doc,
+                    cleaned_title,
+                    cleaned_artist,
+                    actual_duration,
+                    track_key,
+                    0.97,
+                )
+                if amll_result.real_word_lines:
+                    real_candidates.append(amll_result)
+        except Exception:  # noqa: BLE001
+            pass
+
+    chosen = _select_real_word_source(real_candidates, actual_duration)
+    if chosen is not None:
+        _lyric_log(
+            f"入选 provider={chosen.provider or '-'} track={track_key} "
+            f"lines={len(chosen.lines)} words={chosen.real_word_lines} "
+            f"coverage={_real_word_ratio(chosen):.0%} "
+            f"boundary={_word_boundary_fit(chosen):.2f} "
+            "reason=真实字级多源选优"
+        )
+        return chosen
+
+    if base_result.lines:
+        return base_result
+    if partial is not None:
+        try:
+            partial(base_result)
+        except Exception:  # noqa: BLE001
+            pass
+    return base_result

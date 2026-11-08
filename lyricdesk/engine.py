@@ -21,6 +21,7 @@ from .lyrics import (
     save_cached,
 )
 from .netease_client import NeteaseBridge, configure as configure_netease
+from . import netease_yrc
 from .netease_launcher import NeteaseWatcher, find_ready_port
 from .smtc import SMTC_AVAILABLE, SmtcReader, Snapshot
 from .titles import variant_speed
@@ -210,6 +211,7 @@ class Engine(QObject):
             if self._netease is None:
                 self._netease = NeteaseBridge()
                 self._netease.start()
+                netease_yrc.start()
             if self._netease_watch is None:
                 self._netease_watch = NeteaseWatcher(
                     self.settings,
@@ -354,6 +356,7 @@ class Engine(QObject):
         self.notice.emit("B 站字幕", text)
 
     def _stop_netease(self) -> None:
+        netease_yrc.stop()
         watcher, self._netease_watch = self._netease_watch, None
         if watcher is not None:
             watcher.stop()

@@ -248,7 +248,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "update.section.about": "关于",
         "about.text": (
             "桌面歌词  v{version}\n"
-            "把正在播放的歌词实时显示在桌面上，读取的是 Windows 系统媒体控制，不挑播放器。"
+            "把正在播放的歌词实时显示在桌面上，读取的是 Windows 系统媒体控制，不挑播放器。\n\n"
+            "逐词歌词来自 AMLL TTML DB（CC0），感谢其贡献者。"
         ),
         "btn.open_settings_dir": "打开设置文件夹",
         "btn.open_cache_dir": "打开歌词缓存文件夹",
@@ -504,7 +505,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "about.text": (
             "Desktop Lyrics  v{version}\n"
             "Shows the lyrics of whatever is playing right now, straight from Windows media "
-            "controls — works with any player."
+            "controls — works with any player.\n\n"
+            "Word-timed lyrics are provided by AMLL TTML DB (CC0); thanks to its contributors."
         ),
         "btn.open_settings_dir": "Open settings folder",
         "btn.open_cache_dir": "Open lyrics cache folder",
