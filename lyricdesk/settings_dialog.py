@@ -1659,6 +1659,20 @@ class SettingsDialog(QDialog):
             hint_key="lyrics.beat.hint",
             hint="需要先打开「真实音波」；根据低频起音给光晕加一点脉动，不改变歌词时间。",
         )
+        self._audio_align_box = self._check(
+            layout,
+            "lyrics.audio_align",
+            "音频起音校准（实验）",
+            getter=lambda: bool(
+                getattr(settings, "lyric_audio_align", False)
+            ),
+            apply=self.window._set_audio_align,
+            hint_key="lyrics.audio_align.hint",
+            hint=(
+                "仅对普通 LRC 的估算字级生效，需要先打开「真实音波」；"
+                "起音置信度不足时自动保持原有时间。"
+            ),
+        )
         info_box = self._check(
             layout,
             "lyrics.show_info",

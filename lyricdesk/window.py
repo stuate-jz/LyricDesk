@@ -53,6 +53,7 @@ from .config import (
 from .covers import CoverLoader
 from . import audio as audio_mod
 from .beat import BeatTracker
+from .audio_align import AudioOnsetAligner
 from . import heat as heat_lookup
 from .i18n import tr
 from .processes import music_app_running
@@ -493,6 +494,7 @@ class LyricWindow(QWidget):
         self._chorus_key = None
         self._chorus_map: dict[int, float] = {}
         self._beat = BeatTracker()
+        self._audio_aligner = AudioOnsetAligner()
 
         self._hit_prev = QRectF()
         self._hit_play = QRectF()
@@ -596,12 +598,12 @@ class LyricWindow(QWidget):
     def hideEvent(self, event) -> None:  # noqa: N802
         # 收进托盘 / 被分离面板替换时彻底停掉动画轮询。
         self._timer.stop()
-        if self.role == "player":
+        if self.role in ("player", "main"):
             audio_mod.MONITOR.update_client(id(self), self.settings.real_wave, False)
         super().hideEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        if self.role == "player":
+        if self.role in ("player", "main"):
             audio_mod.MONITOR.remove_client(id(self))
         super().closeEvent(event)
 
@@ -1280,10 +1282,16 @@ class LyricWindow(QWidget):
         intro_second = self._intro_second(snapshot)
         intro_changed = intro_second != self._intro_last_second
         self._intro_last_second = intro_second
-        if self.role == "player":
+        if self.role in ("player", "main"):
             audio_mod.MONITOR.update_client(
                 id(self),
-                bool(self.settings.real_wave and self.settings.show_wave),
+                bool(
+                    self.settings.real_wave
+                    and (
+                        self.settings.show_wave
+                        or self.settings.lyric_audio_align
+                    )
+                ),
                 bool(self.isVisible() and snapshot is not None and snapshot.is_playing),
             )
         track = snapshot.track if snapshot is not None else None
@@ -2949,6 +2957,7 @@ class LyricWindow(QWidget):
         draw_opacity = opacity * entry_alpha
         if effect == "word":
             timings = build_char_timeline(line, family, fitted, weight, art.advance)
+            timings = self._audio_aligned_timings(line, timings, position)
             if not timings:
                 render_mod.draw_line_art(
                     painter,
@@ -3045,6 +3054,7 @@ class LyricWindow(QWidget):
             rotation=rotation,
         )
         timings = build_char_timeline(line, family, fitted, weight, art.advance)
+        timings = self._audio_aligned_timings(line, timings, position)
         if not timings:
             return
         now = time.monotonic()
@@ -3151,6 +3161,30 @@ class LyricWindow(QWidget):
             2.0 * math.pi * (float(position) * 0.35 + index * 0.5)
         )
         return dy, rotation, scale
+
+    def _audio_aligned_timings(
+        self,
+        line,
+        timings,
+        position: float,
+    ):
+        """只用音频起音修正普通 LRC 的估算字级；真实字级绝不改动。"""
+        if (
+            not self.settings.lyric_audio_align
+            or not self.settings.real_wave
+            or not timings
+            or not audio_mod.MONITOR.has_data
+        ):
+            return timings
+        words = list(getattr(line, "words", None) or [])
+        if not words or not all(getattr(word, "estimated", False) for word in words):
+            return timings
+        return self._audio_aligner.observe(
+            line,
+            timings,
+            position,
+            audio_mod.MONITOR.low_energy(),
+        )
 
     def _lyric_progress(self, snapshot, current, next_line=None) -> float:
         if (
@@ -4330,6 +4364,13 @@ class LyricWindow(QWidget):
                 action.triggered.connect(
                     lambda _checked=False, v=value: self._set_lyric_effect(v)
                 )
+            effect_menu.addSeparator()
+            align_action = effect_menu.addAction("音频起音校准（实验）")
+            align_action.setCheckable(True)
+            align_action.setChecked(
+                bool(getattr(settings, "lyric_audio_align", False))
+            )
+            align_action.triggered.connect(self._set_audio_align)
             lines_menu = menu.addMenu("歌词列表行数")
             for value in (1, 3, 5, 7, 9, 11):
                 action = lines_menu.addAction(f"{value} 行")
@@ -4573,6 +4614,10 @@ class LyricWindow(QWidget):
 
     def _set_beat(self, value: bool) -> None:
         self.settings.beat_boost = bool(value)
+        self._commit()
+
+    def _set_audio_align(self, value: bool) -> None:
+        self.settings.lyric_audio_align = bool(value)
         self._commit()
 
     def _set_player(self, app_id: str) -> None:

@@ -131,6 +131,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "lyrics.chorus": "副歌加强",
         "lyrics.beat": "跟着节拍闪",
         "lyrics.beat.hint": "需要先打开「真实音波」；根据低频起音给光晕加一点脉动，不改变歌词时间。",
+        "lyrics.audio_align": "音频起音校准（实验）",
+        "lyrics.audio_align.hint": "仅校正普通 LRC 的估算字级，需要先打开「真实音波」；置信度不足时自动回退。",
         "lyrics.effect.no_words": "当前歌词没有逐字时间，已自动按「关闭」显示；换到支持逐字的歌曲后会生效。",
         "lyrics.show_info": "显示歌名、歌手和热度",
         "lyrics.show_info.hint": "单窗歌词与分离面板的歌词列会一起显示或隐藏",
@@ -379,6 +381,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "lyrics.chorus": "Chorus boost",
         "lyrics.beat": "Pulse with beat",
         "lyrics.beat.hint": "Turn on Real wave first. Low-frequency onsets add a subtle glow pulse without changing lyric timing.",
+        "lyrics.audio_align": "Audio onset alignment (experimental)",
+        "lyrics.audio_align.hint": "Only adjusts estimated word timing from plain LRC. Requires Real waveform and silently falls back when confidence is low.",
         "lyrics.effect.no_words": "This lyric has no word timing, so Off is used until a word-synced song is played.",
         "lyrics.show_info": "Show title, artist and popularity",
         "lyrics.show_info.hint": (

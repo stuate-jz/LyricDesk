@@ -215,6 +215,8 @@ class Settings:
     lyric_chaos: float = 0.35
     chorus_boost: bool = True
     beat_boost: bool = False
+    # 实验性：仅对估算字级用系统音频起音做行内校正
+    lyric_audio_align: bool = False
     album_shape: str = "disc"
     # 1.6.8 起合并进 album_shape，字段仅为老配置反序列化保留
     depth_album_style: str = "classic"
@@ -501,6 +503,7 @@ class Settings:
         self.lyric_scatter = bool(self.lyric_scatter)
         self.chorus_boost = bool(self.chorus_boost)
         self.beat_boost = bool(self.beat_boost)
+        self.lyric_audio_align = bool(self.lyric_audio_align)
         if self.raise_style not in ("frost", "ambient", "outline"):
             self.raise_style = "frost"
         if self.album_shape not in ("disc", "square", "vinyl", "classic"):
