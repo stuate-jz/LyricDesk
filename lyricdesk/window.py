@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 import os
 import tempfile
@@ -211,6 +212,12 @@ def set_all_topmost_suspended(suspended: bool) -> None:
     """把所有歌词窗的「置顶」临时挂起 / 恢复（设置窗口开着的时候用）。"""
     for window in list(_LIVE_WINDOWS):
         window.set_topmost_suspended(suspended)
+
+
+def set_all_settings_previews(active: bool) -> None:
+    """设置窗口打开时，让所有歌词面板进入 / 退出实时预览。"""
+    for window in list(_LIVE_WINDOWS):
+        window.set_settings_preview(active)
 
 
 def _any_settings_dialog_visible() -> bool:
@@ -441,6 +448,9 @@ class LyricWindow(QWidget):
         self._notice_text = ""
         self._notice_until = 0.0
         self._notice_token = 0
+        self._preview_hold = False
+        self._preview_was_hidden = False
+        self._last_preview_snapshot = None
         self._menu_update_widget: UpdateRingActionWidget | None = None
         self._menu_update_state = "idle"
         self._menu_update_done = 0
@@ -576,7 +586,7 @@ class LyricWindow(QWidget):
         self._assert_topmost(force=True)
         QTimer.singleShot(3_000, self._assert_topmost)
         QTimer.singleShot(10_000, self._assert_topmost)
-        self._prefetch_visible_lyric_art(self.engine.snapshot())
+        self._prefetch_visible_lyric_art(self._paint_snapshot())
         if not self._timer.isActive():
             self._timer.start()
         self.update()
@@ -1243,6 +1253,8 @@ class LyricWindow(QWidget):
             self.move(int(slot[0]), int(slot[1]))
 
     def _remember_position(self) -> None:
+        if self._preview_hold:
+            return
         setattr(self.settings, self._position_slot(), [self.x(), self.y()])
 
     # ==================================================================
@@ -1262,7 +1274,7 @@ class LyricWindow(QWidget):
             self._auto_lyrics_ref = lyrics
             # 分批到达的歌词常常在几百毫秒内连续换几次文档；合并成一次重排。
             self._pending_width_timer.start()
-        snapshot = self.engine.snapshot()
+        snapshot = self._paint_snapshot()
         intro_second = self._intro_second(snapshot)
         intro_changed = intro_second != self._intro_last_second
         self._intro_last_second = intro_second
@@ -1329,6 +1341,8 @@ class LyricWindow(QWidget):
         """只在画面真的会变化时请求重绘；静止时仍保留低频轮询。"""
         if not self.isVisible():
             return False
+        if self._preview_hold:
+            return True
         mode = self._effective_mode()
         if mode == "none" or snapshot is None:
             return False
@@ -1360,6 +1374,49 @@ class LyricWindow(QWidget):
         current = lyrics.lines[index]
         next_line = lyrics.lines[index + 1] if index + 1 < len(lyrics.lines) else None
         return self._lyric_progress(snapshot, current, next_line) < 0.999
+
+    def _paint_snapshot(self):
+        """返回绘制快照；设置预览时使用最近一首歌并保持动画活跃。"""
+        snapshot = self.engine.snapshot()
+        if snapshot is not None and snapshot.track is not None:
+            self._last_preview_snapshot = snapshot
+        if not self._preview_hold:
+            return snapshot
+        source = snapshot or self._last_preview_snapshot
+        if source is None:
+            return None
+        if source.is_playing:
+            return source
+        preview = copy.copy(source)
+        preview.is_playing = True
+        return preview
+
+    def _should_auto_show(self) -> bool:
+        """预览结束后是否应继续保持歌词窗可见。"""
+        if not self.settings.auto_show_on_music:
+            return True
+        snapshot = self._paint_snapshot()
+        return bool(snapshot is not None and snapshot.is_playing)
+
+    def set_settings_preview(self, active: bool) -> None:
+        """设置面板打开期间临时显示并持续刷新歌词画面。"""
+        active = bool(active)
+        if active:
+            self._preview_hold = True
+            if self.role == "main" and not self.isVisible():
+                self.apply_slot_position()
+                self._preview_was_hidden = True
+                self.show()
+                self._assert_topmost(force=True)
+            self.update()
+            return
+
+        self._preview_hold = False
+        if getattr(self, "_preview_was_hidden", False):
+            self._preview_was_hidden = False
+            if not self._should_auto_show():
+                self.hide()
+        self.update()
 
     def show_notice(self, text: str, duration_ms: int = 3_000) -> None:
         """在歌词窗内部显示一条不拦截操作的临时提示。"""
@@ -1630,7 +1687,7 @@ class LyricWindow(QWidget):
             self.width() - (MARGIN + over_x) * 2,
             self.height() - (MARGIN + over_y) * 2,
         )
-        snapshot = self.engine.snapshot()
+        snapshot = self._paint_snapshot()
         lyrics = self.engine.lyrics
 
         if lyrics is not self._lyrics_ref:
@@ -4079,6 +4136,7 @@ class LyricWindow(QWidget):
             try:
                 # 兜底：设置窗口还在（比如刚被别人关掉又点开），保证歌词窗是挂起置顶的
                 set_all_topmost_suspended(True)
+                set_all_settings_previews(True)
                 dialog.show()
                 dialog.raise_()
                 dialog.activateWindow()
@@ -4092,6 +4150,7 @@ class LyricWindow(QWidget):
         # 设置窗口开着的时候，把所有歌词窗的置顶摘掉 ——
         # 否则它们（置顶）会画在设置窗口（不置顶）上面，挡着看不清也点不动
         set_all_topmost_suspended(True)
+        set_all_settings_previews(True)
 
         # 放在函数里导入：settings_dialog 要用到窗口的方法，模块级互相 import 会成环
         from .settings_dialog import SettingsDialog
@@ -4111,6 +4170,7 @@ class LyricWindow(QWidget):
         # 关掉之后要把引用清掉，否则下次再点会去操作已释放的窗口
         self._settings_dialog = None
         self.settings.offset_preview = None
+        set_all_settings_previews(False)
         self.update()
         # 设置窗口关了，歌词窗恢复原来的置顶状态
         set_all_topmost_suspended(False)
@@ -4136,6 +4196,7 @@ class LyricWindow(QWidget):
         dialog = getattr(self, "_settings_dialog", None)
         if dialog is None:
             return
+        self.set_settings_preview(False)
         self._settings_dialog = None
         try:
             dialog.detach_from(self)
@@ -4143,6 +4204,7 @@ class LyricWindow(QWidget):
         except RuntimeError:
             return
         other._settings_dialog = dialog
+        other.set_settings_preview(True)
 
     def populate_menu(self, menu: QMenu) -> None:
         """把菜单项填进给定菜单（复用同一个菜单对象，避免反复创建销毁）。"""
