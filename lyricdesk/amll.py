@@ -86,11 +86,14 @@ def normalize_title(value: str) -> str:
 
 def normalize_artist(value: str) -> set[str]:
     text = unicodedata.normalize("NFKC", value or "").lower()
+    # 索引里有「郭采洁(Amber Kuo)」「周杰伦 / Jay Chou」等别名写法；
+    # 去掉括号别名后仍要求至少一个主艺名完全相等。
+    text = _TITLE_BRACKETS.sub("", text)
     parts = re.split(r"[/、,，&]|\bfeat\.?\b|\bft\.?\b", text)
     return {
-        re.sub(r"\s+", "", part)
+        re.sub(r"[\s.。·_\-'\"“”‘’]+", "", part)
         for part in parts
-        if re.sub(r"\s+", "", part)
+        if re.sub(r"[\s.。·_\-'\"“”‘’]+", "", part)
     }
 
 
