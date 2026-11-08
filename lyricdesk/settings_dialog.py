@@ -1604,6 +1604,30 @@ class SettingsDialog(QDialog):
             unit="%",
             coalesce_ms=40,
         )
+        self._jitter_row = self._slider(
+            layout,
+            "lyrics.jitter",
+            "逐字错落",
+            getter=lambda: round(
+                float(getattr(settings, "lyric_jitter", 0.35)) * 100
+            ),
+            apply=lambda value: self.window._set_lyric_jitter(
+                float(value) / 100
+            ),
+            minimum=0,
+            maximum=100,
+            step=5,
+            default=round(
+                float(getattr(self._defaults, "lyric_jitter", 0.35)) * 100
+            ),
+            unit="%",
+            coalesce_ms=40,
+        )
+        self._hint(
+            layout,
+            "lyrics.jitter.hint",
+            "每个字按固定哈希得到轻微高低与旋转；关闭动效时仍保留。",
+        )
         self._scatter_box = self._check(
             layout,
             "lyrics.scatter",

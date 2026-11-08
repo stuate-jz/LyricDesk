@@ -211,6 +211,8 @@ class Settings:
     # 逐字弧线抬升 / 呼吸幅度，0 = 关闭
     lyric_arc: float = 0.0
     lyric_breath: float = 0.0
+    # 逐字高低错落幅度，0 = 所有字保持同一基线
+    lyric_jitter: float = 0.35
     lyric_scatter: bool = False
     lyric_chaos: float = 0.35
     chorus_boost: bool = True
@@ -499,6 +501,7 @@ class Settings:
         self.lyric_glow = max(0.0, min(GLOW_MAX, float(self.lyric_glow)))
         self.lyric_arc = max(0.0, min(1.0, float(self.lyric_arc)))
         self.lyric_breath = max(0.0, min(1.0, float(self.lyric_breath)))
+        self.lyric_jitter = max(0.0, min(1.0, float(self.lyric_jitter)))
         self.lyric_chaos = max(0.0, min(1.0, float(self.lyric_chaos)))
         self.lyric_scatter = bool(self.lyric_scatter)
         self.chorus_boost = bool(self.chorus_boost)

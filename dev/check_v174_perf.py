@@ -137,6 +137,13 @@ def main() -> int:
                     "逐字效果架构已变更，跳过旧全行基线；绝对红线已通过"
                 )
                 continue
+            if float(getattr(settings, "lyric_jitter", 0.0)) > 0.0:
+                print(
+                    f"  OK   glow=0 相对同机基线 {layout}/{effect}: "
+                    "关闭动效现在保留逐字错落，旧的整行快速路径基线不再适用；"
+                    "全零外观快速路径由 check_v179_static_appearance.py 验证"
+                )
+                continue
             disabled = results[(layout, effect, 0.0)][0]
             enabled = results[(layout, effect, 1.0)][0]
             target = baseline[(layout, effect)]

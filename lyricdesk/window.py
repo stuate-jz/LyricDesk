@@ -1536,8 +1536,7 @@ class LyricWindow(QWidget):
                     outline_color=QColor(0, 0, 0, 150),
                     shadow=True,
                     dpr=self.devicePixelRatioF(),
-                    glow=self.settings.lyric_glow > 0
-                    and self.settings.lyric_effect != "off",
+                    glow=self.settings.lyric_glow > 0,
                 )
             else:
                 family, size, weight = self._fonts["list"]
@@ -2255,8 +2254,7 @@ class LyricWindow(QWidget):
                     outline_color=QColor(0, 0, 0, 150),
                     shadow=True,
                     dpr=self.devicePixelRatioF(),
-                    glow=self.settings.lyric_glow > 0
-                    and self.settings.lyric_effect != "off",
+                    glow=self.settings.lyric_glow > 0,
                 )
                 self._draw_lyric_effect(
                     painter,
@@ -2798,8 +2796,7 @@ class LyricWindow(QWidget):
                 outline_color=QColor(0, 0, 0, 145),
                 shadow=True,
                 dpr=self.devicePixelRatioF(),
-                glow=self.settings.lyric_glow > 0
-                and self.settings.lyric_effect != "off",
+                glow=self.settings.lyric_glow > 0,
             )
             self._draw_lyric_effect(
                 painter,
@@ -2887,46 +2884,36 @@ class LyricWindow(QWidget):
             effect = "word"
         glow_scale = max(0.0, min(GLOW_MAX, float(self.settings.lyric_glow)))
         words = list(getattr(line, "words", None) or [])
-        if effect == "off":
-            render_mod.draw_line_art(
-                painter,
-                art,
-                center_x,
-                baseline,
-                progress=progress,
-                scale=scale,
-                opacity=opacity,
-                rotation=rotation,
+        chorus = 0.0
+        if effect != "off":
+            chorus = (
+                self._chorus_for_line(line)
+                if self.settings.chorus_boost
+                else 0.0
             )
-            return
-        chorus = (
-            self._chorus_for_line(line)
-            if self.settings.chorus_boost
-            else 0.0
-        )
-        glow_scale = min(
-            GLOW_MAX,
-            glow_scale * (1.0 + 0.60 * chorus),
-        )
-        if (
-            self.settings.beat_boost
-            and self.settings.real_wave
-            and audio_mod.MONITOR.has_data
-        ):
-            beat = self._beat.update(
-                audio_mod.MONITOR.low_energy(),
-                time.monotonic(),
+            glow_scale = min(
+                GLOW_MAX,
+                glow_scale * (1.0 + 0.60 * chorus),
             )
-            if beat.pulse > 0.25:
-                glow_scale = min(
-                    GLOW_MAX,
-                    glow_scale
-                    * (
-                        1.0
-                        + 0.12 * beat.pulse
-                        + 0.10 * beat.pulse * chorus
-                    ),
+            if (
+                self.settings.beat_boost
+                and self.settings.real_wave
+                and audio_mod.MONITOR.has_data
+            ):
+                beat = self._beat.update(
+                    audio_mod.MONITOR.low_energy(),
+                    time.monotonic(),
                 )
+                if beat.pulse > 0.25:
+                    glow_scale = min(
+                        GLOW_MAX,
+                        glow_scale
+                        * (
+                            1.0
+                            + 0.12 * beat.pulse
+                            + 0.10 * beat.pulse * chorus
+                        ),
+                    )
         budget = render_budget(float(line.end or 0.0) - float(line.time or 0.0))
         position = self._display_position(snapshot) + self._offset_ms() / 1000.0
         if budget.reveal == "instant":
@@ -2955,6 +2942,113 @@ class LyricWindow(QWidget):
             )
         draw_scale = scale * entry_scale
         draw_opacity = opacity * entry_alpha
+        if effect == "off":
+            appearance = max(
+                float(self.settings.lyric_arc),
+                float(self.settings.lyric_breath),
+                float(self.settings.lyric_jitter),
+            )
+            if appearance <= 1e-9:
+                render_mod.draw_line_art(
+                    painter,
+                    art,
+                    center_x,
+                    baseline,
+                    progress=progress,
+                    scale=scale,
+                    opacity=opacity,
+                    glow_scale=glow_scale,
+                    rotation=rotation,
+                )
+                return
+            timings = build_char_timeline(
+                line,
+                family,
+                fitted,
+                weight,
+                art.advance,
+            )
+            timings = self._audio_aligned_timings(line, timings, position)
+            if not timings:
+                render_mod.draw_line_art(
+                    painter,
+                    art,
+                    center_x,
+                    baseline,
+                    progress=progress,
+                    scale=scale,
+                    opacity=opacity,
+                    glow_scale=glow_scale,
+                    rotation=rotation,
+                )
+                return
+            render_mod.draw_line_art(
+                painter,
+                art,
+                center_x,
+                baseline,
+                progress=0.0,
+                scale=draw_scale,
+                opacity=draw_opacity * 0.12,
+                glow_scale=glow_scale * 0.20,
+                rotation=rotation,
+            )
+            layouts = self._layout_chars(
+                line,
+                timings,
+                fitted,
+                position,
+            )
+            for timing, (x_offset, dy, motion_scale, char_rotation) in zip(
+                timings, layouts
+            ):
+                elapsed = position - timing.start
+                if position <= timing.start:
+                    char_progress = 0.0
+                elif position >= timing.end:
+                    char_progress = 1.0
+                else:
+                    char_progress = min(
+                        1.0,
+                        max(
+                            0.0,
+                            elapsed
+                            / max(0.001, timing.end - timing.start),
+                        ),
+                    )
+                char_x = (
+                    center_x
+                    - art.advance / 2.0
+                    + x_offset
+                    + timing.width / 2.0
+                )
+                sprite = make_sprite(timing.char, family, fitted, weight)
+                char_art = render_mod.make_line_art(
+                    sprite,
+                    QColor(255, 255, 255, 120),
+                    (colors["c1"], colors["c2"], colors["c3"]),
+                    QColor(colors["glow"]),
+                    outline_width=max(2.0, fitted * 0.05),
+                    outline_color=QColor(0, 0, 0, 150),
+                    shadow=True,
+                    dpr=self.devicePixelRatioF(),
+                    glow=False,
+                )
+                render_mod.draw_line_art(
+                    painter,
+                    char_art,
+                    char_x,
+                    baseline + dy,
+                    progress=char_progress,
+                    scale=draw_scale * motion_scale,
+                    opacity=(
+                        draw_opacity
+                        if char_progress > 0.0
+                        else draw_opacity * 0.12
+                    ),
+                    rotation=rotation + char_rotation,
+                )
+            return
         if effect == "word":
             timings = build_char_timeline(line, family, fitted, weight, art.advance)
             timings = self._audio_aligned_timings(line, timings, position)
@@ -2989,18 +3083,18 @@ class LyricWindow(QWidget):
                 if position < timing.start:
                     break
                 active_index = index
-            for index, timing in enumerate(timings):
+            layouts = self._layout_chars(
+                line,
+                timings,
+                fitted,
+                position,
+            )
+            for index, (timing, layout) in enumerate(zip(timings, layouts)):
                 elapsed = position - timing.start
                 is_current = index == active_index and elapsed <= 0.38
                 pulse = pulse_envelope(elapsed) if is_current else 0.0
                 sung = elapsed >= 0.0
-                dy, char_rotation, motion_scale = self._character_motion(
-                    line,
-                    index,
-                    len(timings),
-                    fitted,
-                    position,
-                )
+                _x_offset, dy, motion_scale, char_rotation = layout
                 char_scale = draw_scale * motion_scale
                 char_opacity = draw_opacity if sung else draw_opacity * 0.12
                 char_progress = 1.0 if sung else 0.0
@@ -3012,7 +3106,7 @@ class LyricWindow(QWidget):
                 char_x = (
                     center_x
                     - art.advance / 2.0
-                    + timing.x
+                    + _x_offset
                     + timing.width / 2.0
                 )
                 sprite = make_sprite(timing.char, family, fitted, weight)
@@ -3083,7 +3177,15 @@ class LyricWindow(QWidget):
             active_target=1.28 + 0.08 * chorus,
         )
         softness = max(6.0, min(14.0, fitted * 0.32))
-        for index, (timing, state) in enumerate(zip(timings, states)):
+        layouts = self._layout_chars(
+            line,
+            timings,
+            fitted,
+            position,
+        )
+        for index, (timing, state, layout) in enumerate(
+            zip(timings, states, layouts)
+        ):
             if state.mode == "waiting":
                 continue
             active = state.mode == "active"
@@ -3101,17 +3203,11 @@ class LyricWindow(QWidget):
             )
             char_center = (
                 center_x
-                + timing.x
+                + layout[0]
                 + timing.width / 2.0
                 - art.advance / 2.0
             )
-            dy, char_rotation, motion_scale = self._character_motion(
-                line,
-                index,
-                len(timings),
-                fitted,
-                position,
-            )
+            _x_offset, dy, motion_scale, char_rotation = layout
             sprite = make_sprite(timing.char, family, fitted, weight)
             highlight = render_mod.make_line_art(
                 sprite,
@@ -3154,13 +3250,37 @@ class LyricWindow(QWidget):
         center = max(0.0, 1.0 - abs(2.0 * t - 1.0))
         arc = max(0.0, min(1.0, float(self.settings.lyric_arc)))
         breath = max(0.0, min(1.0, float(self.settings.lyric_breath)))
-        dy, rotation = word_jitter(line, index, font_size, amount=0.35)
+        jitter = max(
+            0.0,
+            min(1.0, float(getattr(self.settings, "lyric_jitter", 0.35))),
+        )
+        dy, rotation = word_jitter(line, index, font_size, amount=jitter)
         dy -= arc * 0.55 * font_size * center
         scale = 1.0 + arc * 0.18 * center
         scale += breath * 0.15 * math.sin(
             2.0 * math.pi * (float(position) * 0.35 + index * 0.5)
         )
         return dy, rotation, scale
+
+    def _layout_chars(
+        self,
+        line,
+        timings,
+        font_size: int,
+        position: float,
+    ) -> list[tuple[float, float, float, float]]:
+        """逐字统一布局：(x 偏移, 基线偏移, 缩放, 旋转)。"""
+        layouts: list[tuple[float, float, float, float]] = []
+        for index, timing in enumerate(timings):
+            dy, rotation, scale = self._character_motion(
+                line,
+                index,
+                len(timings),
+                font_size,
+                position,
+            )
+            layouts.append((timing.x, dy, scale, rotation))
+        return layouts
 
     def _audio_aligned_timings(
         self,
@@ -3450,8 +3570,7 @@ class LyricWindow(QWidget):
                     outline_color=QColor(0, 0, 0, 150),
                     shadow=True,
                     dpr=self.devicePixelRatioF(),
-                    glow=self.settings.lyric_glow > 0
-                    and self.settings.lyric_effect != "off",
+                    glow=self.settings.lyric_glow > 0,
                 )
                 self._draw_lyric_effect(
                     painter,
@@ -4597,6 +4716,10 @@ class LyricWindow(QWidget):
 
     def _set_lyric_breath(self, value: float) -> None:
         self.settings.lyric_breath = max(0.0, min(1.0, float(value)))
+        self._commit()
+
+    def _set_lyric_jitter(self, value: float) -> None:
+        self.settings.lyric_jitter = max(0.0, min(1.0, float(value)))
         self._commit()
 
     def _set_chaos(self, value: float) -> None:
