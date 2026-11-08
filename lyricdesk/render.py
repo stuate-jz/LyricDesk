@@ -24,8 +24,8 @@ _SPRITE_CACHE: "OrderedDict[tuple, TextSprite]" = OrderedDict()
 _CACHE_LIMIT = 256
 _LINE_CACHE: "OrderedDict[tuple, LineArt]" = OrderedDict()
 _LINE_CACHE_LIMIT = 160
-_GLOW_CACHE: "OrderedDict[tuple, tuple[QPixmap, QPixmap]]" = OrderedDict()
-_GLOW_CACHE_LIMIT = 12
+_GLOW_CACHE: "OrderedDict[tuple, tuple[QPixmap, QPixmap, QPixmap]]" = OrderedDict()
+_GLOW_CACHE_LIMIT = 18
 _ENTRY_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
 _ENTRY_CACHE_LIMIT = 12
 
@@ -141,14 +141,16 @@ def _blur_layers(
 def glow_layers(
     source: QPixmap,
     font_size: int,
-) -> tuple[QPixmap, QPixmap]:
-    """取得近 / 远两层预模糊光晕；最多缓存 12 行。"""
+) -> tuple[QPixmap, QPixmap, QPixmap]:
+    """取得近 / 中 / 远三层预模糊光晕；最多缓存 18 行。"""
     dpr = round(float(source.devicePixelRatio()), 2)
-    near_radius = max(2.0, float(font_size) * 0.28)
-    far_radius = max(4.0, float(font_size) * 0.65)
+    near_radius = max(2.0, float(font_size) * 0.32)
+    middle_radius = max(3.0, float(font_size) * 0.65)
+    far_radius = max(5.0, float(font_size) * 1.25)
     key = (
         source.cacheKey(),
         round(near_radius, 2),
+        round(middle_radius, 2),
         round(far_radius, 2),
         dpr,
     )
@@ -158,6 +160,7 @@ def glow_layers(
         return cached
     value = (
         _blur_layers(source, near_radius),
+        _blur_layers(source, middle_radius),
         _blur_layers(source, far_radius),
     )
     _GLOW_CACHE[key] = value
@@ -468,13 +471,17 @@ def draw_line_art(
         painter.scale(scale, scale)
     glow_alpha = glow_scale * max(0.0, 1.0 - entry_blur / 10.0)
     if glow_alpha > 0.01 and art.highlight is not None:
-        near, far = glow_layers(art.highlight, art.font_size)
+        near, middle, far = glow_layers(art.highlight, art.font_size)
         painter.save()
-        painter.setOpacity(painter.opacity() * min(1.0, glow_alpha * 0.28))
+        painter.setOpacity(painter.opacity() * min(1.0, glow_alpha * 0.22))
         painter.drawPixmap(
             QPointF(-art.offset_x, -art.baseline_y), far
         )
-        painter.setOpacity(painter.opacity() * min(1.0, glow_alpha * 0.52))
+        painter.setOpacity(painter.opacity() * min(1.0, glow_alpha * 0.55))
+        painter.drawPixmap(
+            QPointF(-art.offset_x, -art.baseline_y), middle
+        )
+        painter.setOpacity(painter.opacity() * min(1.0, glow_alpha * 0.95))
         painter.drawPixmap(
             QPointF(-art.offset_x, -art.baseline_y), near
         )

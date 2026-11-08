@@ -2799,7 +2799,7 @@ class LyricWindow(QWidget):
         effect = str(getattr(self.settings, "lyric_effect", "off") or "off")
         if effect == "sweep":
             effect = "word"
-        glow_scale = max(0.0, min(2.0, float(self.settings.lyric_glow)))
+        glow_scale = max(0.0, min(3.0, float(self.settings.lyric_glow)))
         words = list(getattr(line, "words", None) or [])
         if effect == "off":
             render_mod.draw_line_art(
@@ -2818,7 +2818,7 @@ class LyricWindow(QWidget):
             if self.settings.chorus_boost
             else 0.0
         )
-        glow_scale = min(2.0, glow_scale * (1.0 + 0.60 * chorus))
+        glow_scale = min(3.0, glow_scale * (1.0 + 0.60 * chorus))
         if (
             self.settings.beat_boost
             and self.settings.real_wave
@@ -2830,7 +2830,7 @@ class LyricWindow(QWidget):
             )
             if beat.pulse > 0.25:
                 glow_scale = min(
-                    2.0,
+                    3.0,
                     glow_scale
                     * (
                         1.0
@@ -4410,7 +4410,7 @@ class LyricWindow(QWidget):
         self._commit()
 
     def _set_glow(self, value: float) -> None:
-        self.settings.lyric_glow = max(0.0, min(2.0, float(value)))
+        self.settings.lyric_glow = max(0.0, min(3.0, float(value)))
         self._commit()
 
     def _set_chaos(self, value: float) -> None:

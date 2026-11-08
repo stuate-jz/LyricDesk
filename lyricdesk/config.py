@@ -408,7 +408,7 @@ class Settings:
             self.lyric_effect = "word"
         if self.lyric_effect not in ("off", "word", "bounce"):
             self.lyric_effect = "off"
-        self.lyric_glow = max(0.0, min(2.0, float(self.lyric_glow)))
+        self.lyric_glow = max(0.0, min(3.0, float(self.lyric_glow)))
         self.lyric_chaos = max(0.0, min(1.0, float(self.lyric_chaos)))
         self.lyric_scatter = bool(self.lyric_scatter)
         self.chorus_boost = bool(self.chorus_boost)

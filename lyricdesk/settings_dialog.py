@@ -1453,7 +1453,7 @@ class SettingsDialog(QDialog):
             getter=lambda: round(float(settings.lyric_glow) * 100),
             apply=lambda value: self.window._set_glow(float(value) / 100),
             minimum=0,
-            maximum=200,
+            maximum=300,
             step=5,
             default=round(float(self._defaults.lyric_glow) * 100),
             unit="%",
