@@ -2992,7 +2992,7 @@ class LyricWindow(QWidget):
                     fitted,
                     position,
                 )
-                char_scale = draw_scale * motion_scale * (1.0 + 0.28 * pulse)
+                char_scale = draw_scale * motion_scale
                 char_opacity = draw_opacity if sung else draw_opacity * 0.12
                 char_progress = 1.0 if sung else 0.0
                 local_glow = (
@@ -3029,7 +3029,7 @@ class LyricWindow(QWidget):
                     glow_scale=local_glow,
                     entry_blur=entry_blur,
                     rotation=rotation + char_rotation,
-                    lift=pulse * 4.0,
+                    lift=0.0,
                 )
             return
         # bounce：每个字素独立二阶弹簧。底字保持清晰，高光按状态逐字叠加。
