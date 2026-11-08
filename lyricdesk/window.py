@@ -1080,6 +1080,8 @@ class LyricWindow(QWidget):
         self,
         anchor: str,
         before: QPointF | None = None,
+        *,
+        same_screen_only: bool = False,
     ) -> None:
         """重排后用一次 setGeometry 保持文字边或圆心不动。"""
         use_alignment_edge = anchor != "text_center"
@@ -1103,7 +1105,16 @@ class LyricWindow(QWidget):
             )
         x = self.x()
         y = self.y()
-        if before is not None and after is not None:
+        same_screen = True
+        if same_screen_only and before is not None and after is not None:
+            screen_before = QApplication.screenAt(before.toPoint())
+            screen_after = QApplication.screenAt(after.toPoint())
+            same_screen = (
+                screen_before is None
+                or screen_after is None
+                or screen_before is screen_after
+            )
+        if before is not None and after is not None and same_screen:
             x += round(before.x() - after.x())
             y += round(before.y() - after.y())
         self.setGeometry(x, y, width, height)
@@ -1113,7 +1124,7 @@ class LyricWindow(QWidget):
         """重排圆盘时保持圆心不动，并让结果仍落在当前屏幕内。"""
         self.settings.clamp()
         self.settings.save()
-        self._resize_keep_anchor("disc", before)
+        self._resize_keep_anchor("disc", before, same_screen_only=True)
         if self.isVisible():
             self._remember_position()
             self.settings.save()
