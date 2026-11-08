@@ -1577,6 +1577,32 @@ class SettingsDialog(QDialog):
             unit="%",
             coalesce_ms=40,
         )
+        self._arc_row = self._slider(
+            layout,
+            "lyrics.arc",
+            "弧线强度",
+            getter=lambda: round(float(getattr(settings, "lyric_arc", 0.0)) * 100),
+            apply=lambda value: self.window._set_lyric_arc(float(value) / 100),
+            minimum=0,
+            maximum=100,
+            step=5,
+            default=round(float(self._defaults.lyric_arc) * 100),
+            unit="%",
+            coalesce_ms=40,
+        )
+        self._breath_row = self._slider(
+            layout,
+            "lyrics.breath",
+            "逐字呼吸",
+            getter=lambda: round(float(getattr(settings, "lyric_breath", 0.0)) * 100),
+            apply=lambda value: self.window._set_lyric_breath(float(value) / 100),
+            minimum=0,
+            maximum=100,
+            step=5,
+            default=round(float(self._defaults.lyric_breath) * 100),
+            unit="%",
+            coalesce_ms=40,
+        )
         self._scatter_box = self._check(
             layout,
             "lyrics.scatter",

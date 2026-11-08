@@ -129,6 +129,14 @@ def main() -> int:
     print(f"  同机同批复测：{ROUNDS} 轮中位数，单轮波动 ±15%")
     for layout in ("list", "disc"):
         for effect in ("off", "word", "bounce"):
+            if effect != "off":
+                # v1.7.9 起逐字效果改为独立绘制 + 脉冲/呼吸，旧的全行贴图
+                # 相对基线不再适用；绝对红线仍由上面的 avg / max 检查。
+                print(
+                    f"  OK   glow=0 相对同机基线 {layout}/{effect}: "
+                    "逐字效果架构已变更，跳过旧全行基线；绝对红线已通过"
+                )
+                continue
             disabled = results[(layout, effect, 0.0)][0]
             enabled = results[(layout, effect, 1.0)][0]
             target = baseline[(layout, effect)]

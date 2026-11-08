@@ -208,6 +208,9 @@ class Settings:
     # 歌词动效：off / word（软边点亮） / bounce（软边 + 逐字弹簧）
     lyric_effect: str = "off"
     lyric_glow: float = 1.0
+    # 逐字弧线抬升 / 呼吸幅度，0 = 关闭
+    lyric_arc: float = 0.0
+    lyric_breath: float = 0.0
     lyric_scatter: bool = False
     lyric_chaos: float = 0.35
     chorus_boost: bool = True
@@ -492,6 +495,8 @@ class Settings:
         if self.lyric_effect not in ("off", "word", "bounce"):
             self.lyric_effect = "off"
         self.lyric_glow = max(0.0, min(GLOW_MAX, float(self.lyric_glow)))
+        self.lyric_arc = max(0.0, min(1.0, float(self.lyric_arc)))
+        self.lyric_breath = max(0.0, min(1.0, float(self.lyric_breath)))
         self.lyric_chaos = max(0.0, min(1.0, float(self.lyric_chaos)))
         self.lyric_scatter = bool(self.lyric_scatter)
         self.chorus_boost = bool(self.chorus_boost)

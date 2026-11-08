@@ -2985,7 +2985,14 @@ class LyricWindow(QWidget):
                 is_current = index == active_index and elapsed <= 0.38
                 pulse = pulse_envelope(elapsed) if is_current else 0.0
                 sung = elapsed >= 0.0
-                char_scale = draw_scale * (1.0 + 0.28 * pulse)
+                dy, char_rotation, motion_scale = self._character_motion(
+                    line,
+                    index,
+                    len(timings),
+                    fitted,
+                    position,
+                )
+                char_scale = draw_scale * motion_scale * (1.0 + 0.28 * pulse)
                 char_opacity = draw_opacity if sung else draw_opacity * 0.12
                 char_progress = 1.0 if sung else 0.0
                 local_glow = (
@@ -2998,12 +3005,6 @@ class LyricWindow(QWidget):
                     - art.advance / 2.0
                     + timing.x
                     + timing.width / 2.0
-                )
-                dy, char_rotation = word_jitter(
-                    line,
-                    index,
-                    fitted,
-                    amount=0.35,
                 )
                 sprite = make_sprite(timing.char, family, fitted, weight)
                 char_art = render_mod.make_line_art(
@@ -3072,7 +3073,7 @@ class LyricWindow(QWidget):
             active_target=1.28 + 0.08 * chorus,
         )
         softness = max(6.0, min(14.0, fitted * 0.32))
-        for timing, state in zip(timings, states):
+        for index, (timing, state) in enumerate(zip(timings, states)):
             if state.mode == "waiting":
                 continue
             active = state.mode == "active"
@@ -3094,6 +3095,13 @@ class LyricWindow(QWidget):
                 + timing.width / 2.0
                 - art.advance / 2.0
             )
+            dy, char_rotation, motion_scale = self._character_motion(
+                line,
+                index,
+                len(timings),
+                fitted,
+                position,
+            )
             sprite = make_sprite(timing.char, family, fitted, weight)
             highlight = render_mod.make_line_art(
                 sprite,
@@ -3110,18 +3118,39 @@ class LyricWindow(QWidget):
                 painter,
                 highlight,
                 char_center,
-                baseline,
+                baseline + dy,
                 progress=char_progress,
-                scale=draw_scale * state.value,
+                scale=draw_scale * state.value * motion_scale,
                 opacity=draw_opacity * state.alpha,
                 softness=softness if active else 0.0,
                 tail_progress=char_progress,
                 tail_alpha=0.72 + 0.13 * chorus,
                 glow_scale=glow_scale * (1.15 if active else 0.55),
                 entry_blur=entry_blur,
-                rotation=rotation,
+                rotation=rotation + char_rotation,
                 lift=max(0.0, (state.value - 1.0) * 16.0) if active else 0.0,
             )
+
+    def _character_motion(
+        self,
+        line,
+        index: int,
+        count: int,
+        font_size: int,
+        position: float,
+    ) -> tuple[float, float, float]:
+        """返回逐字纵向偏移、旋转和缩放；弧线与呼吸共用同一字序。"""
+        t = index / max(1, count - 1)
+        center = max(0.0, 1.0 - abs(2.0 * t - 1.0))
+        arc = max(0.0, min(1.0, float(self.settings.lyric_arc)))
+        breath = max(0.0, min(1.0, float(self.settings.lyric_breath)))
+        dy, rotation = word_jitter(line, index, font_size, amount=0.35)
+        dy -= arc * 0.55 * font_size * center
+        scale = 1.0 + arc * 0.18 * center
+        scale += breath * 0.15 * math.sin(
+            2.0 * math.pi * (float(position) * 0.35 + index * 0.5)
+        )
+        return dy, rotation, scale
 
     def _lyric_progress(self, snapshot, current, next_line=None) -> float:
         if (
@@ -4519,6 +4548,14 @@ class LyricWindow(QWidget):
 
     def _set_glow(self, value: float) -> None:
         self.settings.lyric_glow = max(0.0, min(GLOW_MAX, float(value)))
+        self._commit()
+
+    def _set_lyric_arc(self, value: float) -> None:
+        self.settings.lyric_arc = max(0.0, min(1.0, float(value)))
+        self._commit()
+
+    def _set_lyric_breath(self, value: float) -> None:
+        self.settings.lyric_breath = max(0.0, min(1.0, float(value)))
         self._commit()
 
     def _set_chaos(self, value: float) -> None:
