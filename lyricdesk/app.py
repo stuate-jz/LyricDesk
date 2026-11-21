@@ -9,7 +9,16 @@ import sys
 import threading
 
 from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QLinearGradient, QPainter, QPixmap
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QIcon,
+    QLinearGradient,
+    QPainter,
+    QPixmap,
+    QPixmapCache,
+)
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from .autostart import set_enabled
@@ -491,6 +500,7 @@ def main() -> int:
         if heartbeat_tick % 20 == 0:
             render_mod.trim_caches()
             gc.collect()
+            QPixmapCache.clear()
         snapshot = engine.snapshot()
         if snapshot is None:
             return

@@ -22,7 +22,7 @@ from PySide6.QtGui import (
 )
 
 _SPRITE_CACHE: "OrderedDict[tuple, TextSprite]" = OrderedDict()
-_CACHE_LIMIT = 256
+_CACHE_LIMIT = 128
 _LINE_CACHE: "OrderedDict[tuple, LineArt]" = OrderedDict()
 _LINE_CACHE_LIMIT = 48
 _LINE_CACHE_BUDGET = 40 * 1024 * 1024
