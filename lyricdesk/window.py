@@ -1560,7 +1560,10 @@ class LyricWindow(QWidget):
             self._prefetch_pinned.clear()
             self._prefetch_jobs.clear()
             self._prefetch_signature = signature
-        if schedule_key == self._prefetched_line_key:
+        if (
+            schedule_key == self._prefetched_line_key
+            and len(self._prefetch_jobs) >= 8
+        ):
             return
         self._prefetched_line_key = schedule_key
 
@@ -1571,8 +1574,8 @@ class LyricWindow(QWidget):
         last = first + count + 2
         first -= 2
         desired_pins: set[tuple] = set()
-        # 普通行先排队；随后才是当前行与逐字高光，避免它们被末尾作业挤出缓存。
-        for current_style in (False, True):
+        # 当前行优先；队列有上限，避免子进程一次囤积几十张高 DPR 位图。
+        for current_style in (True, False):
             for line_index in range(first, last):
                 if line_index < 0 or line_index >= len(lyrics.lines):
                     continue
@@ -1661,6 +1664,8 @@ class LyricWindow(QWidget):
                         "letter_spacing": render_mod.letter_spacing(),
                     }
                 if (
+                    len(self._prefetch_jobs) < 16
+                    and
                     not render_mod.line_art_cached(key)
                     and key not in self._prefetch_jobs
                 ):
@@ -1744,6 +1749,8 @@ class LyricWindow(QWidget):
                     if include_glow:
                         desired_pins.add(key)
                     continue
+                if len(self._prefetch_jobs) >= 16:
+                    return
                 line_art_worker.client().submit(
                     key,
                     {
