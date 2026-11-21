@@ -573,6 +573,8 @@ class LyricWindow(QWidget):
         self.updateDownloaded.connect(self._on_update_downloaded)
         self.updateProgress.connect(self._on_update_progress)
         self.heatReady.connect(self._on_heat_ready)
+        if hasattr(self.engine, "lyricsChanged"):
+            self.engine.lyricsChanged.connect(self._on_lyrics_changed)
         if self.role != "player" and hasattr(self.engine, "candidateResults"):
             self.engine.candidateResults.connect(self._show_lyric_candidates)
 
@@ -633,6 +635,22 @@ class LyricWindow(QWidget):
         self._prefetch_visible_lyric_art(self._paint_snapshot())
         if not self._timer.isActive():
             self._timer.start()
+        self.update()
+
+    def _on_lyrics_changed(self, _lyrics) -> None:
+        """换歌首帧必须整窗清屏，不能在旧像素上做局部刷新。"""
+        self._lyrics_ref = None
+        self._display_idx = -1
+        self._scroll_ready = False
+        self._prefetched_line_key = None
+        self._spring_line_key = None
+        self._auto_lyrics_ref = self.engine.lyrics
+        self._pending_width_timer.stop()
+        QTimer.singleShot(0, self._refresh_new_track)
+
+    def _refresh_new_track(self) -> None:
+        """换歌后立即按新歌词重排宽度，并整窗重绘。"""
+        self._apply_new_width(QRect(self.geometry()))
         self.update()
 
     def hideEvent(self, event) -> None:  # noqa: N802
@@ -1806,6 +1824,13 @@ class LyricWindow(QWidget):
             animating
             or self._effective_mode() != "lyrics"
             or self.settings.lyric_layout == "disc"
+            or self.settings.lyric_effect != "off"
+            or float(self.settings.lyric_glow) > 1.2
+            or max(
+                float(self.settings.lyric_arc),
+                float(self.settings.lyric_breath),
+                float(self.settings.lyric_jitter),
+            ) > 1e-9
             or snapshot is None
             or not snapshot.is_playing
             or not getattr(snapshot, "position_known", True)
@@ -2494,8 +2519,6 @@ class LyricWindow(QWidget):
                     dpr=self.devicePixelRatioF(),
                     glow=self.settings.lyric_glow > 0,
                 )
-                if art is None:
-                    continue
                 self._draw_lyric_effect(
                     painter,
                     art,
@@ -2529,8 +2552,6 @@ class LyricWindow(QWidget):
                     shadow=False,
                     dpr=self.devicePixelRatioF(),
                 )
-                if art is None:
-                    continue
                 render_mod.draw_line_art(
                     painter,
                     art,
@@ -3053,8 +3074,6 @@ class LyricWindow(QWidget):
                 dpr=self.devicePixelRatioF(),
                 glow=self.settings.lyric_glow > 0,
             )
-            if art is None:
-                return
             self._draw_lyric_effect(
                 painter,
                 art,
@@ -3282,8 +3301,6 @@ class LyricWindow(QWidget):
                     dpr=self.devicePixelRatioF(),
                     glow=False,
                 )
-                if char_art is None:
-                    continue
                 render_mod.draw_line_art(
                     painter,
                     char_art,
@@ -3382,8 +3399,6 @@ class LyricWindow(QWidget):
                     dpr=self.devicePixelRatioF(),
                     glow=local_glow > 0,
                 )
-                if char_art is None:
-                    continue
                 render_mod.draw_line_art(
                     painter,
                     char_art,
@@ -3483,8 +3498,6 @@ class LyricWindow(QWidget):
                 dpr=self.devicePixelRatioF(),
                 glow=glow_scale > 0,
             )
-            if highlight is None:
-                continue
             render_mod.draw_line_art(
                 painter,
                 highlight,
@@ -3837,9 +3850,6 @@ class LyricWindow(QWidget):
                     dpr=self.devicePixelRatioF(),
                     glow=self.settings.lyric_glow > 0,
                 )
-                if art is None:
-                    painter.restore()
-                    continue
                 self._draw_lyric_effect(
                     painter,
                     art,
@@ -3861,9 +3871,6 @@ class LyricWindow(QWidget):
                     shadow=False,
                     dpr=self.devicePixelRatioF(),
                 )
-                if art is None:
-                    painter.restore()
-                    continue
                 render_mod.draw_line_art(
                     painter, art, local_x, 0.0, opacity=opacity
                 )
