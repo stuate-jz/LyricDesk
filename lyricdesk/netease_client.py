@@ -25,6 +25,9 @@ DEBUG_PORT_MAX = 9232
 DEBUG_PORT = DEBUG_PORT_MIN
 _debug_port = DEBUG_PORT
 DEBUG_URL = f"http://127.0.0.1:{_debug_port}/json/list"
+_HTTP = requests.Session()
+_WINDOW_TITLE_CACHE: tuple[float, str] | None = None
+_WINDOW_TITLE_LOCK = threading.Lock()
 TARGET_RECHECK_SECONDS = 8.0
 POLL_INTERVAL_SECONDS = 0.3
 STATS_INTERVAL_SECONDS = 60.0
@@ -411,7 +414,7 @@ def _find_page(timeout: float = 0.4, port: int | None = None) -> dict | None:
         else DEBUG_URL
     )
     try:
-        response = requests.get(url, timeout=timeout)
+        response = _HTTP.get(url, timeout=timeout)
         if response.status_code != 200:
             return None
         targets = response.json()
@@ -442,6 +445,12 @@ def available(timeout: float = 0.25, port: int | None = None) -> bool:
 
 def running_window_title() -> str:
     """用 Win32 找 cloudmusic.exe 的可见顶层窗口标题。"""
+    global _WINDOW_TITLE_CACHE
+    now = time.monotonic()
+    with _WINDOW_TITLE_LOCK:
+        cached = _WINDOW_TITLE_CACHE
+    if cached is not None and now - cached[0] < 1.0:
+        return cached[1]
     if not hasattr(ctypes, "windll"):
         return ""
     try:
@@ -492,7 +501,10 @@ def running_window_title() -> str:
         user32.EnumWindows(callback_type(callback), 0)
     except Exception:  # noqa: BLE001
         return ""
-    return max(values, key=len) if values else ""
+    title = max(values, key=len) if values else ""
+    with _WINDOW_TITLE_LOCK:
+        _WINDOW_TITLE_CACHE = (now, title)
+    return title
 
 
 class NeteaseBridge:
@@ -651,7 +663,7 @@ class NeteaseBridge:
                     self._set_state(parse_window_title(
                         running_window_title(), self._playing_hint
                     ))
-                    self._stop.wait(0.6)
+                    self._stop.wait(3.0)
                     continue
                 url = str(target.get("webSocketDebuggerUrl") or "")
                 if not url:

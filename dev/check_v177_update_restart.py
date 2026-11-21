@@ -26,6 +26,7 @@ from lyricdesk import config  # noqa: E402
 config.SETTINGS_PATH = Path(tempfile.mkdtemp(prefix="lyricdesk-v177-restart-")) / "settings.json"
 
 from lyricdesk import update as update_mod  # noqa: E402
+from lyricdesk import __version__ as current_version  # noqa: E402
 from lyricdesk.config import Settings  # noqa: E402
 from lyricdesk.i18n import set_language, tr  # noqa: E402
 from lyricdesk.update import UpdateInfo  # noqa: E402
@@ -67,10 +68,10 @@ def main() -> int:
     print("1) 批处理安装、兜底重启与标记")
     exe_dir = temp_dir / "Program Files" / "LyricDesk"
     exe = exe_dir / "LyricDesk.exe"
-    setup = temp_dir / "LyricDesk-Setup-1.7.7.exe"
+    setup = temp_dir / f"LyricDesk-Setup-{current_version}.exe"
     setup.write_bytes(b"MZ")
     with patch("lyricdesk.window.tempfile.gettempdir", return_value=str(temp_dir)):
-        script = window._write_update_script(setup, exe, "1.7.7")
+        script = window._write_update_script(setup, exe, current_version)
     text = script.read_text(encoding="mbcs", errors="replace")
     check("脚本成功写出", script is not None and script.exists())
     check(
@@ -84,12 +85,12 @@ def main() -> int:
     )
     check(
         "成功路径写入新版本标记",
-        '>"%TEMP%\\lyricdesk-updated.txt" echo 1.7.7' in text,
+        f'>"%TEMP%\\lyricdesk-updated.txt" echo {current_version}' in text,
     )
     check(
         "成功标记先于安装器写入",
-        text.index('>"%TEMP%\\lyricdesk-updated.txt" echo 1.7.7')
-        < text.index('LyricDesk-Setup-1.7.7.exe" /SILENT'),
+        text.index(f'>"%TEMP%\\lyricdesk-updated.txt" echo {current_version}')
+        < text.index(f'LyricDesk-Setup-{current_version}.exe" /SILENT'),
     )
     check(
         "成功路径清掉失败标记",
@@ -101,7 +102,11 @@ def main() -> int:
     )
     check(
         "失败路径保留手动安装包标记",
-        '>"%TEMP%\\lyricdesk-update-failed.txt" echo LyricDesk-Setup-1.7.7.exe' in text,
+        (
+            '>"%TEMP%\\lyricdesk-update-failed.txt" echo '
+            f"LyricDesk-Setup-{current_version}.exe"
+        )
+        in text,
     )
 
     installer = (ROOT / "installer.iss").read_text(encoding="utf-8-sig")
@@ -147,11 +152,11 @@ def main() -> int:
     print("\n3) 更新成功标记只提示一次")
     updated = temp_dir / update_mod.UPDATED_MARKER
     failed = temp_dir / update_mod.FAILED_MARKER
-    updated.write_text("1.7.7", encoding="mbcs")
+    updated.write_text(current_version, encoding="mbcs")
     with patch("lyricdesk.update.tempfile.gettempdir", return_value=str(temp_dir)):
         first = update_mod.consume_updated_version()
         second = update_mod.consume_updated_version()
-    check("第一次读到 v1.7.7", first == "1.7.7")
+    check(f"第一次读到 v{current_version}", first == current_version)
     check("标记读后删除，第二次为空", second == "" and not updated.exists())
 
     updated.write_text("9.9.9", encoding="mbcs")
@@ -170,8 +175,11 @@ def main() -> int:
         empty_version == "" and not updated.exists(),
     )
 
-    updated.write_text("1.7.7", encoding="mbcs")
-    failed.write_text("LyricDesk-Setup-1.7.7.exe", encoding="mbcs")
+    updated.write_text(current_version, encoding="mbcs")
+    failed.write_text(
+        f"LyricDesk-Setup-{current_version}.exe",
+        encoding="mbcs",
+    )
     with patch("lyricdesk.update.tempfile.gettempdir", return_value=str(temp_dir)):
         failed_result = update_mod.consume_updated_version()
     check(
@@ -181,7 +189,9 @@ def main() -> int:
     failed.unlink(missing_ok=True)
 
     print("\n4) 窗内轻提示与 i18n")
-    notice = tr("update.updated.notice", "已更新到 v{version}").format(version="1.7.7")
+    notice = tr("update.updated.notice", "已更新到 v{version}").format(
+        version=current_version
+    )
     window.show()
     app.processEvents()
     window.show_notice(notice, 220)

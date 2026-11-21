@@ -47,19 +47,19 @@ class _PROCESSENTRY32W(ctypes.Structure):
     ]
 
 
-def running_processes() -> set[str]:
-    """当前所有进程的可执行文件名（小写）。取不到就返回空集合。"""
+def running_processes() -> set[str] | None:
+    """当前所有进程的可执行文件名（小写）；探测失败时返回 None。"""
     names: set[str] = set()
     try:
         kernel32 = ctypes.windll.kernel32
         snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
         if not snapshot or snapshot == _INVALID_HANDLE:
-            return names
+            return None
         try:
             entry = _PROCESSENTRY32W()
             entry.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
             if not kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
-                return names
+                return None
             while True:
                 names.add(str(entry.szExeFile).lower())
                 if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
@@ -67,10 +67,13 @@ def running_processes() -> set[str]:
         finally:
             kernel32.CloseHandle(snapshot)
     except Exception:  # noqa: BLE001
-        return names
-    return names
+        return None
+    return names or None
 
 
-def music_app_running() -> bool:
-    """有没有音乐软件在跑（按进程名判断）。"""
-    return bool(running_processes() & MUSIC_EXES)
+def music_app_running() -> bool | None:
+    """有没有音乐软件在跑；None 表示这次系统进程探测失败。"""
+    names = running_processes()
+    if names is None:
+        return None
+    return bool(names & MUSIC_EXES)

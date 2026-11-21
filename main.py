@@ -28,6 +28,10 @@ def _fatal(message: str) -> None:
 
 
 def run() -> int:
+    if "--lyricdesk-line-art-worker" in sys.argv:
+        from lyricdesk.line_art_worker import worker_main
+
+        return worker_main()
     if "--uninstall" in sys.argv:
         from lyricdesk.uninstall import main as uninstall_main
 
@@ -46,6 +50,9 @@ def run() -> int:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     try:
         raise SystemExit(run())
     except SystemExit:

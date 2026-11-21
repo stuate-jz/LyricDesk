@@ -77,6 +77,9 @@ class NeteaseYrcCollector:
     def _store(self, payload, song_id: str) -> None:
         if not song_id:
             return
+        with self._lock:
+            if song_id in self._docs:
+                return
         try:
             doc = parse_payload(payload, song_id)
         except Exception:
@@ -194,6 +197,7 @@ class NeteaseYrcCollector:
         message = self._call("Network.enable", {}, timeout=2.0)
         if message is None or message.get("error"):
             raise RuntimeError("CDP Network.enable failed")
+        self._ws.settimeout(EVENT_WAIT_SECONDS)
         with self._lock:
             self._connected = True
 
@@ -232,13 +236,17 @@ class NeteaseYrcCollector:
         deadline = time.monotonic() + timeout
         while self._ws is not None and time.monotonic() < deadline:
             try:
-                remaining = max(0.05, deadline - time.monotonic())
-                self._ws.settimeout(remaining)
                 raw = self._ws.recv()
             except Exception:
                 return None
             if not raw:
                 return None
+            if (
+                not command_id
+                and '"Network.requestWillBeSent"' not in raw
+                and '"Network.responseReceived"' not in raw
+            ):
+                continue
             try:
                 message = json.loads(raw)
             except Exception:

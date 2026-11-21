@@ -99,18 +99,55 @@ from .render import (
     quad_transform,
 )
 from . import render as render_mod
+from . import line_art_worker
 
 MARGIN = 24
 PAD = 20
 
 # 深度拉满时平面转多少度（约等于手指在桌面上一张卡片的倾斜）
 MAX_DEPTH_ANGLE = 42.0
+_FALLBACK_LOGGED: set[tuple] = set()
 
 
 def depth_angle(value: float) -> float:
     """把滑块的 -0.80~+0.80 映射成旋转角（1.35 次幂让小值更平缓）。"""
     v = max(-0.80, min(0.80, float(value))) / 0.80
     return math.copysign(MAX_DEPTH_ANGLE * (abs(v) ** 1.35), v)
+
+
+def _paint_line_art(sprite, *args, **kwargs):
+    """优先取缓存；worker 未就绪时用近似图或同步烘图兜底，禁止空行。"""
+    if not line_art_worker.enabled():
+        return render_mod.make_line_art(sprite, *args, **kwargs)
+    key = render_mod.line_art_key(sprite, *args, **kwargs)
+    cached = render_mod.cached_line_art(key)
+    if cached is not None:
+        return cached
+    nearest = render_mod.nearest_line_art(key)
+    if nearest is not None:
+        _log_line_art_fallback("nearest", key)
+        return nearest
+    _log_line_art_fallback("sync", key)
+    return render_mod.make_line_art(sprite, *args, **kwargs)
+
+
+def _log_line_art_fallback(kind: str, key: tuple) -> None:
+    if key in _FALLBACK_LOGGED:
+        return
+    if len(_FALLBACK_LOGGED) >= 128:
+        _FALLBACK_LOGGED.clear()
+    _FALLBACK_LOGGED.add(key)
+    try:
+        with (app_dir() / "line-art-fallback.log").open(
+            "a",
+            encoding="utf-8",
+        ) as handle:
+            handle.write(
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} {kind} "
+                f"text={str(key[0])[:40]!r} advance={key[4]}\n"
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _project_points(
@@ -487,6 +524,9 @@ class LyricWindow(QWidget):
         self._pending_width_timer.timeout.connect(self._flush_pending_width)
         self._offset_sig = None
         self._prefetched_line_key = None
+        self._prefetch_signature = None
+        self._prefetch_jobs: set[tuple] = set()
+        self._prefetch_pinned: set[tuple] = set()
         self._word_spring = WordSpring()
         self._spring_line_key = None
         self._spring_last_time = 0.0
@@ -1483,7 +1523,10 @@ class LyricWindow(QWidget):
         painter.restore()
 
     def _prefetch_visible_lyric_art(self, snapshot) -> None:
-        """在计时器线程里构建下一帧要贴的位图，避免首帧绘制超预算。"""
+        """后台预烘可见行；主线程每轮最多把一张 QImage 转成 QPixmap。"""
+        if not line_art_worker.enabled():
+            return
+        self._drain_line_art_jobs(1)
         if self._effective_mode() != "lyrics" or snapshot is None:
             return
         lyrics = self.engine.lyrics
@@ -1495,72 +1538,256 @@ class LyricWindow(QWidget):
         index = lyrics.index_at(position)
         if index < 0:
             return
-        key = (
+        render_width = self._current_line_width()
+        signature = (
             id(lyrics),
-            index,
             len(lyrics.lines),
             int(self._list_count),
-            int(self.settings.width),
+            round(render_width, 2),
             int(self.settings.font_size),
             self.settings.font_family,
             round(float(self.settings.letter_spacing), 2),
             self.settings.theme,
             round(self.devicePixelRatioF(), 2),
+            tuple(self.settings.colors.values()),
+            int(self.settings.font_size),
+            bool(self.settings.lyric_glow > 0),
         )
-        if key == self._prefetched_line_key:
+        schedule_key = (signature, index)
+        if signature != self._prefetch_signature:
+            for key in self._prefetch_pinned:
+                render_mod.pin_line_art(key, False)
+            self._prefetch_pinned.clear()
+            self._prefetch_jobs.clear()
+            self._prefetch_signature = signature
+        if schedule_key == self._prefetched_line_key:
             return
-        self._prefetched_line_key = key
+        self._prefetched_line_key = schedule_key
 
         colors = self.settings.colors
         count = max(1, int(self._list_count))
         first = index - count // 2
-        last = first + count + 1
-        for line_index in range(first, last):
-            if line_index < 0 or line_index >= len(lyrics.lines):
-                continue
-            line = lyrics.lines[line_index]
-            if not line.text:
-                continue
-            if line_index == index:
-                family, size, weight = self._fonts["list_cur"]
-                fitted = fit_size(
-                    line.text, family, weight, size, int(self.settings.width)
-                )
-                sprite = make_sprite(line.text, family, fitted, weight)
-                render_mod.make_line_art(
+        # 每侧多备两行：换句时新的当前行已在上一轮烘好，不在绘制路径补作业。
+        last = first + count + 2
+        first -= 2
+        desired_pins: set[tuple] = set()
+        # 普通行先排队；随后才是当前行与逐字高光，避免它们被末尾作业挤出缓存。
+        for current_style in (False, True):
+            for line_index in range(first, last):
+                if line_index < 0 or line_index >= len(lyrics.lines):
+                    continue
+                line = lyrics.lines[line_index]
+                if not line.text:
+                    continue
+                if current_style:
+                    family, size, weight = self._fonts["list_cur"]
+                    fitted = fit_size(
+                        line.text,
+                        family,
+                        weight,
+                        size,
+                        render_width,
+                    )
+                    sprite = make_sprite(line.text, family, fitted, weight)
+                    key = render_mod.line_art_key(
+                        sprite,
+                        QColor(255, 255, 255, 120),
+                        (colors["c1"], colors["c2"], colors["c3"]),
+                        QColor(colors["glow"]),
+                        outline_width=max(2.0, fitted * 0.05),
+                        outline_color=QColor(0, 0, 0, 150),
+                        shadow=True,
+                        dpr=self.devicePixelRatioF(),
+                        glow=self.settings.lyric_glow > 0,
+                    )
+                    request = {
+                        "text": sprite.text,
+                        "family": sprite.family,
+                        "size": sprite.size,
+                        "weight": sprite.weight,
+                        "base_color": QColor(255, 255, 255, 120).name(
+                            QColor.NameFormat.HexArgb
+                        ),
+                        "grad_colors": [
+                            colors["c1"],
+                            colors["c2"],
+                            colors["c3"],
+                        ],
+                        "glow_color": QColor(colors["glow"]).name(
+                            QColor.NameFormat.HexArgb
+                        ),
+                        "outline_width": max(2.0, fitted * 0.05),
+                        "outline_color": QColor(0, 0, 0, 150).name(
+                            QColor.NameFormat.HexArgb
+                        ),
+                        "shadow": True,
+                        "dpr": self.devicePixelRatioF(),
+                        "glow": self.settings.lyric_glow > 0,
+                        "letter_spacing": render_mod.letter_spacing(),
+                    }
+                else:
+                    family, size, weight = self._fonts["list"]
+                    font = _qt_font(family, size, weight)
+                    if render_mod.letter_spacing():
+                        font.setLetterSpacing(
+                            QFont.SpacingType.AbsoluteSpacing,
+                            render_mod.letter_spacing(),
+                        )
+                    line_fm = QFontMetricsF(font)
+                    display = line.text
+                    if line_fm.horizontalAdvance(display) > render_width:
+                        display = line_fm.elidedText(
+                            display,
+                            Qt.TextElideMode.ElideRight,
+                            render_width,
+                        )
+                    sprite = make_sprite(display, family, size, weight)
+                    key = render_mod.line_art_key(
+                        sprite,
+                        QColor(colors["base"]),
+                        shadow=False,
+                        dpr=self.devicePixelRatioF(),
+                    )
+                    request = {
+                        "text": sprite.text,
+                        "family": sprite.family,
+                        "size": sprite.size,
+                        "weight": sprite.weight,
+                        "base_color": QColor(colors["base"]).name(
+                            QColor.NameFormat.HexArgb
+                        ),
+                        "shadow": False,
+                        "dpr": self.devicePixelRatioF(),
+                        "letter_spacing": render_mod.letter_spacing(),
+                    }
+                if (
+                    not render_mod.line_art_cached(key)
+                    and key not in self._prefetch_jobs
+                ):
+                    line_art_worker.client().submit(key, request)
+                    self._prefetch_jobs.add(key)
+                if current_style and line_index == index:
+                    desired_pins.add(key)
+                if current_style and line_index in (index, index + 1):
+                    self._prefetch_line_char_art(
+                        line,
+                        family,
+                        fitted,
+                        weight,
+                        sprite.advance,
+                        colors,
+                        include_glow=line_index == index,
+                        desired_pins=desired_pins,
+                    )
+        for key in self._prefetch_pinned - desired_pins:
+            render_mod.pin_line_art(key, False)
+        for key in desired_pins - self._prefetch_pinned:
+            render_mod.pin_line_art(key, True)
+        self._prefetch_pinned = desired_pins
+
+    def _prefetch_line_char_art(
+        self,
+        line,
+        family: str,
+        fitted: int,
+        weight,
+        advance: float,
+        colors,
+        *,
+        include_glow: bool,
+        desired_pins: set[tuple],
+    ) -> None:
+        """预烘当前行和接下来两行的逐字图，避免 word/bounce 首帧补齐。"""
+        effect = str(self.settings.lyric_effect or "off")
+        appearance = max(
+            float(self.settings.lyric_arc),
+            float(self.settings.lyric_breath),
+            float(self.settings.lyric_jitter),
+        )
+        if effect == "off" and appearance <= 1e-9:
+            return
+        timings = build_char_timeline(line, family, fitted, weight, advance)
+        if not timings:
+            return
+        if effect == "bounce":
+            outline_width = max(2.0, fitted * 0.045)
+            outline_color = QColor(0, 0, 0, 145)
+            glow_variants = (
+                (self.settings.lyric_glow > 0,) if include_glow else (False,)
+            )
+        else:
+            outline_width = max(2.0, fitted * 0.05)
+            outline_color = QColor(0, 0, 0, 150)
+            glow_variants = (
+                (False, True)
+                if include_glow and self.settings.lyric_glow > 0
+                else (False,)
+            )
+        for timing in timings:
+            sprite = make_sprite(timing.char, family, fitted, weight)
+            for glow in glow_variants:
+                key = render_mod.line_art_key(
                     sprite,
                     QColor(255, 255, 255, 120),
                     (colors["c1"], colors["c2"], colors["c3"]),
                     QColor(colors["glow"]),
-                    outline_width=max(2.0, fitted * 0.05),
-                    outline_color=QColor(0, 0, 0, 150),
+                    outline_width=outline_width,
+                    outline_color=outline_color,
                     shadow=True,
                     dpr=self.devicePixelRatioF(),
-                    glow=self.settings.lyric_glow > 0,
+                    glow=glow,
                 )
-            else:
-                family, size, weight = self._fonts["list"]
-                font = _qt_font(family, size, weight)
-                if render_mod.letter_spacing():
-                    font.setLetterSpacing(
-                        QFont.SpacingType.AbsoluteSpacing,
-                        render_mod.letter_spacing(),
-                    )
-                line_fm = QFontMetricsF(font)
-                display = line.text
-                if line_fm.horizontalAdvance(display) > int(self.settings.width):
-                    display = line_fm.elidedText(
-                        display,
-                        Qt.TextElideMode.ElideRight,
-                        int(self.settings.width),
-                    )
-                sprite = make_sprite(display, family, size, weight)
-                render_mod.make_line_art(
-                    sprite,
-                    QColor(colors["base"]),
-                    shadow=False,
-                    dpr=self.devicePixelRatioF(),
+                if (
+                    render_mod.line_art_cached(key)
+                    or key in self._prefetch_jobs
+                ):
+                    if include_glow:
+                        desired_pins.add(key)
+                    continue
+                line_art_worker.client().submit(
+                    key,
+                    {
+                        "text": sprite.text,
+                        "family": sprite.family,
+                        "size": sprite.size,
+                        "weight": sprite.weight,
+                        "base_color": QColor(255, 255, 255, 120).name(
+                            QColor.NameFormat.HexArgb
+                        ),
+                        "grad_colors": [
+                            colors["c1"],
+                            colors["c2"],
+                            colors["c3"],
+                        ],
+                        "glow_color": QColor(colors["glow"]).name(
+                            QColor.NameFormat.HexArgb
+                        ),
+                        "outline_width": outline_width,
+                        "outline_color": outline_color.name(
+                            QColor.NameFormat.HexArgb
+                        ),
+                        "shadow": True,
+                        "dpr": self.devicePixelRatioF(),
+                        "glow": glow,
+                        "letter_spacing": render_mod.letter_spacing(),
+                    },
                 )
+                self._prefetch_jobs.add(key)
+                if include_glow:
+                    desired_pins.add(key)
+
+    def _drain_line_art_jobs(self, limit: int = 1) -> None:
+        """主线程消费已完成的后台位图；每轮限制转换次数避免抖动。"""
+        if not line_art_worker.enabled():
+            return
+        for result in line_art_worker.client().poll(limit):
+            self._prefetch_jobs.discard(result.key)
+            try:
+                render_mod.commit_line_images(result.key, result.image_art)
+            except Exception:  # noqa: BLE001
+                continue
+            finally:
+                result.cleanup()
 
     def _current_line_rect_for_update(self, snapshot, animating: bool):
         """稳定卡拉 OK 填充时只刷新当前歌词所在区域。
@@ -2047,7 +2274,7 @@ class LyricWindow(QWidget):
         transform=None,
         header=None,
     ) -> None:
-        width = max(60.0, right - left)
+        width = self._current_line_width(left, right)
         fm = self._metrics["list"]
         slot = self._list_slot
         count = self._list_count
@@ -2069,7 +2296,11 @@ class LyricWindow(QWidget):
                 self._align_center_x(left, right, sprite.advance),
                 baseline,
                 QColor(colors["dim"]), opacity=opacity,
-                outline_width=max(2.0, fitted * 0.05),
+                outline_width=(
+                    0.0
+                    if line_art_worker.enabled()
+                    else max(2.0, fitted * 0.05)
+                ),
                 outline_color=QColor(0, 0, 0, 120),
             )
 
@@ -2245,7 +2476,7 @@ class LyricWindow(QWidget):
                 )
                 pop = ease_out_back(anim, 1.6)
                 scale = 0.94 + 0.06 * pop
-                art = render_mod.make_line_art(
+                art = _paint_line_art(
                     sprite,
                     QColor(255, 255, 255, 120),
                     (colors["c1"], colors["c2"], colors["c3"]),
@@ -2256,6 +2487,8 @@ class LyricWindow(QWidget):
                     dpr=self.devicePixelRatioF(),
                     glow=self.settings.lyric_glow > 0,
                 )
+                if art is None:
+                    continue
                 self._draw_lyric_effect(
                     painter,
                     art,
@@ -2283,12 +2516,14 @@ class LyricWindow(QWidget):
                     + (fm.height() - (sprite.ascent + sprite.descent)) / 2.0
                     + sprite.ascent
                 )
-                art = render_mod.make_line_art(
+                art = _paint_line_art(
                     sprite,
                     QColor(colors["base"]),
                     shadow=False,
                     dpr=self.devicePixelRatioF(),
                 )
+                if art is None:
+                    continue
                 render_mod.draw_line_art(
                     painter,
                     art,
@@ -2307,6 +2542,19 @@ class LyricWindow(QWidget):
         if alignment == "center":
             return (left + right) / 2.0
         return right - advance / 2.0
+
+    def _current_line_width(
+        self,
+        left: float | None = None,
+        right: float | None = None,
+    ) -> float:
+        """预烘与列表绘制共用的当前句可用宽度。"""
+        if left is not None and right is not None:
+            return max(60.0, float(right - left))
+        return max(
+            60.0,
+            float(self.width()) - 2.0 * (MARGIN + self._overscan + PAD),
+        )
 
     def _chorus_for_line(self, line) -> float:
         lyrics = getattr(self.engine, "lyrics", None)
@@ -2787,7 +3035,7 @@ class LyricWindow(QWidget):
                 + (fm_lyric.height() - (sprite.ascent + sprite.descent)) / 2.0
                 + sprite.ascent
             )
-            art = render_mod.make_line_art(
+            art = _paint_line_art(
                 sprite,
                 QColor(255, 255, 255, 104),
                 (colors["c1"], colors["c2"], colors["c3"]),
@@ -2798,6 +3046,8 @@ class LyricWindow(QWidget):
                 dpr=self.devicePixelRatioF(),
                 glow=self.settings.lyric_glow > 0,
             )
+            if art is None:
+                return
             self._draw_lyric_effect(
                 painter,
                 art,
@@ -3014,7 +3264,7 @@ class LyricWindow(QWidget):
                     + timing.width / 2.0
                 )
                 sprite = make_sprite(timing.char, family, fitted, weight)
-                char_art = render_mod.make_line_art(
+                char_art = _paint_line_art(
                     sprite,
                     QColor(255, 255, 255, 120),
                     (colors["c1"], colors["c2"], colors["c3"]),
@@ -3025,6 +3275,8 @@ class LyricWindow(QWidget):
                     dpr=self.devicePixelRatioF(),
                     glow=False,
                 )
+                if char_art is None:
+                    continue
                 render_mod.draw_line_art(
                     painter,
                     char_art,
@@ -3112,7 +3364,7 @@ class LyricWindow(QWidget):
                     + timing.width / 2.0
                 )
                 sprite = make_sprite(timing.char, family, fitted, weight)
-                char_art = render_mod.make_line_art(
+                char_art = _paint_line_art(
                     sprite,
                     QColor(255, 255, 255, 120),
                     (colors["c1"], colors["c2"], colors["c3"]),
@@ -3123,6 +3375,8 @@ class LyricWindow(QWidget):
                     dpr=self.devicePixelRatioF(),
                     glow=local_glow > 0,
                 )
+                if char_art is None:
+                    continue
                 render_mod.draw_line_art(
                     painter,
                     char_art,
@@ -3211,7 +3465,7 @@ class LyricWindow(QWidget):
             )
             _x_offset, dy, motion_scale, char_rotation = layout
             sprite = make_sprite(timing.char, family, fitted, weight)
-            highlight = render_mod.make_line_art(
+            highlight = _paint_line_art(
                 sprite,
                 QColor(255, 255, 255, 120),
                 (colors["c1"], colors["c2"], colors["c3"]),
@@ -3222,6 +3476,8 @@ class LyricWindow(QWidget):
                 dpr=self.devicePixelRatioF(),
                 glow=glow_scale > 0,
             )
+            if highlight is None:
+                continue
             render_mod.draw_line_art(
                 painter,
                 highlight,
@@ -3563,7 +3819,7 @@ class LyricWindow(QWidget):
                 local_x = center_radius
 
             if selected:
-                art = render_mod.make_line_art(
+                art = _paint_line_art(
                     sprite,
                     QColor(255, 255, 255, 120),
                     (colors["c1"], colors["c2"], colors["c3"]),
@@ -3574,6 +3830,9 @@ class LyricWindow(QWidget):
                     dpr=self.devicePixelRatioF(),
                     glow=self.settings.lyric_glow > 0,
                 )
+                if art is None:
+                    painter.restore()
+                    continue
                 self._draw_lyric_effect(
                     painter,
                     art,
@@ -3589,12 +3848,15 @@ class LyricWindow(QWidget):
                     opacity=opacity,
                 )
             else:
-                art = render_mod.make_line_art(
+                art = _paint_line_art(
                     sprite,
                     QColor(colors["base"]),
                     shadow=False,
                     dpr=self.devicePixelRatioF(),
                 )
+                if art is None:
+                    painter.restore()
+                    continue
                 render_mod.draw_line_art(
                     painter, art, local_x, 0.0, opacity=opacity
                 )

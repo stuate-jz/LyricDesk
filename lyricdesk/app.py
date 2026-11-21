@@ -493,18 +493,50 @@ def main() -> int:
 
     # ---------- 打开音乐软件时自动把歌词显示出来 ----------
     music_state = {"running": None}
+    music_probe_busy = False
+    music_probe_result: queue.Queue[bool | None] = queue.Queue(maxsize=1)
 
     def watch_music_apps() -> None:
+        nonlocal music_probe_busy
         if not settings.auto_show_on_music:
             return
-        running = music_app_running()
-        previous = music_state["running"]
-        music_state["running"] = running
-        # 只在「本来没有、现在有了」的那一下动手，免得跟手动隐藏打架
-        if previous is None or previous or not running:
+        if music_probe_busy:
             return
-        sync_mode_windows()
-        rebuild_tray_menu()
+        music_probe_busy = True
+
+        def worker() -> None:
+            try:
+                result = music_app_running()
+            except Exception:  # noqa: BLE001
+                result = None
+            music_probe_result.put(result)
+
+        threading.Thread(
+            target=worker,
+            name="music-probe",
+            daemon=True,
+        ).start()
+
+        def poll_result() -> None:
+            nonlocal music_probe_busy
+            try:
+                running = music_probe_result.get_nowait()
+            except queue.Empty:
+                QTimer.singleShot(50, poll_result)
+                return
+            music_probe_busy = False
+            if running is None:
+                # 读不到系统进程时保留上一状态，不能误判成音乐软件已关闭。
+                return
+            previous = music_state["running"]
+            music_state["running"] = running
+            # 只在「本来没有、现在有了」的那一下动手，免得跟手动隐藏打架
+            if previous is None or previous or not running:
+                return
+            sync_mode_windows()
+            rebuild_tray_menu()
+
+        QTimer.singleShot(0, poll_result)
 
     music_timer = QTimer()
     music_timer.setInterval(4000)

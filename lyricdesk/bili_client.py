@@ -27,6 +27,8 @@ from .lyrics import LyricLine, Lyrics
 from .smtc import Snapshot, Track
 from .titles import clean_title
 
+_HTTP = requests.Session()
+
 DEBUG_PORT = 9225
 DEBUG_URL = f"http://127.0.0.1:{DEBUG_PORT}/json"
 NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
@@ -269,7 +271,7 @@ def _find_page(timeout: float = 0.8) -> dict | None:
     优先 `player.html`：视频、`<video>` 和播放器接口都在那一页；首页只用来兜底。
     """
     try:
-        resp = requests.get(DEBUG_URL, timeout=timeout)
+        resp = _HTTP.get(DEBUG_URL, timeout=timeout)
         if resp.status_code != 200:
             return None
         targets = resp.json()
@@ -311,7 +313,7 @@ def _wbi_mixin(timeout: float = 6.0) -> str:
     if _WBI_CACHE is not None and _WBI_CACHE[0] > now:
         return _WBI_CACHE[1]
     try:
-        response = requests.get(NAV_URL, timeout=timeout)
+        response = _HTTP.get(NAV_URL, timeout=timeout)
         wbi = (response.json().get("data") or {}).get("wbi_img") or {}
         img = str(wbi.get("img_url") or "").rsplit("/", 1)[-1].split(".")[0]
         sub = str(wbi.get("sub_url") or "").rsplit("/", 1)[-1].split(".")[0]
@@ -637,7 +639,7 @@ class BiliBridge:
         if lines:
             return lines
         try:
-            resp = requests.get(url, timeout=6.0)
+            resp = _HTTP.get(url, timeout=6.0)
             if resp.status_code != 200:
                 return []
             return to_lines(resp.json())

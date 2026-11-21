@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 
 APP_NAME = "桌面歌词"
 APP_ID = "LyricDesk"
-APP_VERSION = "1.7.10"
+APP_VERSION = "1.7.11"
 PUBLISHER = "LyricDesk"
 EXE_NAME = "LyricDesk.exe"
 

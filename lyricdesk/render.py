@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections import OrderedDict
 from dataclasses import dataclass
+from typing import Callable
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
@@ -23,15 +24,20 @@ from PySide6.QtGui import (
 _SPRITE_CACHE: "OrderedDict[tuple, TextSprite]" = OrderedDict()
 _CACHE_LIMIT = 256
 _LINE_CACHE: "OrderedDict[tuple, LineArt]" = OrderedDict()
-_LINE_CACHE_LIMIT = 160
+_LINE_CACHE_LIMIT = 48
+_LINE_CACHE_BUDGET = 40 * 1024 * 1024
+_PINNED_LINE_KEYS: dict[tuple, int] = {}
 _GLOW_CACHE: "OrderedDict[tuple, tuple[QPixmap, QPixmap, QPixmap]]" = OrderedDict()
-_GLOW_CACHE_LIMIT = 96
+_GLOW_CACHE_LIMIT = 24
+_GLOW_CACHE_BUDGET = 16 * 1024 * 1024
 _GLOW_STACK_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
 _GLOW_STACK_LIMIT = 18
+_GLOW_STACK_BUDGET = 12 * 1024 * 1024
 _GLOW_OVERLAY_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
-_GLOW_OVERLAY_LIMIT = 96
+_GLOW_OVERLAY_LIMIT = 24
+_GLOW_OVERLAY_BUDGET = 6 * 1024 * 1024
 _ENTRY_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
-_ENTRY_CACHE_LIMIT = 12
+_ENTRY_CACHE_LIMIT = 4
 
 # 全局字间距（px）。歌词字体统一套这个值；图标 / 时间这类不走精灵的文字不受影响。
 _LETTER_SPACING = 0.0
@@ -98,6 +104,23 @@ class LineArt:
     blur_steps: tuple[QPixmap, ...] = ()
 
 
+@dataclass
+class ImageLineArt:
+    """可在工作线程生成的 QImage 版本；回主线程后再转成 QPixmap。"""
+
+    base: QImage
+    highlight: QImage | None
+    soft_highlight: QImage | None
+    advance: float
+    ascent: float
+    descent: float
+    offset_x: float
+    baseline_y: float
+    height: float
+    font_size: int = 0
+    dpr: float = 1.0
+
+
 _SOFT_BUFFER: QPixmap | None = None
 _SOFT_BUFFER_KEY: tuple[int, int, float] | None = None
 _SOFT_MASK_STATE: tuple | None = None
@@ -109,6 +132,63 @@ def clear_line_cache() -> None:
     _GLOW_STACK_CACHE.clear()
     _GLOW_OVERLAY_CACHE.clear()
     _ENTRY_CACHE.clear()
+    _PINNED_LINE_KEYS.clear()
+
+
+def _pixmap_bytes(pixmap: QPixmap | None) -> int:
+    if pixmap is None or pixmap.isNull():
+        return 0
+    return int(pixmap.width() * pixmap.height() * 4)
+
+
+def _trim_line_cache() -> None:
+    while _LINE_CACHE and (
+        len(_LINE_CACHE) > _LINE_CACHE_LIMIT
+        or sum(
+            _pixmap_bytes(art.base)
+            + _pixmap_bytes(art.highlight)
+            + _pixmap_bytes(art.soft_highlight)
+            for art in _LINE_CACHE.values()
+        ) > _LINE_CACHE_BUDGET
+    ):
+        victim = next(
+            (key for key in _LINE_CACHE if key not in _PINNED_LINE_KEYS),
+            None,
+        )
+        if victim is None:
+            break
+        _LINE_CACHE.pop(victim, None)
+
+
+def _trim_glow_cache() -> None:
+    while _GLOW_CACHE and (
+        len(_GLOW_CACHE) > _GLOW_CACHE_LIMIT
+        or sum(
+            sum(_pixmap_bytes(layer) for layer in layers)
+            for layers in _GLOW_CACHE.values()
+        ) > _GLOW_CACHE_BUDGET
+    ):
+        _GLOW_CACHE.popitem(last=False)
+
+
+def _trim_glow_overlay_cache() -> None:
+    while _GLOW_OVERLAY_CACHE and (
+        len(_GLOW_OVERLAY_CACHE) > _GLOW_OVERLAY_LIMIT
+        or sum(_pixmap_bytes(layer) for layer in _GLOW_OVERLAY_CACHE.values())
+        > _GLOW_OVERLAY_BUDGET
+    ):
+        _GLOW_OVERLAY_CACHE.popitem(last=False)
+
+
+def _trim_glow_stack_cache() -> None:
+    while _GLOW_STACK_CACHE and (
+        len(_GLOW_STACK_CACHE) > _GLOW_STACK_LIMIT
+        or sum(
+            _pixmap_bytes(layer)
+            for layer in _GLOW_STACK_CACHE.values()
+        ) > _GLOW_STACK_BUDGET
+    ):
+        _GLOW_STACK_CACHE.popitem(last=False)
 
 
 def _blur_layers(
@@ -175,8 +255,7 @@ def glow_layers(
         _blur_layers(source, far_radius, levels[2]),
     )
     _GLOW_CACHE[key] = value
-    if len(_GLOW_CACHE) > _GLOW_CACHE_LIMIT:
-        _GLOW_CACHE.popitem(last=False)
+    _trim_glow_cache()
     return value
 
 
@@ -215,8 +294,7 @@ def glow_stack(
         painter.drawPixmap(0, 0, layer)
     painter.end()
     _GLOW_STACK_CACHE[key] = stack
-    if len(_GLOW_STACK_CACHE) > _GLOW_STACK_LIMIT:
-        _GLOW_STACK_CACHE.popitem(last=False)
+    _trim_glow_stack_cache()
     return stack
 
 
@@ -258,8 +336,7 @@ def glow_overlay_layer(
     painter.drawPixmap(0, 0, middle)
     painter.end()
     _GLOW_OVERLAY_CACHE[key] = overlay
-    if len(_GLOW_OVERLAY_CACHE) > _GLOW_OVERLAY_LIMIT:
-        _GLOW_OVERLAY_CACHE.popitem(last=False)
+    _trim_glow_overlay_cache()
     return overlay
 
 
@@ -481,12 +558,53 @@ def make_line_art(
     glow: bool = False,
 ) -> LineArt:
     """把一行文字烘成普通层 + 高光层，绘制时只贴图。"""
-    key = (
+    key = line_art_key(
+        sprite,
+        base_color,
+        grad_colors,
+        glow_color,
+        outline_width,
+        outline_color,
+        shadow,
+        dpr,
+        glow,
+    )
+    cached = _LINE_CACHE.get(key)
+    if cached is not None:
+        _LINE_CACHE.move_to_end(key)
+        return cached
+    return _render_line_art_pixmaps(
+        key,
+        sprite,
+        base_color,
+        grad_colors,
+        glow_color,
+        outline_width,
+        outline_color,
+        shadow,
+        dpr,
+        glow,
+    )
+
+
+def line_art_key(
+    sprite: TextSprite,
+    base_color: QColor,
+    grad_colors: tuple[str, str, str] | None = None,
+    glow_color: QColor | None = None,
+    outline_width: float = 0.0,
+    outline_color: QColor | None = None,
+    shadow: bool = True,
+    dpr: float = 1.0,
+    glow: bool = False,
+) -> tuple:
+    return (
         sprite.text,
         sprite.family,
         sprite.size,
         sprite.weight,
         round(sprite.advance, 2),
+        round(float(_LETTER_SPACING), 2),
         _color_key(base_color),
         grad_colors,
         _color_key(glow_color),
@@ -496,11 +614,200 @@ def make_line_art(
         round(float(dpr), 2),
         bool(glow),
     )
-    cached = _LINE_CACHE.get(key)
-    if cached is not None:
-        _LINE_CACHE.move_to_end(key)
-        return cached
 
+
+def line_art_cached(key: tuple) -> bool:
+    art = _LINE_CACHE.get(key)
+    if art is None:
+        return False
+    _LINE_CACHE.move_to_end(key)
+    return True
+
+
+def cached_line_art(key: tuple) -> LineArt | None:
+    art = _LINE_CACHE.get(key)
+    if art is not None:
+        _LINE_CACHE.move_to_end(key)
+    return art
+
+
+def nearest_line_art(key: tuple) -> LineArt | None:
+    """同文本里按 advance 找最近位图，供 worker 尚未完成时临时顶帧。"""
+    if not _LINE_CACHE or not key:
+        return None
+    text = key[0]
+    advance = float(key[4]) if len(key) > 4 else 0.0
+    candidates = [
+        (abs(float(candidate[4]) - advance), candidate, art)
+        for candidate, art in _LINE_CACHE.items()
+        if candidate and candidate[0] == text and len(candidate) > 4
+    ]
+    if not candidates:
+        return None
+    _distance, candidate, art = min(candidates, key=lambda item: item[0])
+    _LINE_CACHE.move_to_end(candidate)
+    return art
+
+
+def pin_line_art(key: tuple, pinned: bool) -> None:
+    """固定换句窗口内的热位图，不让全局 LRU 在下一页到达前淘汰。"""
+    if pinned:
+        _PINNED_LINE_KEYS[key] = _PINNED_LINE_KEYS.get(key, 0) + 1
+        cached = _LINE_CACHE.get(key)
+        if cached is not None:
+            _LINE_CACHE.move_to_end(key)
+        return
+    count = _PINNED_LINE_KEYS.get(key, 0)
+    if count <= 1:
+        _PINNED_LINE_KEYS.pop(key, None)
+    else:
+        _PINNED_LINE_KEYS[key] = count - 1
+
+
+def render_line_images(
+    sprite: TextSprite,
+    base_color: QColor,
+    grad_colors: tuple[str, str, str] | None = None,
+    glow_color: QColor | None = None,
+    outline_width: float = 0.0,
+    outline_color: QColor | None = None,
+    shadow: bool = True,
+    dpr: float = 1.0,
+    glow: bool = False,
+    yield_callback: Callable[[], None] | None = None,
+) -> ImageLineArt:
+    """纯 QImage 绘制，可在单后台工作线程调用，不碰任何全局 QPixmap 缓存。"""
+    dpr = max(1.0, float(dpr))
+    glow_pad = sprite.size * 0.8 if glow else 0.0
+    pad_x = max(
+        4.0,
+        sprite.advance * 0.08,
+        float(outline_width) * 1.5 + 2.0,
+        glow_pad,
+    )
+    logical_w = max(1.0, sprite.advance + pad_x * 2.0)
+    logical_h = max(1.0, (sprite.ascent + sprite.descent) * 1.9 + glow_pad * 1.4)
+    offset_x = pad_x + sprite.advance / 2.0
+    baseline_y = logical_h / 2.0 + (sprite.ascent - sprite.descent) / 2.0
+
+    physical_w = max(2, int(math.ceil(logical_w * dpr)))
+    physical_h = max(2, int(math.ceil(logical_h * dpr)))
+
+    def new_image() -> QImage:
+        image = QImage(
+            physical_w,
+            physical_h,
+            QImage.Format.Format_ARGB32_Premultiplied,
+        )
+        image.fill(Qt.GlobalColor.transparent)
+        image.setDevicePixelRatio(dpr)
+        return image
+
+    def begin(image: QImage) -> QPainter:
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.translate(offset_x, baseline_y)
+        return painter
+
+    def yield_main() -> None:
+        if yield_callback is not None:
+            yield_callback()
+
+    base = new_image()
+    painter = begin(base)
+    if shadow:
+        painter.save()
+        painter.translate(0.0, max(1.0, sprite.size * 0.055))
+        _fill_path(painter, sprite, QColor(0, 0, 0, 115))
+        yield_main()
+        painter.restore()
+    if outline_width > 0 and outline_color is not None:
+        _stroke_path(painter, sprite, outline_color, outline_width)
+        yield_main()
+    _fill_path(painter, sprite, base_color)
+    yield_main()
+    painter.end()
+
+    highlight = None
+    soft_highlight = None
+    if grad_colors is not None and glow_color is not None:
+        highlight = new_image()
+        painter = begin(highlight)
+        glow_pen = QPen(
+            QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 70)
+        )
+        glow_pen.setWidthF(max(2.0, sprite.size * 0.13))
+        glow_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        glow_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(glow_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(sprite.path)
+        yield_main()
+        gradient = QLinearGradient(
+            -sprite.advance / 2.0, 0.0, sprite.advance / 2.0, 0.0
+        )
+        gradient.setColorAt(0.0, QColor(grad_colors[0]))
+        gradient.setColorAt(0.5, QColor(grad_colors[1]))
+        gradient.setColorAt(1.0, QColor(grad_colors[2]))
+        _fill_path(painter, sprite, gradient)
+        yield_main()
+        painter.end()
+
+        # 高光软边分两层：纵向上下 10% 慢慢淡出，横向向远端略微收光。
+        # 这一层跟着 LineArt 缓存在换行时生成一次，逐帧只做前沿遮罩。
+        soft_highlight = new_image()
+        painter = QPainter(soft_highlight)
+        painter.drawImage(0, 0, highlight)
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_DestinationIn
+        )
+        vertical = QLinearGradient(0.0, 0.0, 0.0, logical_h)
+        vertical.setColorAt(0.0, QColor(255, 255, 255, 0))
+        vertical.setColorAt(0.10, QColor(255, 255, 255, 255))
+        vertical.setColorAt(0.90, QColor(255, 255, 255, 255))
+        vertical.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(vertical)
+        painter.drawRect(QRectF(0.0, 0.0, logical_w, logical_h))
+        yield_main()
+        horizontal = QLinearGradient(0.0, 0.0, logical_w, 0.0)
+        horizontal.setColorAt(0.0, QColor(255, 255, 255, 255))
+        horizontal.setColorAt(0.58, QColor(255, 255, 255, 235))
+        horizontal.setColorAt(1.0, QColor(255, 255, 255, 184))
+        painter.setBrush(horizontal)
+        painter.drawRect(QRectF(0.0, 0.0, logical_w, logical_h))
+        yield_main()
+        painter.end()
+
+    return ImageLineArt(
+        base=base,
+        highlight=highlight,
+        soft_highlight=soft_highlight,
+        advance=sprite.advance,
+        ascent=sprite.ascent,
+        descent=sprite.descent,
+        offset_x=offset_x,
+        baseline_y=baseline_y,
+        height=logical_h,
+        font_size=sprite.size,
+        dpr=dpr,
+    )
+
+
+def _render_line_art_pixmaps(
+    key: tuple,
+    sprite: TextSprite,
+    base_color: QColor,
+    grad_colors: tuple[str, str, str] | None = None,
+    glow_color: QColor | None = None,
+    outline_width: float = 0.0,
+    outline_color: QColor | None = None,
+    shadow: bool = True,
+    dpr: float = 1.0,
+    glow: bool = False,
+) -> LineArt:
+    """同步兜底路径：保持 v1.7.10 直接画 QPixmap 的帧耗水平。"""
     dpr = max(1.0, float(dpr))
     glow_pad = sprite.size * 0.8 if glow else 0.0
     pad_x = max(
@@ -557,7 +864,10 @@ def make_line_art(
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(sprite.path)
         gradient = QLinearGradient(
-            -sprite.advance / 2.0, 0.0, sprite.advance / 2.0, 0.0
+            -sprite.advance / 2.0,
+            0.0,
+            sprite.advance / 2.0,
+            0.0,
         )
         gradient.setColorAt(0.0, QColor(grad_colors[0]))
         gradient.setColorAt(0.5, QColor(grad_colors[1]))
@@ -565,8 +875,6 @@ def make_line_art(
         _fill_path(painter, sprite, gradient)
         painter.end()
 
-        # 高光软边分两层：纵向上下 10% 慢慢淡出，横向向远端略微收光。
-        # 这一层跟着 LineArt 缓存在换行时生成一次，逐帧只做前沿遮罩。
         soft_highlight = new_pixmap()
         painter = QPainter(soft_highlight)
         painter.drawPixmap(0, 0, highlight)
@@ -602,8 +910,43 @@ def make_line_art(
         font_size=sprite.size,
     )
     _LINE_CACHE[key] = art
-    if len(_LINE_CACHE) > _LINE_CACHE_LIMIT:
-        _LINE_CACHE.popitem(last=False)
+    _trim_line_cache()
+    return art
+
+
+def _pixmap_from_image(image: QImage | None, dpr: float) -> QPixmap | None:
+    if image is None:
+        return None
+    # 子进程结果来自共享内存；先深拷贝 QImage，确保 QPixmap 不再引用
+    # 即将关闭的共享缓冲区。
+    pixmap = QPixmap.fromImage(image.copy())
+    pixmap.setDevicePixelRatio(dpr)
+    return pixmap
+
+
+def commit_line_images(key: tuple, image_art: ImageLineArt) -> LineArt:
+    """在主线程把工作线程产出的 QImage 提交到现有 QPixmap LRU。"""
+    cached = _LINE_CACHE.get(key)
+    if cached is not None:
+        _LINE_CACHE.move_to_end(key)
+        return cached
+    art = LineArt(
+        base=_pixmap_from_image(image_art.base, image_art.dpr) or QPixmap(),
+        highlight=_pixmap_from_image(image_art.highlight, image_art.dpr),
+        soft_highlight=_pixmap_from_image(
+            image_art.soft_highlight,
+            image_art.dpr,
+        ),
+        advance=image_art.advance,
+        ascent=image_art.ascent,
+        descent=image_art.descent,
+        offset_x=image_art.offset_x,
+        baseline_y=image_art.baseline_y,
+        height=image_art.height,
+        font_size=image_art.font_size,
+    )
+    _LINE_CACHE[key] = art
+    _trim_line_cache()
     return art
 
 

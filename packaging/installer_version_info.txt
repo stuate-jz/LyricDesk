@@ -20,11 +20,11 @@ VSVersionInfo(
                     [
                         StringStruct("CompanyName", "LyricDesk"),
                         StringStruct("FileDescription", "桌面歌词 安装程序"),
-                        StringStruct("FileVersion", "1.7.10.0"),
+                        StringStruct("FileVersion", "1.7.11.0"),
                         StringStruct("InternalName", "LyricDeskSetup"),
                         StringStruct("OriginalFilename", "LyricDesk-Setup.exe"),
                         StringStruct("ProductName", "桌面歌词"),
-                        StringStruct("ProductVersion", "1.7.10"),
+                        StringStruct("ProductVersion", "1.7.11"),
                     ],
                 )
             ]

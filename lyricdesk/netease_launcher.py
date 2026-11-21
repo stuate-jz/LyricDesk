@@ -12,6 +12,8 @@ from pathlib import Path
 
 DEBUG_PORT_MIN = 9222
 DEBUG_PORT_MAX = 9232
+_REGISTRY_CACHE: tuple[float, list[Path]] | None = None
+_REGISTRY_CACHE_SECONDS = 60.0
 
 
 def _exe_in(folder: Path) -> Path | None:
@@ -50,6 +52,10 @@ def _common_dirs() -> list[Path]:
 
 
 def _registry_dirs() -> list[Path]:
+    global _REGISTRY_CACHE
+    now = time.monotonic()
+    if _REGISTRY_CACHE is not None and now - _REGISTRY_CACHE[0] < _REGISTRY_CACHE_SECONDS:
+        return list(_REGISTRY_CACHE[1])
     dirs: list[Path] = []
     try:
         import winreg
@@ -99,6 +105,7 @@ def _registry_dirs() -> list[Path]:
                     path = raw.strip().strip('"').split(",")[0]
                     if path:
                         dirs.append(Path(path).parent)
+    _REGISTRY_CACHE = (now, list(dirs))
     return dirs
 
 
