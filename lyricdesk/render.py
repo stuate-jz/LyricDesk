@@ -135,6 +135,14 @@ def clear_line_cache() -> None:
     _PINNED_LINE_KEYS.clear()
 
 
+def trim_caches() -> None:
+    """按当前预算再淘汰一轮，供长时间运行的主循环定期调用。"""
+    _trim_line_cache()
+    _trim_glow_cache()
+    _trim_glow_stack_cache()
+    _trim_glow_overlay_cache()
+
+
 def _pixmap_bytes(pixmap: QPixmap | None) -> int:
     if pixmap is None or pixmap.isNull():
         return 0

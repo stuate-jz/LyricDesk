@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import os
 import queue
 import sys
@@ -16,6 +17,7 @@ from .config import Settings
 from .engine import Engine
 from .i18n import tr
 from .processes import music_app_running
+from . import render as render_mod
 from .window import LyricWindow, log_error
 from .win_util import run_hidden
 
@@ -481,7 +483,14 @@ def main() -> int:
     # 配好更新源之后，启动时静默自查一次（24 小时内只查一次）
     QTimer.singleShot(8000, main_window.auto_check_update)
 
+    heartbeat_tick = 0
+
     def heartbeat() -> None:
+        nonlocal heartbeat_tick
+        heartbeat_tick += 1
+        if heartbeat_tick % 20 == 0:
+            render_mod.trim_caches()
+            gc.collect()
         snapshot = engine.snapshot()
         if snapshot is None:
             return
