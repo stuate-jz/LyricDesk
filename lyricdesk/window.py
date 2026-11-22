@@ -117,7 +117,7 @@ def depth_angle(value: float) -> float:
     return math.copysign(MAX_DEPTH_ANGLE * (abs(v) ** 1.35), v)
 
 
-def _paint_line_art(sprite, *args, **kwargs):
+def _paint_line_art(owner, sprite, *args, **kwargs):
     """优先取缓存；worker 未就绪时用近似图或同步烘图兜底，禁止空行。"""
     if not line_art_worker.enabled():
         key = render_mod.line_art_key(sprite, *args, **kwargs)
@@ -125,27 +125,57 @@ def _paint_line_art(sprite, *args, **kwargs):
         render_mod.record_line_lookup(cached is not None, key)
         if cached is not None:
             cached.cache_hit = True
+            cached.render_scale = 1.0
             return cached
         art = render_mod.make_line_art(sprite, *args, **kwargs)
         art.cache_hit = False
+        art.render_scale = 1.0
         return art
     key = render_mod.line_art_key(sprite, *args, **kwargs)
     cached = render_mod.cached_line_art(key)
     if cached is not None:
         render_mod.record_line_lookup(True, key)
         cached.cache_hit = True
+        cached.render_scale = 1.0
         return cached
     render_mod.record_line_lookup(False, key)
+    owner._requeue_line_art(sprite, key, args, kwargs)
     nearest = render_mod.nearest_line_art(key)
     if nearest is not None:
         render_mod.record_line_fallback()
         _log_line_art_fallback("nearest", key)
+        live_advance = float(key[4])
+        if abs(nearest.advance - live_advance) > 1.0:
+            _log_line_art_event(
+                "advance-mismatch",
+                key,
+                old_advance=nearest.advance,
+                live_advance=live_advance,
+                fallback=True,
+            )
+        if len(sprite.text) > 1:
+            art = render_mod.make_line_art(sprite, *args, **kwargs)
+            art.cache_hit = False
+            art.render_scale = 1.0
+            owner._prefetch_jobs.discard(key)
+            _log_line_art_event("sync-self-heal", key)
+            owner.update()
+            return art
+        nearest.render_scale = (
+            live_advance / nearest.advance
+            if abs(nearest.advance) > 0.001
+            else 1.0
+        )
         nearest.cache_hit = False
+        owner._schedule_sync_self_heal(sprite, key, args, kwargs)
+        owner.update()
         return nearest
     render_mod.record_line_fallback()
     _log_line_art_fallback("sync", key)
     art = render_mod.make_line_art(sprite, *args, **kwargs)
     art.cache_hit = False
+    art.render_scale = 1.0
+    owner.update()
     return art
 
 
@@ -164,6 +194,23 @@ def _log_line_art_fallback(kind: str, key: tuple) -> None:
                 f"{time.strftime('%Y-%m-%d %H:%M:%S')} {kind} "
                 f"text={str(key[0])[:40]!r} advance={key[4]}\n"
             )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _log_line_art_event(kind: str, key: tuple, **details) -> None:
+    try:
+        with (app_dir() / "line-art.log").open(
+            "a",
+            encoding="utf-8",
+        ) as handle:
+            payload = {
+                "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "event": kind,
+                "text": str(key[0])[:80] if key else "",
+                **details,
+            }
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
     except Exception:  # noqa: BLE001
         pass
 
@@ -554,6 +601,7 @@ class LyricWindow(QWidget):
         self._prefetch_signature = None
         self._prefetch_jobs: set[tuple] = set()
         self._prefetch_pinned: set[tuple] = set()
+        self._sync_fallback_scheduled: set[tuple] = set()
         self._word_spring = WordSpring()
         self._spring_line_key = None
         self._spring_last_time = 0.0
@@ -1727,7 +1775,7 @@ class LyricWindow(QWidget):
             self._prefetch_signature = signature
         if (
             schedule_key == self._prefetched_line_key
-            and len(self._prefetch_jobs) >= 8
+            and len(self._prefetch_jobs) >= 12
         ):
             return
         self._prefetched_line_key = schedule_key
@@ -1738,10 +1786,15 @@ class LyricWindow(QWidget):
         # 每侧多备两行：换句时新的当前行已在上一轮烘好，不在绘制路径补作业。
         last = first + count + 2
         first -= 2
+        line_indices = list(range(first, last))
+        priority = [index, index - 1, index + 1]
+        line_indices = [
+            item for item in priority if first <= item < last
+        ] + [item for item in line_indices if item not in priority]
         desired_pins: set[tuple] = set()
         # 当前行优先；队列有上限，避免子进程一次囤积几十张高 DPR 位图。
         for current_style in (True, False):
-            for line_index in range(first, last):
+            for line_index in line_indices:
                 if line_index < 0 or line_index >= len(lyrics.lines):
                     continue
                 line = lyrics.lines[line_index]
@@ -1829,7 +1882,7 @@ class LyricWindow(QWidget):
                         "letter_spacing": render_mod.letter_spacing(),
                     }
                 if (
-                    len(self._prefetch_jobs) < 16
+                    len(self._prefetch_jobs) < 12
                     and
                     not render_mod.line_art_cached(key)
                     and key not in self._prefetch_jobs
@@ -1914,7 +1967,7 @@ class LyricWindow(QWidget):
                     if include_glow:
                         desired_pins.add(key)
                     continue
-                if len(self._prefetch_jobs) >= 16:
+                if len(self._prefetch_jobs) >= 12:
                     return
                 line_art_worker.client().submit(
                     key,
@@ -1947,6 +2000,94 @@ class LyricWindow(QWidget):
                 self._prefetch_jobs.add(key)
                 if include_glow:
                     desired_pins.add(key)
+
+    def _requeue_line_art(
+        self,
+        sprite,
+        key: tuple,
+        args: tuple,
+        kwargs: dict,
+    ) -> None:
+        """绘制未命中时移除过时去重标记，并按实时键重新提交 worker。"""
+        self._prefetch_jobs.discard(key)
+        names = (
+            "base_color",
+            "grad_colors",
+            "glow_color",
+            "outline_width",
+            "outline_color",
+            "shadow",
+            "dpr",
+            "glow",
+        )
+        values = dict(zip(names, args))
+        values.update(kwargs)
+        base_color = values.get("base_color")
+        glow_color = values.get("glow_color")
+        outline_color = values.get("outline_color")
+        grad_colors = values.get("grad_colors")
+        request = {
+            "text": sprite.text,
+            "family": sprite.family,
+            "size": sprite.size,
+            "weight": sprite.weight,
+            "base_color": (
+                base_color.name(QColor.NameFormat.HexArgb)
+                if isinstance(base_color, QColor)
+                else QColor(base_color).name(QColor.NameFormat.HexArgb)
+            ),
+            "grad_colors": list(grad_colors) if grad_colors is not None else None,
+            "glow_color": (
+                glow_color.name(QColor.NameFormat.HexArgb)
+                if isinstance(glow_color, QColor)
+                else "transparent"
+            ),
+            "outline_width": float(values.get("outline_width") or 0.0),
+            "outline_color": (
+                outline_color.name(QColor.NameFormat.HexArgb)
+                if isinstance(outline_color, QColor)
+                else "transparent"
+            ),
+            "shadow": bool(values.get("shadow", True)),
+            "dpr": float(values.get("dpr") or self.devicePixelRatioF()),
+            "glow": bool(values.get("glow", False)),
+            "letter_spacing": render_mod.letter_spacing(),
+        }
+        line_art_worker.client().submit(key, request)
+        self._prefetch_jobs.add(key)
+        _log_line_art_event(
+            "miss_requeue",
+            key,
+            jobs=len(self._prefetch_jobs),
+        )
+
+    def _schedule_sync_self_heal(
+        self,
+        sprite,
+        key: tuple,
+        args: tuple,
+        kwargs: dict,
+    ) -> None:
+        """最近邻顶一帧后，下一事件循环同步补一张精确图，保证 5 帧内恢复。"""
+        if key in self._sync_fallback_scheduled:
+            return
+        self._sync_fallback_scheduled.add(key)
+
+        def heal() -> None:
+            self._sync_fallback_scheduled.discard(key)
+            if render_mod.line_art_cached(key):
+                return
+            try:
+                art = render_mod.make_line_art(sprite, *args, **kwargs)
+                art.cache_hit = False
+                art.render_scale = 1.0
+                self._prefetch_jobs.discard(key)
+                _log_line_art_event("sync-self-heal", key)
+                self.update()
+            except Exception:
+                log_error("同步补烘歌词位图失败")
+
+        QTimer.singleShot(0, heal)
 
     def _drain_line_art_jobs(self, limit: int = 1) -> None:
         """主线程消费已完成的后台位图；每轮限制转换次数避免抖动。"""
@@ -2656,6 +2797,7 @@ class LyricWindow(QWidget):
                 pop = ease_out_back(anim, 1.6)
                 scale = 0.94 + 0.06 * pop
                 art = _paint_line_art(
+                    self,
                     sprite,
                     QColor(255, 255, 255, 120),
                     (colors["c1"], colors["c2"], colors["c3"]),
@@ -2694,6 +2836,7 @@ class LyricWindow(QWidget):
                     + sprite.ascent
                 )
                 art = _paint_line_art(
+                    self,
                     sprite,
                     QColor(colors["base"]),
                     shadow=False,
@@ -2705,7 +2848,7 @@ class LyricWindow(QWidget):
                     self._align_center_x(left, right, sprite.advance) + chaos_x,
                     baseline,
                     opacity=opacity * (0.35 + 0.65 * fade),
-                    scale=chaos_scale,
+                    scale=chaos_scale * art.render_scale,
                     rotation=chaos_rotation,
                 )
 
@@ -3211,6 +3354,7 @@ class LyricWindow(QWidget):
                 + sprite.ascent
             )
             art = _paint_line_art(
+                self,
                 sprite,
                 QColor(255, 255, 255, 104),
                 (colors["c1"], colors["c2"], colors["c3"]),
@@ -3363,7 +3507,9 @@ class LyricWindow(QWidget):
                 if budget.reveal == "normal"
                 else 0.0
             )
-        draw_scale = scale * entry_scale
+        render_scale = float(getattr(art, "render_scale", 1.0) or 1.0)
+        render_advance = float(art.advance) * render_scale
+        draw_scale = scale * entry_scale * render_scale
         draw_opacity = opacity * entry_alpha
         if effect == "off":
             appearance = max(
@@ -3390,7 +3536,7 @@ class LyricWindow(QWidget):
                 family,
                 fitted,
                 weight,
-                art.advance,
+                render_advance,
             )
             timings = self._audio_aligned_timings(line, timings, position)
             if not timings:
@@ -3432,12 +3578,13 @@ class LyricWindow(QWidget):
                     )
                 char_x = (
                     center_x
-                    - art.advance / 2.0
+                    - render_advance / 2.0
                     + x_offset
                     + timing.width / 2.0
                 )
                 sprite = make_sprite(timing.char, family, fitted, weight)
                 char_art = _paint_line_art(
+                    self,
                     sprite,
                     QColor(255, 255, 255, 120),
                     (colors["c1"], colors["c2"], colors["c3"]),
@@ -3454,7 +3601,11 @@ class LyricWindow(QWidget):
                     char_x,
                     baseline + dy,
                     progress=char_progress,
-                    scale=draw_scale * motion_scale,
+                    scale=(
+                        draw_scale
+                        * motion_scale
+                        * float(getattr(char_art, "render_scale", 1.0) or 1.0)
+                    ),
                     opacity=(
                         draw_opacity
                         if char_progress > 0.0
@@ -3475,7 +3626,13 @@ class LyricWindow(QWidget):
             )
             return
         if effect == "word":
-            timings = build_char_timeline(line, family, fitted, weight, art.advance)
+            timings = build_char_timeline(
+                line,
+                family,
+                fitted,
+                weight,
+                render_advance,
+            )
             timings = self._audio_aligned_timings(line, timings, position)
             if not timings:
                 render_mod.draw_line_art(
@@ -3501,7 +3658,7 @@ class LyricWindow(QWidget):
                 timing.x + timing.width for timing in timings
             )
             timeline_width = timeline_right - timeline_left
-            advance_aligned = abs(art.advance - timeline_width) <= 0.5
+            advance_aligned = abs(render_advance - timeline_width) <= 0.5
             motion_aligned = all(
                 abs(dy) <= 0.5
                 and abs((motion_scale - 1.0) * fitted) <= 0.5
@@ -3517,7 +3674,7 @@ class LyricWindow(QWidget):
                 )
                 for timing in timings
             ]
-            line_left = center_x - art.advance / 2.0
+            line_left = center_x - render_advance / 2.0
             char_left = min(
                 line_left + timing.x + (timing.width - advance) / 2.0
                 for timing, advance in zip(timings, char_advances)
@@ -3531,22 +3688,21 @@ class LyricWindow(QWidget):
                 not words
                 or layer_center_delta <= 0.5
             )
-            render_mod.set_draw_context(
-                {
-                    "line_text": line.text,
-                    "timing_total_width": round(timeline_width, 3),
-                    "line_advance": round(art.advance, 3),
-                    "line_advance_delta": round(
-                        abs(art.advance - timeline_width),
-                        3,
-                    ),
-                    "motion_aligned": motion_aligned,
-                    "layer_center_delta": round(layer_center_delta, 3),
-                    "line_layer_drawn": bool(
-                        advance_aligned and motion_aligned and layer_aligned
-                    ),
-                }
-            )
+            base_context = {
+                "line_text": line.text,
+                "timing_total_width": round(timeline_width, 3),
+                "line_advance": round(render_advance, 3),
+                "line_advance_delta": round(
+                    abs(render_advance - timeline_width),
+                    3,
+                ),
+                "motion_aligned": motion_aligned,
+                "layer_center_delta": round(layer_center_delta, 3),
+                "line_layer_drawn": bool(
+                    advance_aligned and motion_aligned and layer_aligned
+                ),
+            }
+            render_mod.set_draw_context(base_context)
             # 只有整行底图与逐字层几何完全一致时才叠两层；否则整行旧
             # advance / 未应用逐字变换会形成用户看到的暗色重影。
             if advance_aligned and motion_aligned and layer_aligned:
@@ -3583,12 +3739,20 @@ class LyricWindow(QWidget):
                 )
                 char_x = (
                     center_x
-                    - art.advance / 2.0
+                    - render_advance / 2.0
                     + _x_offset
                     + timing.width / 2.0
                 )
                 sprite = make_sprite(timing.char, family, fitted, weight)
+                render_mod.set_draw_context(
+                    {
+                        **base_context,
+                        "timing_width": round(timing.width, 3),
+                        "timing_x": round(timing.x, 3),
+                    }
+                )
                 char_art = _paint_line_art(
+                    self,
                     sprite,
                     QColor(255, 255, 255, 120),
                     (colors["c1"], colors["c2"], colors["c3"]),
@@ -3599,13 +3763,17 @@ class LyricWindow(QWidget):
                     dpr=self.devicePixelRatioF(),
                     glow=local_glow > 0,
                 )
+                char_art_scale = (
+                    char_scale
+                    * float(getattr(char_art, "render_scale", 1.0) or 1.0)
+                )
                 render_mod.draw_line_art(
                     painter,
                     char_art,
                     char_x,
                     baseline + dy,
                     progress=char_progress,
-                    scale=char_scale,
+                    scale=char_art_scale,
                     opacity=char_opacity,
                     glow_scale=local_glow,
                     entry_blur=entry_blur,
@@ -3626,7 +3794,13 @@ class LyricWindow(QWidget):
             entry_blur=entry_blur,
             rotation=rotation,
         )
-        timings = build_char_timeline(line, family, fitted, weight, art.advance)
+        timings = build_char_timeline(
+            line,
+            family,
+            fitted,
+            weight,
+            render_advance,
+        )
         timings = self._audio_aligned_timings(line, timings, position)
         if not timings:
             return
@@ -3636,7 +3810,7 @@ class LyricWindow(QWidget):
             float(line.end or 0.0),
             line.text,
             fitted,
-            round(float(art.advance), 2),
+            round(render_advance, 2),
         )
         if (
             line_key != self._spring_line_key
@@ -3684,11 +3858,12 @@ class LyricWindow(QWidget):
                 center_x
                 + layout[0]
                 + timing.width / 2.0
-                - art.advance / 2.0
+                - render_advance / 2.0
             )
             _x_offset, dy, motion_scale, char_rotation = layout
             sprite = make_sprite(timing.char, family, fitted, weight)
             highlight = _paint_line_art(
+                self,
                 sprite,
                 QColor(255, 255, 255, 120),
                 (colors["c1"], colors["c2"], colors["c3"]),
@@ -3705,7 +3880,12 @@ class LyricWindow(QWidget):
                 char_center,
                 baseline + dy,
                 progress=char_progress,
-                scale=draw_scale * state.value * motion_scale,
+                scale=(
+                    draw_scale
+                    * state.value
+                    * motion_scale
+                    * float(getattr(highlight, "render_scale", 1.0) or 1.0)
+                ),
                 opacity=draw_opacity * state.alpha,
                 softness=softness if active else 0.0,
                 tail_progress=char_progress,
@@ -4041,6 +4221,7 @@ class LyricWindow(QWidget):
 
             if selected:
                 art = _paint_line_art(
+                    self,
                     sprite,
                     QColor(255, 255, 255, 120),
                     (colors["c1"], colors["c2"], colors["c3"]),
@@ -4067,13 +4248,19 @@ class LyricWindow(QWidget):
                 )
             else:
                 art = _paint_line_art(
+                    self,
                     sprite,
                     QColor(colors["base"]),
                     shadow=False,
                     dpr=self.devicePixelRatioF(),
                 )
                 render_mod.draw_line_art(
-                    painter, art, local_x, 0.0, opacity=opacity
+                    painter,
+                    art,
+                    local_x,
+                    0.0,
+                    scale=art.render_scale,
+                    opacity=opacity,
                 )
             painter.restore()
 

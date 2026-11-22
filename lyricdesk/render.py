@@ -176,6 +176,7 @@ class LineArt:
     font_size: int = 0
     text: str = ""
     cache_hit: bool = False
+    render_scale: float = 1.0
     glow_near: QPixmap | None = None
     glow_far: QPixmap | None = None
     blur_steps: tuple[QPixmap, ...] = ()

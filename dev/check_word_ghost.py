@@ -103,6 +103,7 @@ def main() -> int:
 
     max_layer_offset = 0.0
     max_advance_delta = 0.0
+    max_spacing_error = 0.0
     for frame_index in range(30):
         engine.snapshot_value.position = 10.0 + (frame_index + 1) * 0.12
         window._anim_t0 = -1000.0
@@ -135,10 +136,31 @@ def main() -> int:
                     max_layer_offset,
                     abs(line_draws[0]["center_x"] - char_center),
                 )
+            timed = [
+                item
+                for item in char_draws
+                if "timing_width" in item.get("context", {})
+            ]
+            timed.sort(key=lambda item: item["context"]["timing_x"])
+            for left, right in zip(timed, timed[1:]):
+                expected = (
+                    float(left["context"]["timing_width"])
+                    + float(right["context"]["timing_width"])
+                ) / 2.0
+                actual = right["center_x"] - left["center_x"]
+                max_spacing_error = max(
+                    max_spacing_error,
+                    abs(actual - expected),
+                )
 
     print(f"max_advance_delta={max_advance_delta:.3f}px")
     print(f"max_layer_offset={max_layer_offset:.3f}px")
-    ok = max_advance_delta <= 0.5 and max_layer_offset <= 0.5
+    print(f"max_spacing_error={max_spacing_error:.3f}px")
+    ok = (
+        max_advance_delta <= 0.5
+        and max_layer_offset <= 0.5
+        and max_spacing_error <= 1.0
+    )
     print(f"\n结果：{'通过' if ok else '失败'}")
     window.close()
     window.deleteLater()
