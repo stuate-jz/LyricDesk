@@ -3508,6 +3508,29 @@ class LyricWindow(QWidget):
                 and abs(char_rotation) <= 0.5
                 for _x, dy, motion_scale, char_rotation in layouts
             )
+            char_advances = [
+                render_mod.measure(
+                    timing.char,
+                    family,
+                    fitted,
+                    weight,
+                )
+                for timing in timings
+            ]
+            line_left = center_x - art.advance / 2.0
+            char_left = min(
+                line_left + timing.x + (timing.width - advance) / 2.0
+                for timing, advance in zip(timings, char_advances)
+            )
+            char_right = max(
+                line_left + timing.x + (timing.width + advance) / 2.0
+                for timing, advance in zip(timings, char_advances)
+            )
+            layer_center_delta = abs(center_x - (char_left + char_right) / 2.0)
+            layer_aligned = (
+                not words
+                or layer_center_delta <= 0.5
+            )
             render_mod.set_draw_context(
                 {
                     "line_text": line.text,
@@ -3518,11 +3541,15 @@ class LyricWindow(QWidget):
                         3,
                     ),
                     "motion_aligned": motion_aligned,
+                    "layer_center_delta": round(layer_center_delta, 3),
+                    "line_layer_drawn": bool(
+                        advance_aligned and motion_aligned and layer_aligned
+                    ),
                 }
             )
             # 只有整行底图与逐字层几何完全一致时才叠两层；否则整行旧
             # advance / 未应用逐字变换会形成用户看到的暗色重影。
-            if advance_aligned and motion_aligned:
+            if advance_aligned and motion_aligned and layer_aligned:
                 render_mod.draw_line_art(
                     painter,
                     art,
