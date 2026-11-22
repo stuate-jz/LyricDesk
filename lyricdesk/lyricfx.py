@@ -223,6 +223,24 @@ def build_char_timeline(
                 cursor += duration
 
     timings = _make_timings(values)
+    if words and timings:
+        current_width = max(timing.x + timing.width for timing in timings)
+        target_width = max(0.01, float(max_width))
+        if current_width > 0.01 and abs(current_width - target_width) > 0.01:
+            # QFontMetricsF 对单字累加和整行 advance 会因字距 / kerning
+            # 取整产生差异。把逐字横向几何整体缩放回整行 advance，
+            # 保证暗底和逐字层共用同一中心与总宽。
+            scale = target_width / current_width
+            timings = tuple(
+                CharTiming(
+                    timing.char,
+                    timing.start,
+                    timing.end,
+                    timing.width * scale,
+                    timing.x * scale,
+                )
+                for timing in timings
+            )
     _TIMELINE_CACHE[key] = timings
     if len(_TIMELINE_CACHE) > _TIMELINE_CACHE_LIMIT:
         _TIMELINE_CACHE.popitem(last=False)
