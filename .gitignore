@@ -14,6 +14,8 @@ dev/*
 !dev/check_cache_fingerprint.py
 !dev/check_line_art_parity.py
 !dev/check_line_art_worker.py
+!dev/check_word_ghost.py
+!dev/check_debug_dump.py
 
 # ---------- 打包与构建产物（几百 MB，绝对不能提交）----------
 build/

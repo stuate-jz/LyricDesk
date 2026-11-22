@@ -45,9 +45,30 @@ _LINE_HITS = 0
 _LINE_FALLBACKS = 0
 _LINE_STAT_KEYS: set[tuple] = set()
 _LINE_STATS_T0 = time.monotonic()
+_DRAW_TRACE: list[dict] | None = None
+_DRAW_CONTEXT: dict = {}
 
 # 全局字间距（px）。歌词字体统一套这个值；图标 / 时间这类不走精灵的文字不受影响。
 _LETTER_SPACING = 0.0
+
+
+def start_draw_trace() -> None:
+    global _DRAW_TRACE
+    _DRAW_TRACE = []
+
+
+def stop_draw_trace() -> list[dict]:
+    global _DRAW_TRACE
+    trace = _DRAW_TRACE or []
+    _DRAW_TRACE = None
+    _DRAW_CONTEXT.clear()
+    return trace
+
+
+def set_draw_context(context: dict | None = None) -> None:
+    _DRAW_CONTEXT.clear()
+    if context:
+        _DRAW_CONTEXT.update(context)
 
 
 def set_letter_spacing(px: float) -> None:
@@ -153,6 +174,8 @@ class LineArt:
     baseline_y: float
     height: float
     font_size: int = 0
+    text: str = ""
+    cache_hit: bool = False
     glow_near: QPixmap | None = None
     glow_far: QPixmap | None = None
     blur_steps: tuple[QPixmap, ...] = ()
@@ -173,6 +196,7 @@ class ImageLineArt:
     height: float
     font_size: int = 0
     dpr: float = 1.0
+    text: str = ""
 
 
 _SOFT_BUFFER: QPixmap | None = None
@@ -854,6 +878,7 @@ def render_line_images(
         baseline_y=baseline_y,
         height=logical_h,
         font_size=sprite.size,
+        text=sprite.text,
         dpr=dpr,
     )
 
@@ -971,6 +996,7 @@ def _render_line_art_pixmaps(
         baseline_y=baseline_y,
         height=logical_h,
         font_size=sprite.size,
+        text=sprite.text,
     )
     _LINE_CACHE[key] = art
     _trim_line_cache()
@@ -1007,6 +1033,7 @@ def commit_line_images(key: tuple, image_art: ImageLineArt) -> LineArt:
         baseline_y=image_art.baseline_y,
         height=image_art.height,
         font_size=image_art.font_size,
+        text=image_art.text,
     )
     _LINE_CACHE[key] = art
     _trim_line_cache()
@@ -1033,6 +1060,22 @@ def draw_line_art(
 ) -> None:
     painter.save()
     painter.setOpacity(max(0.0, min(1.0, painter.opacity() * opacity)))
+    if _DRAW_TRACE is not None:
+        _DRAW_TRACE.append(
+            {
+                "text": art.text,
+                "center_x": round(float(center_x), 3),
+                "baseline": round(float(baseline), 3),
+                "advance": round(float(art.advance), 3),
+                "scale": round(float(scale), 5),
+                "opacity": round(float(painter.opacity()), 5),
+                "progress": round(float(progress), 5),
+                "softness": round(float(softness), 5),
+                "glow_scale": round(float(glow_scale), 5),
+                "cache_hit": bool(art.cache_hit),
+                "context": dict(_DRAW_CONTEXT),
+            }
+        )
     painter.translate(center_x, baseline)
     if lift:
         painter.translate(0.0, -float(lift))

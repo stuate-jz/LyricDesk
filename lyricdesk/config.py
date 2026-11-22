@@ -258,6 +258,8 @@ class Settings:
     # 设置窗口的语言与外观（只影响设置窗口本身）
     language: str = ""
     dialog_theme: str = "auto"
+    # Ctrl+Alt+Shift+D 保存一次调试转储；可关闭以免占用系统热键
+    debug_dump_hotkey: bool = True
     # v1.6.8 及更早的单窗口位置。v1.6.9 起窗口只写 lyrics_pos / player_pos；
     # 这两项保留，仅用于从老配置迁移。
     x: int = -1

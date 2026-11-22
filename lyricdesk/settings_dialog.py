@@ -1398,6 +1398,17 @@ class SettingsDialog(QDialog):
             "general.ui_opacity.hint",
             "整体不透明度只作用于桌面歌词本身；设置窗口自己不受影响。",
         )
+        self._check(
+            layout,
+            "general.debug_dump_hotkey",
+            "启用调试转储热键（Ctrl+Alt+Shift+D）",
+            getter=lambda: bool(
+                getattr(settings, "debug_dump_hotkey", True)
+            ),
+            apply=self.window._set_debug_dump_hotkey,
+            hint_key="general.debug_dump_hotkey.hint",
+            hint="按下后会把当前帧、内存设置和绘制调用记录保存到 LyricDesk\\debug。",
+        )
 
         layout.addStretch(1)
 

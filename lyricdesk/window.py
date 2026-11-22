@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
 import os
 import tempfile
@@ -10,6 +11,7 @@ import threading
 import time
 import traceback
 import weakref
+import zipfile
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
@@ -122,22 +124,29 @@ def _paint_line_art(sprite, *args, **kwargs):
         cached = render_mod.cached_line_art(key)
         render_mod.record_line_lookup(cached is not None, key)
         if cached is not None:
+            cached.cache_hit = True
             return cached
-        return render_mod.make_line_art(sprite, *args, **kwargs)
+        art = render_mod.make_line_art(sprite, *args, **kwargs)
+        art.cache_hit = False
+        return art
     key = render_mod.line_art_key(sprite, *args, **kwargs)
     cached = render_mod.cached_line_art(key)
     if cached is not None:
         render_mod.record_line_lookup(True, key)
+        cached.cache_hit = True
         return cached
     render_mod.record_line_lookup(False, key)
     nearest = render_mod.nearest_line_art(key)
     if nearest is not None:
         render_mod.record_line_fallback()
         _log_line_art_fallback("nearest", key)
+        nearest.cache_hit = False
         return nearest
     render_mod.record_line_fallback()
     _log_line_art_fallback("sync", key)
-    return render_mod.make_line_art(sprite, *args, **kwargs)
+    art = render_mod.make_line_art(sprite, *args, **kwargs)
+    art.cache_hit = False
+    return art
 
 
 def _log_line_art_fallback(kind: str, key: tuple) -> None:
@@ -491,6 +500,8 @@ class LyricWindow(QWidget):
         self._bg_pixmap: QPixmap | None = None
         self._hover = ""
         self._hotkey_prev = False
+        self._debug_hotkey_prev = False
+        self._debug_dump_pending = False
         self._update_busy = False
         self._update_silent = False
         self._update_pending: UpdateInfo | None = None
@@ -3479,30 +3490,56 @@ class LyricWindow(QWidget):
                     rotation=rotation,
                 )
                 return
-            # 整行只保留极淡的底字与底层光晕，视觉主体交给下面逐字脉冲。
-            render_mod.draw_line_art(
-                painter,
-                art,
-                center_x,
-                baseline,
-                progress=0.0,
-                scale=draw_scale,
-                opacity=draw_opacity * 0.12,
-                glow_scale=glow_scale * 0.20,
-                entry_blur=entry_blur,
-                rotation=rotation,
-            )
-            active_index = -1
-            for index, timing in enumerate(timings):
-                if position < timing.start:
-                    break
-                active_index = index
             layouts = self._layout_chars(
                 line,
                 timings,
                 fitted,
                 position,
             )
+            timeline_left = min(timing.x for timing in timings)
+            timeline_right = max(
+                timing.x + timing.width for timing in timings
+            )
+            timeline_width = timeline_right - timeline_left
+            advance_aligned = abs(art.advance - timeline_width) <= 0.5
+            motion_aligned = all(
+                abs(dy) <= 0.5
+                and abs((motion_scale - 1.0) * fitted) <= 0.5
+                and abs(char_rotation) <= 0.5
+                for _x, dy, motion_scale, char_rotation in layouts
+            )
+            render_mod.set_draw_context(
+                {
+                    "line_text": line.text,
+                    "timing_total_width": round(timeline_width, 3),
+                    "line_advance": round(art.advance, 3),
+                    "line_advance_delta": round(
+                        abs(art.advance - timeline_width),
+                        3,
+                    ),
+                    "motion_aligned": motion_aligned,
+                }
+            )
+            # 只有整行底图与逐字层几何完全一致时才叠两层；否则整行旧
+            # advance / 未应用逐字变换会形成用户看到的暗色重影。
+            if advance_aligned and motion_aligned:
+                render_mod.draw_line_art(
+                    painter,
+                    art,
+                    center_x,
+                    baseline,
+                    progress=0.0,
+                    scale=draw_scale,
+                    opacity=draw_opacity * 0.12,
+                    glow_scale=glow_scale * 0.20,
+                    entry_blur=entry_blur,
+                    rotation=rotation,
+                )
+            active_index = -1
+            for index, timing in enumerate(timings):
+                if position < timing.start:
+                    break
+                active_index = index
             for index, (timing, layout) in enumerate(zip(timings, layouts)):
                 elapsed = position - timing.start
                 is_current = index == active_index and elapsed <= 0.38
@@ -3548,6 +3585,7 @@ class LyricWindow(QWidget):
                     rotation=rotation + char_rotation,
                     lift=0.0,
                 )
+            render_mod.set_draw_context()
             return
         # bounce：每个字素独立二阶弹簧。底字保持清晰，高光按状态逐字叠加。
         render_mod.draw_line_art(
@@ -5192,6 +5230,10 @@ class LyricWindow(QWidget):
         self.settings.ui_opacity = value
         self._commit()
 
+    def _set_debug_dump_hotkey(self, value: bool) -> None:
+        self.settings.debug_dump_hotkey = bool(value)
+        self._commit(scope="visual")
+
     def _set_spacing(self, value: float) -> None:
         self.settings.line_spacing = value
         self._commit(resize=True)
@@ -5557,11 +5599,80 @@ class LyricWindow(QWidget):
                 and user32.GetAsyncKeyState(0x12) & 0x8000  # Alt
                 and user32.GetAsyncKeyState(0x4C) & 0x8000  # L
             )
+            debug_pressed = bool(
+                user32.GetAsyncKeyState(0x11) & 0x8000  # Ctrl
+                and user32.GetAsyncKeyState(0x12) & 0x8000  # Alt
+                and user32.GetAsyncKeyState(0x10) & 0x8000  # Shift
+                and user32.GetAsyncKeyState(0x44) & 0x8000  # D
+            )
         except Exception:
             return
         if pressed and not _HOTKEY_STATE["prev"]:
             self.set_click_through(not self.settings.click_through)
         _HOTKEY_STATE["prev"] = pressed
+        if (
+            debug_pressed
+            and not self._debug_hotkey_prev
+            and bool(getattr(self.settings, "debug_dump_hotkey", True))
+        ):
+            QTimer.singleShot(0, self._dump_debug_bundle)
+        self._debug_hotkey_prev = debug_pressed
+
+    def _dump_debug_bundle(self) -> None:
+        """保存当前帧、内存设置和完整绘制调用，便于离线定位重影。"""
+        if self._debug_dump_pending:
+            return
+        self._debug_dump_pending = True
+        render_mod.start_draw_trace()
+        try:
+            stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{int(time.time() * 1000) % 1000:03d}"
+            directory = app_dir() / "debug" / stamp
+            directory.mkdir(parents=True, exist_ok=True)
+            frame_path = directory / f"frame-{stamp}.png"
+            settings_path = directory / f"settings-{stamp}.json"
+            draw_path = directory / f"draw-{stamp}.log"
+
+            self.update()
+            QApplication.processEvents()
+            pixmap = QPixmap(self.size())
+            pixmap.fill(Qt.GlobalColor.transparent)
+            self.render(pixmap)
+            trace = render_mod.stop_draw_trace()
+            pixmap.save(str(frame_path))
+            payload = copy.deepcopy(self.settings.__dict__)
+            payload["_runtime"] = {
+                "window_geometry": [
+                    self.x(),
+                    self.y(),
+                    self.width(),
+                    self.height(),
+                ],
+                "dpr": self.devicePixelRatioF(),
+                "effect": self.settings.lyric_effect,
+                "layout": self.settings.lyric_layout,
+            }
+            settings_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            with draw_path.open("w", encoding="utf-8") as handle:
+                for call in trace:
+                    handle.write(json.dumps(call, ensure_ascii=False) + "\n")
+
+            archive = directory / f"debug-{stamp}.zip"
+            with zipfile.ZipFile(
+                archive,
+                "w",
+                compression=zipfile.ZIP_DEFLATED,
+            ) as bundle:
+                for path in (frame_path, settings_path, draw_path):
+                    bundle.write(path, arcname=path.name)
+            self.show_notice(f"调试转储已保存：{archive}", 5000)
+        except Exception:
+            log_error("保存调试转储失败")
+            render_mod.stop_draw_trace()
+        finally:
+            self._debug_dump_pending = False
 
     def _toggle_always_on_top(self) -> None:
         self.settings.always_on_top = not self.settings.always_on_top

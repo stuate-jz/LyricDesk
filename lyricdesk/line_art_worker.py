@@ -126,6 +126,7 @@ def _render_request(key: tuple, request: dict) -> dict:
         "height": image_art.height,
         "font_size": image_art.font_size,
         "dpr": image_art.dpr,
+        "text": image_art.text,
     }
 
 
@@ -313,6 +314,7 @@ class LineArtClient:
                     height=float(message["height"]),
                     font_size=int(message["font_size"]),
                     dpr=float(message["dpr"]),
+                    text=str(message.get("text") or ""),
                 )
             except Exception:  # noqa: BLE001
                 for shm in shms:
