@@ -232,9 +232,9 @@
    下面的 FALLBACK 只在直接双击本地打开（file:// 读不到 json）或 fetch 失败时兜底，
    所以要跟当前版本保持一致：version / date / notes 跟 packaging/update.json 同步。 */
 const FALLBACK = {
-  version: "1.7.11",
+  version: "1.7.12",
   date: "2026-11-22",
-  notes: "· 修复播放数秒后周期性卡顿：系统进程探测移至后台，避免 UI 线程被枚举阻塞\n· 歌词位图改由独立渲染进程预烘，换句不再在界面线程执行粗描边\n· 修复 1.5 倍缩放和自定义字间距下歌词缩小、挤压和位置偏移\n· 歌词预烘加入完整性兜底，不再出现缺字或空行\n· 换歌时立即整窗刷新，修复当前句右侧短暂残影\n· 限制后台预烘队列并定期回收缓存，长时间播放内存更稳定\n· 网易云与 B 站轮询降低 GIL 占用和重复建连",
+  notes: "· 设置滑条改为事务式预览，拖动期间窗口不移动，松手只写盘一次\n· 重排几何改用固定内容边缘/圆心锚点，消除字号与倾斜设置造成的累积漂移\n· 行缓存加入绘图设置指纹：透明参数复用缓存，字号和配色变化才失效\n· 新增 22 场景 golden、200 次设置 fuzz 和三条渲染路径等价检查\n· 修复换歌首帧残影、异步缩放与字间距问题\n· 保留后台预烘、缓存回收和低卡顿优化",
   url: "https://gitee.com/pursue-studies/LyricDesk/releases",
   page_url: "https://gitee.com/pursue-studies/LyricDesk/releases",
   size_mb: 57,

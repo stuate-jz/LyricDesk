@@ -118,15 +118,24 @@ def depth_angle(value: float) -> float:
 def _paint_line_art(sprite, *args, **kwargs):
     """优先取缓存；worker 未就绪时用近似图或同步烘图兜底，禁止空行。"""
     if not line_art_worker.enabled():
+        key = render_mod.line_art_key(sprite, *args, **kwargs)
+        cached = render_mod.cached_line_art(key)
+        render_mod.record_line_lookup(cached is not None, key)
+        if cached is not None:
+            return cached
         return render_mod.make_line_art(sprite, *args, **kwargs)
     key = render_mod.line_art_key(sprite, *args, **kwargs)
     cached = render_mod.cached_line_art(key)
     if cached is not None:
+        render_mod.record_line_lookup(True, key)
         return cached
+    render_mod.record_line_lookup(False, key)
     nearest = render_mod.nearest_line_art(key)
     if nearest is not None:
+        render_mod.record_line_fallback()
         _log_line_art_fallback("nearest", key)
         return nearest
+    render_mod.record_line_fallback()
     _log_line_art_fallback("sync", key)
     return render_mod.make_line_art(sprite, *args, **kwargs)
 
@@ -522,6 +531,13 @@ class LyricWindow(QWidget):
         self._pending_width_timer.setSingleShot(True)
         self._pending_width_timer.setInterval(400)
         self._pending_width_timer.timeout.connect(self._flush_pending_width)
+        self._edit_depth = 0
+        self._edit_geometry = False
+        self._edit_background = False
+        self._edit_anchor_kind: str | None = None
+        self._edit_anchor_before: QPointF | None = None
+        self._edit_rect_before = QRect()
+        self._edit_overscan_before = (0, 0)
         self._offset_sig = None
         self._prefetched_line_key = None
         self._prefetch_signature = None
@@ -760,7 +776,10 @@ class LyricWindow(QWidget):
     ) -> None:
         # 字间距会影响每个字的 advance，必须在算字体 / 自动宽度之前设置
         render_mod.set_letter_spacing(float(self.settings.letter_spacing))
-        render_mod.clear_line_cache()
+        if render_mod.set_render_fingerprint(
+            self.settings.render_fingerprint(self.devicePixelRatioF())
+        ):
+            render_mod.clear_line_cache()
         self._fonts = self._build_fonts()
         # 保留 QFont 实例本身，避免度量对象引用到已被回收的字体
         self._qt_fonts = {key: _qt_font(*spec) for key, spec in self._fonts.items()}
@@ -1165,40 +1184,150 @@ class LyricWindow(QWidget):
     ) -> None:
         """重排后用一次 setGeometry 保持文字边或圆心不动。"""
         use_alignment_edge = anchor != "text_center"
-        if before is None:
-            if anchor == "disc":
-                before = self._disc_center_on_screen()
+        old_rect = (
+            QRect(self._edit_rect_before)
+            if not self._edit_rect_before.isNull()
+            else QRect(self.geometry())
+        )
+        if anchor == "player":
+            self.recalculate(apply_geometry=False)
+            width = max(1, self._pending_size.width())
+            height = max(1, self._pending_size.height())
+            self.setGeometry(
+                int(old_rect.right() + 1 - width),
+                old_rect.top(),
+                width,
+                height,
+            )
+            self._clamp_if_fully_offscreen()
+            return
+
+        if anchor == "disc":
+            fixed = before or QPointF(
+                old_rect.x() + old_rect.width() / 2.0,
+                old_rect.y() + old_rect.height() / 2.0,
+            )
+            fixed_x = fixed.x()
+            fixed_y = fixed.y()
+        else:
+            old_over = (
+                self._edit_overscan_before[0]
+                if not self._edit_rect_before.isNull()
+                else self._overscan
+            )
+            if not use_alignment_edge:
+                fixed_x = old_rect.x() + old_rect.width() / 2.0
+            elif self.settings.lyric_align == "left":
+                fixed_x = old_rect.x() + MARGIN + old_over + PAD
+            elif self.settings.lyric_align == "center":
+                fixed_x = old_rect.x() + old_rect.width() / 2.0
             else:
-                before = self._text_anchor_on_screen(
-                    use_alignment_edge=use_alignment_edge
+                fixed_x = (
+                    old_rect.x()
+                    + old_rect.width()
+                    - (MARGIN + old_over + PAD)
                 )
+            fixed_y = old_rect.y() + old_rect.height() / 2.0
+
         self.recalculate(apply_geometry=False)
         width = max(1, self._pending_size.width())
         height = max(1, self._pending_size.height())
-        pending = QSize(width, height)
         if anchor == "disc":
-            after = self._disc_center_on_screen(pending)
+            x = round(fixed_x - width / 2.0)
+            y = round(fixed_y - height / 2.0)
         else:
-            after = self._text_anchor_on_screen(
-                pending,
-                use_alignment_edge=use_alignment_edge,
+            new_over = self._overscan
+            if not use_alignment_edge:
+                x = round(fixed_x - width / 2.0)
+            elif self.settings.lyric_align == "left":
+                x = round(fixed_x - (MARGIN + new_over + PAD))
+            elif self.settings.lyric_align == "center":
+                x = round(fixed_x - width / 2.0)
+            else:
+                x = round(
+                    fixed_x
+                    - (width - (MARGIN + new_over + PAD))
+                )
+            y = round(fixed_y - height / 2.0)
+
+        if same_screen_only:
+            screen_before = QApplication.screenAt(
+                QPoint(round(fixed_x), round(fixed_y))
             )
-        x = self.x()
-        y = self.y()
-        same_screen = True
-        if same_screen_only and before is not None and after is not None:
-            screen_before = QApplication.screenAt(before.toPoint())
-            screen_after = QApplication.screenAt(after.toPoint())
-            same_screen = (
-                screen_before is None
-                or screen_after is None
-                or screen_before is screen_after
+            screen_after = QApplication.screenAt(
+                QPoint(round(fixed_x), round(fixed_y))
             )
-        if before is not None and after is not None and same_screen:
-            x += round(before.x() - after.x())
-            y += round(before.y() - after.y())
+            if (
+                screen_before is not None
+                and screen_after is not None
+                and screen_before is not screen_after
+            ):
+                x = self.x()
+                y = self.y()
         self.setGeometry(x, y, width, height)
         self._clamp_if_fully_offscreen()
+
+    def begin_edit(self) -> None:
+        """滑条按下：暂停几何落地和写盘，只更新视觉状态。"""
+        if self._edit_depth == 0:
+            self._edit_rect_before = QRect(self.geometry())
+            self._edit_overscan_before = (
+                int(self._overscan),
+                int(self._overscan_v),
+            )
+            self._edit_geometry = False
+            self._edit_background = False
+            self._edit_anchor_kind = (
+                "player"
+                if self.role == "player"
+                else (
+                    "disc"
+                    if self.settings.lyric_layout == "disc"
+                    else "text"
+                )
+            )
+            self._edit_anchor_before = (
+                self._disc_center_on_screen()
+                if self._edit_anchor_kind == "disc"
+                else (
+                    None
+                    if self._edit_anchor_kind == "player"
+                    else self._text_anchor_on_screen(
+                        use_alignment_edge=True,
+                    )
+                )
+            )
+        self._edit_depth += 1
+
+    def end_edit(self) -> None:
+        """滑条松手：只在这里做一次几何重排、位置回写和 settings.save()。"""
+        if self._edit_depth <= 0:
+            return
+        self._edit_depth -= 1
+        if self._edit_depth:
+            return
+        self.settings.clamp()
+        if self._edit_geometry:
+            kind = self._edit_anchor_kind or "text"
+            self._resize_keep_anchor(
+                kind,
+                self._edit_anchor_before,
+                same_screen_only=(kind == "disc"),
+            )
+            if self.isVisible():
+                self._remember_position()
+        if self._edit_background:
+            self._bg_key = None
+        self.settings.save()
+        self._edit_geometry = False
+        self._edit_background = False
+        self._edit_anchor_kind = None
+        self._edit_anchor_before = None
+        self._edit_rect_before = QRect()
+        self._edit_overscan_before = (0, 0)
+        self._update_cursor()
+        self.update()
+        self.settingsChanged.emit()
 
     def _apply_disc_change(self, before: QPointF | None = None) -> None:
         """重排圆盘时保持圆心不动，并让结果仍落在当前屏幕内。"""
@@ -1297,6 +1426,12 @@ class LyricWindow(QWidget):
 
     def _clamp_if_fully_offscreen(self) -> None:
         """只在窗口完全离开屏幕时拉回；露出一部分时保持用户摆放。"""
+        current = self.screen()
+        if (
+            current is not None
+            and current.availableGeometry().intersects(self.frameGeometry())
+        ):
+            return
         for screen in QApplication.screens():
             if screen.availableGeometry().intersects(self.frameGeometry()):
                 return
@@ -1335,7 +1470,8 @@ class LyricWindow(QWidget):
         if lyrics is not self._auto_lyrics_ref:
             self._auto_lyrics_ref = lyrics
             # 分批到达的歌词常常在几百毫秒内连续换几次文档；合并成一次重排。
-            self._pending_width_timer.start()
+            if self._edit_depth == 0:
+                self._pending_width_timer.start()
         snapshot = self._paint_snapshot()
         intro_second = self._intro_second(snapshot)
         intro_changed = intro_second != self._intro_last_second
@@ -4961,20 +5097,15 @@ class LyricWindow(QWidget):
 
     def _set_disc_angle(self, value: float) -> None:
         self.settings.disc_angle = float(value)
-        self.settings.save()
-        self.update()
-        self.settingsChanged.emit()
+        self._commit(scope="visual")
 
     def _set_disc_spread(self, value: float) -> None:
         self.settings.disc_spread = float(value)
-        self.settings.save()
-        self.update()
-        self.settingsChanged.emit()
+        self._commit(scope="visual")
 
     def _set_disc_radius(self, value: float) -> None:
-        before = self._disc_center_on_screen()
         self.settings.disc_radius = max(0.0, min(260.0, float(value)))
-        self._apply_disc_change(before)
+        self._commit(scope="geometry")
 
     def _set_lyric_effect(self, value: str) -> None:
         if value == "sweep":
@@ -5203,7 +5334,7 @@ class LyricWindow(QWidget):
     def _set_player_width(self, value: int) -> None:
         """唱片/播放器面板宽度；0 = 自动（跟随封面）。"""
         self.settings.player_width = 0 if int(value) <= 0 else int(value)
-        self._apply_new_width(QRect(self.geometry()))
+        self._commit(scope="geometry")
 
     def _set_letter_spacing(self, value: float) -> None:
         """歌词字间距（px）。改完重算：字变宽 → 自动宽度跟着变。"""
@@ -5234,6 +5365,9 @@ class LyricWindow(QWidget):
 
     def _flush_pending_width(self) -> None:
         """内容变化只重排几何，不把内容算出的坐标写回用户位置。"""
+        if self._edit_depth > 0:
+            self._edit_geometry = True
+            return
         self._apply_new_width(QRect(self.geometry()))
 
     def _nudge_width(self, delta: int) -> None:
@@ -6159,22 +6293,56 @@ class LyricWindow(QWidget):
         except Exception:  # noqa: BLE001
             return None
 
-    def _commit(self, resize: bool = False, flags: bool = False, background: bool = False) -> None:
-        self.settings.clamp()
-        self.settings.save()
+    def _commit(
+        self,
+        resize: bool = False,
+        flags: bool = False,
+        background: bool = False,
+        *,
+        scope: str | None = None,
+    ) -> None:
+        """应用设置事务；拖动期间只预览，松手后才重排和写盘。"""
+        scopes: set[str] = set()
+        if scope:
+            scopes.add(scope)
         if resize:
+            scopes.add("geometry")
+        if flags:
+            scopes.add("flags")
+        if background:
+            scopes.add("background")
+        if not scopes:
+            scopes.add("visual")
+
+        self.settings.clamp()
+        if self._edit_depth > 0:
+            if "geometry" in scopes:
+                self._edit_geometry = True
+                # 拖动时先更新字体、行槽和缓存，不移动窗口。
+                self.recalculate(apply_geometry=False)
+            if "background" in scopes:
+                self._edit_background = True
+                self._bg_key = None
+            self.update()
+            return
+
+        if "geometry" in scopes:
             self._resize_keep_anchor(
-                "disc" if self.settings.lyric_layout == "disc" else "text"
+                "player"
+                if self.role == "player"
+                else (
+                    "disc"
+                    if self.settings.lyric_layout == "disc"
+                    else "text"
+                )
             )
-            # 分离面板模式下主窗是隐藏的：切换显示开关时它仍停在旧坐标，
-            # 此时若回写槽位会把真正歌词面板刚记住的位置覆盖掉。
             if self.isVisible():
                 self._remember_position()
-                self.settings.save()
-        if background:
+        if "background" in scopes:
             self._bg_key = None
-        if flags:
+        if "flags" in scopes:
             self.apply_flags()
+        self.settings.save()
         self._update_cursor()
         self.update()
         self.settingsChanged.emit()

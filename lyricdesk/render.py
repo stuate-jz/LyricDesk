@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Callable
@@ -38,6 +39,12 @@ _GLOW_OVERLAY_LIMIT = 24
 _GLOW_OVERLAY_BUDGET = 6 * 1024 * 1024
 _ENTRY_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
 _ENTRY_CACHE_LIMIT = 4
+_RENDER_FINGERPRINT: tuple = ()
+_LINE_LOOKUPS = 0
+_LINE_HITS = 0
+_LINE_FALLBACKS = 0
+_LINE_STAT_KEYS: set[tuple] = set()
+_LINE_STATS_T0 = time.monotonic()
 
 # 全局字间距（px）。歌词字体统一套这个值；图标 / 时间这类不走精灵的文字不受影响。
 _LETTER_SPACING = 0.0
@@ -56,6 +63,53 @@ def set_letter_spacing(px: float) -> None:
 
 def letter_spacing() -> float:
     return _LETTER_SPACING
+
+
+def set_render_fingerprint(fingerprint: tuple) -> bool:
+    """更新绘图指纹；返回是否真的发生变化。"""
+    global _RENDER_FINGERPRINT
+    fingerprint = tuple(fingerprint)
+    changed = fingerprint != _RENDER_FINGERPRINT
+    _RENDER_FINGERPRINT = fingerprint
+    return changed
+
+
+def record_line_lookup(hit: bool, key: tuple | None = None) -> None:
+    global _LINE_LOOKUPS, _LINE_HITS
+    if key is not None:
+        if key in _LINE_STAT_KEYS:
+            return
+        _LINE_STAT_KEYS.add(key)
+    _LINE_LOOKUPS += 1
+    if hit:
+        _LINE_HITS += 1
+
+
+def record_line_fallback() -> None:
+    global _LINE_FALLBACKS
+    _LINE_FALLBACKS += 1
+
+
+def cache_stats() -> dict[str, int | float]:
+    hit_rate = (_LINE_HITS / _LINE_LOOKUPS) if _LINE_LOOKUPS else 0.0
+    elapsed = max(0.001, time.monotonic() - _LINE_STATS_T0)
+    return {
+        "line_lookups": _LINE_LOOKUPS,
+        "line_hits": _LINE_HITS,
+        "line_fallbacks": _LINE_FALLBACKS,
+        "line_hit_rate": hit_rate,
+        "fallbacks_per_minute": _LINE_FALLBACKS * 60.0 / elapsed,
+    }
+
+
+def reset_cache_stats() -> None:
+    global _LINE_LOOKUPS, _LINE_HITS, _LINE_FALLBACKS
+    _LINE_LOOKUPS = 0
+    _LINE_HITS = 0
+    _LINE_FALLBACKS = 0
+    _LINE_STAT_KEYS.clear()
+    global _LINE_STATS_T0
+    _LINE_STATS_T0 = time.monotonic()
 
 
 class TextSprite:
@@ -621,6 +675,7 @@ def line_art_key(
         bool(shadow),
         round(float(dpr), 2),
         bool(glow),
+        _RENDER_FINGERPRINT,
     )
 
 

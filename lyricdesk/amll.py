@@ -106,7 +106,7 @@ def _match_cache_path(platform: str) -> Path:
 
 
 def _download(urls, target: Path) -> bool:
-    headers = {"User-Agent": "LyricDesk/1.7.11"}
+    headers = {"User-Agent": "LyricDesk/1.7.12"}
     for url in urls:
         try:
             response = requests.get(url, headers=headers, timeout=TIMEOUT)
@@ -279,7 +279,7 @@ def _fetch_raw(platform: str, song_id: str) -> tuple[str, str] | None:
         try:
             response = requests.get(
                 url,
-                headers={"User-Agent": "LyricDesk/1.7.11"},
+                headers={"User-Agent": "LyricDesk/1.7.12"},
                 timeout=TIMEOUT,
             )
             if response.status_code != 200 or not response.content:

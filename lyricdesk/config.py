@@ -566,6 +566,22 @@ class Settings:
             }
         return THEMES.get(self.theme, THEMES["aurora"])
 
+    def render_fingerprint(self, dpr: float) -> tuple:
+        """所有会改变行位图内容的设置；透明度等纯合成项刻意不包含。"""
+        colors = self.colors
+        return (
+            self.font_family,
+            int(self.font_size),
+            round(float(self.letter_spacing), 2),
+            self.theme,
+            tuple(colors[key] for key in ("base", "dim", "c1", "c2", "c3", "glow")),
+            bool(float(self.lyric_glow) > 0),
+            self.lyric_effect,
+            round(float(dpr), 2),
+            int(self.width),
+            int(self.lyric_lines),
+        )
+
     @property
     def theme_label(self) -> str:
         return self.colors["label"]

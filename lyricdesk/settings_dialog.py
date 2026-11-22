@@ -644,6 +644,8 @@ class SliderRow(QWidget):
         coalesce_ms: int = 0,
         special_min: str = "",
         tooltip: str = "",
+        on_begin=None,
+        on_end=None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -653,8 +655,11 @@ class SliderRow(QWidget):
         self._step = float(step)
         self._default = float(default)
         self._on_change = on_change
+        self._on_begin = on_begin
+        self._on_end = on_end
         self._pending: float | None = None
         self._silent = False
+        self._editing = False
 
         ticks_min = int(round(float(minimum) / self._step))
         ticks_max = int(round(float(maximum) / self._step))
@@ -697,7 +702,8 @@ class SliderRow(QWidget):
             self._timer.timeout.connect(self._flush)
 
         self.slider.valueChanged.connect(self._from_slider)
-        self.slider.sliderReleased.connect(self._flush)
+        self.slider.sliderPressed.connect(self._begin_edit)
+        self.slider.sliderReleased.connect(self.finish_edit)
         self.spin.valueChanged.connect(self._from_spin)
 
     # ---------- 换算 ----------
@@ -720,6 +726,13 @@ class SliderRow(QWidget):
         self.spin.setValue(value)
         self._silent = False
         self._send(value)
+
+    def _begin_edit(self) -> None:
+        if self._editing:
+            return
+        self._editing = True
+        if self._on_begin is not None:
+            self._on_begin()
 
     def _from_spin(self, value: float) -> None:
         if self._silent:
@@ -746,6 +759,13 @@ class SliderRow(QWidget):
         self._on_change(value)
 
     _flush = flush
+
+    def finish_edit(self) -> None:
+        self.flush()
+        if self._editing:
+            self._editing = False
+            if self._on_end is not None:
+                self._on_end()
 
     def reset_default(self) -> None:
         self.set_value(self._default)
@@ -1155,6 +1175,8 @@ class SettingsDialog(QDialog):
             coalesce_ms=coalesce_ms,
             special_min=tr(special_min_key, special_min) if special_min_key else special_min,
             tooltip=tr("slider.reset.tooltip", "双击恢复默认值"),
+            on_begin=self.window.begin_edit,
+            on_end=self.window.end_edit,
         )
         self._bind_text(row, key, default_text, "set_title")
         self._bind_text(row, "slider.reset.tooltip", "双击恢复默认值", "set_tooltip")
@@ -2708,7 +2730,7 @@ class SettingsDialog(QDialog):
     def closeEvent(self, event) -> None:  # noqa: N802
         # 关之前把还没落地的那次滑动补上（拖着滑块顺手按关闭的边界情况）
         for row in self._slider_rows:
-            row.flush()
+            row.finish_edit()
         from .window import set_all_topmost_suspended
 
         set_all_topmost_suspended(False)
