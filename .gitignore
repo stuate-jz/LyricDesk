@@ -4,8 +4,16 @@ GitHub建仓指令.md
 发布清单.md
 deskgeci/
 
-# ---------- 开发者的本机工具与调试产物（本地保留，不进仓库）----------
-dev/
+# ---------- 开发者的本机工具与调试产物 ----------
+dev/*
+!dev/golden/
+!dev/golden/**
+!dev/check_golden.py
+!dev/check_settings_fuzz.py
+!dev/check_paths_parity.py
+!dev/check_cache_fingerprint.py
+!dev/check_line_art_parity.py
+!dev/check_line_art_worker.py
 
 # ---------- 打包与构建产物（几百 MB，绝对不能提交）----------
 build/

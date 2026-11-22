@@ -1,0 +1,244 @@
+{
+  "list_off_glow000": {
+    "sha256": "284A8957AE1E43B392365C78FA2B2FF65A0F784CF6943FE9BC5222F87455E672",
+    "size": [
+      624,
+      407
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "list_off_glow100": {
+    "sha256": "087F6F6BFF6085BFE76BB113D9EBEC9CF4426AD4A25A9A3551BAEE2D869854A6",
+    "size": [
+      624,
+      407
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "list_off_glow500": {
+    "sha256": "496E97A420F2FDBBF3260EFD6C71443EB9791BF214EBE0A57D46DCEA03D5D516",
+    "size": [
+      624,
+      407
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "list_word_glow000": {
+    "sha256": "C3B6C21D2DF6244449D4F5676159F2E4C6D3F005829ADA080FDF350EEDF01964",
+    "size": [
+      624,
+      407
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "list_word_glow100": {
+    "sha256": "D1FBDC614EC45AAC1E7F82FED4BBEE635E3971C1B8B297DF4838EE1638128AB0",
+    "size": [
+      624,
+      407
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "list_word_glow500": {
+    "sha256": "0772E23F02D8AE800E68B1D76C5B459B7ECEB290F800094247C9232EE54525ED",
+    "size": [
+      624,
+      407
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "list_bounce_glow000": {
+    "sha256": "C2010B3C85CE97EDCF63AF9A9593468FC025A8A780533C031A0372798C2E3F73",
+    "size": [
+      624,
+      407
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "list_bounce_glow100": {
+    "sha256": "C75B6ECFA1CC55BF1F1FFD04925A69179639E605EB2E14921F61723226A8CB3A",
+    "size": [
+      624,
+      407
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "list_bounce_glow500": {
+    "sha256": "2CF329C6EF8AB3E32AABDDA6C9532EE1892051419ABEB19A5BEDEA1EF40A32C3",
+    "size": [
+      624,
+      407
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "disc_off_glow000": {
+    "sha256": "4EFD6159795FF256D3E9FC77F9E9D14EC8D53D89E135705840B625BC44924397",
+    "size": [
+      1549,
+      1549
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "disc_off_glow100": {
+    "sha256": "9E8894C701518EC1EFC68CE0FE38B255B77893B07AC3D447063EF30F37C1FDFC",
+    "size": [
+      1549,
+      1549
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "disc_off_glow500": {
+    "sha256": "888C7E0DED3A130E4A3D65EE819D43B2B35BC6A27309910F7C5502164C8B44E0",
+    "size": [
+      1549,
+      1549
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "disc_word_glow000": {
+    "sha256": "12B33166FE71101DBC6B5FF0D01C980C068D82DFF8D8D27D1F5C070253FFB241",
+    "size": [
+      1549,
+      1549
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "disc_word_glow100": {
+    "sha256": "57EB35C41A4F6CD94735C2FC141A421F661AEE189467A842D3146F87F2AF040E",
+    "size": [
+      1549,
+      1549
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "disc_word_glow500": {
+    "sha256": "E16283FC84211B4DF2AC7390A88C7CEE95933B23F86CB35F550151ED3E4B8297",
+    "size": [
+      1549,
+      1549
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "disc_bounce_glow000": {
+    "sha256": "A53742103781BC43AB9C7E1C9AB43EC6715A547DC889464F53B2CE63E529ED63",
+    "size": [
+      1549,
+      1549
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "disc_bounce_glow100": {
+    "sha256": "2F9CCA402F667FE8962F87F91CCF719656F86852E78D3077E1C2BB517DBB7A7A",
+    "size": [
+      1549,
+      1549
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "disc_bounce_glow500": {
+    "sha256": "EE1DFBAA8717FF22604081B48604BA0B382D75602803A09B674337F0EFE03829",
+    "size": [
+      1549,
+      1549
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "combo_align_left": {
+    "sha256": "D0E1AA60BA45AFE86553D2D19AC75B6264560E4F14F83A7C36A1EFB019D64764",
+    "size": [
+      624,
+      407
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "combo_transparent": {
+    "sha256": "88B920C0AA74A89EDC9ACE09895CF029881DD5E42C0FE723720B7576FEE28DB9",
+    "size": [
+      624,
+      407
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "combo_disc_compact": {
+    "sha256": "F74A4D46224284E370BEF1E2199BFC69ACC40B29F006618DB13C54CD9A940B85",
+    "size": [
+      1518,
+      1518
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  },
+  "combo_tilt": {
+    "sha256": "418AFF1706F39444E0516A03AF74BFAFAEF23710AD55B0A88D4D26918352CF5C",
+    "size": [
+      624,
+      469
+    ],
+    "dpr": 1.0,
+    "font": "AaLingSheZhuan",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "qt": "6.11.2"
+  }
+}
