@@ -5828,6 +5828,8 @@ class LyricWindow(QWidget):
             debug_pressed
             and not self._debug_hotkey_prev
             and bool(getattr(self.settings, "debug_dump_hotkey", True))
+            and self.role != "player"
+            and self._effective_mode() == "lyrics"
         ):
             QTimer.singleShot(0, self._dump_debug_bundle)
         self._debug_hotkey_prev = debug_pressed
